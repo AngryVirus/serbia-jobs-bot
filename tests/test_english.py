@@ -84,9 +84,15 @@ class EnglishJourneyTests(unittest.IsolatedAsyncioTestCase):
                     bot = Bot(api, store)
                     api.sent.clear()
                     await bot.handle(callback(1, 'search:0'))
-                    self.assertIn('English support', api.text_for(1))
-                    self.assertIn('Russian support', api.text_for(1))
-                    self.assertNotIn('Serbian support', api.text_for(1))
+                    first = api.calls[-1][1]
+                    next_button = next(b for row in first['reply_markup']['inline_keyboard'] for b in row
+                                       if ':next:' in b.get('callback_data', ''))
+                    await bot.handle(callback(1, next_button['callback_data']))
+                    texts = first['text'] + api.calls[-1][1]['text']
+                    self.assertIn('English support', texts)
+                    self.assertIn('Russian support', texts)
+                    self.assertNotIn('Serbian support', texts)
+                    self.assertEqual(api.sent, [])
                     await bot.handle(callback(1, 'choose:language:russian:0'))
                     store.update_settings(1, notifications='instant')
                     api.sent.clear()

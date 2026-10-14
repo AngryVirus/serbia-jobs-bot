@@ -238,14 +238,15 @@ class PersonalJourneys(unittest.IsolatedAsyncioTestCase):
 
     async def test_hiding_a_card_does_not_skip_unseen_jobs_on_next_page(self):
         await self.bot.results(1, 1)
-        next_action = self.api.sent[-1]['rows'][0][0]['callback_data']
+        next_action = f'search:1:{self.jobs[4]["id"]}'  # Previously delivered five-card pagination.
         for job in (self.jobs[0], self.jobs[4]):
             await self.bot.handle(callback(1, f'hide:{job["id"]}'))
         self.api.sent.clear()
         await self.bot.handle(callback(1, next_action))
-        for job in self.jobs[5:10]:
-            self.assertIn(f'<b>{job["title"]}</b>', self.api.text_for(1))
-        self.assertNotIn(f'<b>{self.jobs[0]["title"]}</b>', self.api.text_for(1))
+        text = self.api.calls[-1][1]['text']
+        self.assertIn(f'<b>{self.jobs[5]["title"]}</b>', text)
+        self.assertNotIn(f'<b>{self.jobs[0]["title"]}</b>', text)
+        self.assertEqual(self.api.sent, [])
 
     async def test_details_expand_and_stale_buttons_respect_hiding(self):
         job = self.jobs[0]
