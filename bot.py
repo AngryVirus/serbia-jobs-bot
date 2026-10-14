@@ -11,67 +11,18 @@ import uuid
 from weakref import WeakValueDictionary
 from zoneinfo import ZoneInfo
 
-from filters import CITY_LABELS, FRESHNESS_LABELS, LANGUAGE_LABELS, matches, parse_datetime
-from sources import SOURCES, collect_all
+from filters import FILTER_OPTIONS, hidden_job_ids, matches, parse_datetime, select_value
+from sources import collect_all
 from store import Store
 from telegram_api import TelegramAPI, TelegramError
 from job_metadata import valid_job_url
 from version import VERSION
+from presentation import (MENU, BACK, CANCEL, HELP_URL, button, choice_panel,
+                          filter_summary, job_text, job_buttons, menu_text, safe)
 
 LOG = logging.getLogger("serbia_jobs")
 BELGRADE = ZoneInfo("Europe/Belgrade")
 PAGE_SIZE = 5
-
-
-def button(label, data):
-    return {"text": label, "callback_data": data}
-
-
-HELP_URL = 'https://t.me/AngryVirus'
-MENU = [[button('🔎 Найти вакансии', 'search:0')], [button('⚙️ Фильтры', 'filters')],
-        [button('🔔 Уведомления', 'notifications')], [{'text': '🆘 Помощь', 'url': HELP_URL}]]
-BACK = [[button('← Главное меню', 'menu')]]
-CANCEL = [[button('✖ Отменить ввод', 'cancel')]] + BACK
-LANGUAGE_NAMES = {'ru': 'Русский', 'sr': 'Сербский', 'en': 'Английский', 'de': 'Немецкий'}
-
-
-def job_text(job):
-    def e(value, limit=120):
-        return escape(str(value or 'Не указано')[:limit])
-    lines = ['💼 <b>' + e(job.get('title')) + '</b>']
-    if job.get('company'): lines.append('🏢 ' + e(job['company'], 80))
-    location = job.get('location') or ('Удалённая работа' if job.get('remote') is True else 'Место работы не указано')
-    lines.append('📍 ' + e(location, 100))
-    salary = job.get('salary_min')
-    if job.get('salary_display'):
-        lines.append('💶 ' + e(job['salary_display']))
-    elif salary is not None:
-        lines.append('💶 от ' + e(f"{salary:g} {job.get('salary_currency') or ''}") + ' / месяц')
-    else:
-        lines.append('💶 Зарплата не указана' if not job.get('salary_currency') else '💶 Условия оплаты — в объявлении')
-    languages = job.get('languages')
-    if languages is None:
-        languages = (['ru'] if job.get('russian') is True else []) + (['sr'] if job.get('serbian_required') is True else [])
-    if languages:
-        required = job.get('required_languages') or []
-        lines.append('🗣 ' + e(', '.join(LANGUAGE_NAMES.get(code, code) + (' (обязателен)' if code in required else '') for code in languages)))
-    else:
-        lines.append('🗣 Языковые требования не указаны')
-    published = parse_datetime(job.get('published_at'))
-    if published: lines.append('📅 ' + published.astimezone(BELGRADE).strftime('%d.%m.%Y'))
-    lines.append('📝 ' + e(job.get('description') or 'Описание доступно по ссылке.', 800))
-    source = SOURCES.get(job.get('source'))
-    lines.append('🌐 ' + e(source.name if source else job.get('source')))
-    contacts = job.get('contacts') or []
-    if contacts: lines.append('☎️ ' + e(' · '.join(contacts), 160))
-    if valid_job_url(job.get('url')):
-        lines.append('<a href="' + escape(job['url'], quote=True) + '">🔗 Открыть объявление</a>')
-    return '\n'.join(lines)
-
-
-def job_buttons(job):
-    return [[{'text': '🔗 Открыть объявление', 'url': job['url']}]] if valid_job_url(job.get('url')) else []
-
 
 def contactable(job):
     return valid_job_url(job.get('url')) or bool(job.get('contacts'))
@@ -124,22 +75,15 @@ class Bot:
 
     async def filters(self, uid, chat, mid=None):
         s = self.store.get_settings(uid)
-        keywords = escape(', '.join(s['keywords']) or 'Любые')
-        excluded = escape(', '.join(s['exclusions']) or 'Нет')
-        remote = {'any': 'Не важно', 'only': 'Только удалённая', 'office': 'На месте'}.get(s['remote'], 'Не важно')
-        language = LANGUAGE_LABELS.get(s['language'], 'Старый фильтр: без обязательного сербского')
-        salary = 'Без ограничения' if s['min_salary'] is None else f"от {s['min_salary']:g} {s['currency']} / месяц"
-        text = (f'<b>⚙️ Ваши фильтры</b>\n\n🔎 Ключевые слова: {keywords}\n🚫 Исключения: {excluded}\n'
-                f"📍 Город: {CITY_LABELS[s['city']]}\n💻 Формат: {remote}\n🗣 Язык: {language}\n"
-                f"💶 Зарплата: {salary}\nБез зарплаты: {'показывать' if s['include_unknown_salary'] else 'скрывать'}\n"
-                f"🕒 Свежесть: {FRESHNESS_LABELS.get(s.get('freshness', 'any'), FRESHNESS_LABELS['any'])}\n\n"
-                'Ключевые слова — любое совпадение; остальные фильтры применяются вместе. '
-                'При выборе языка или свежести неизвестные значения не считаются совпадением.')
+        text = ('<b>⚙️ Ваши фильтры</b>\n\n' + filter_summary(s) + '\n\n'
+                '✅ — выбранные условия. В каждой группе можно выбрать несколько вариантов. '
+                'Между группами условия действуют вместе.')
         rows = [[button('🔎 Ключевые слова', 'input:keywords'), button('🚫 Исключения', 'input:exclusions')],
-                [button('📍 Город', 'city'), button('💻 Формат работы', 'remote')],
-                [button('🗣 Язык', 'language'), button('💶 Минимальная зарплата', 'input:salary')],
+                [button('📍 Города', 'city'), button('💻 Формат работы', 'remote')],
+                [button('🗣 Языки', 'language'), button('💶 Минимальная зарплата', 'input:salary')],
                 [button('🕒 Свежесть вакансии', 'freshness')],
                 [button('Без зарплаты: ' + ('✓' if s['include_unknown_salary'] else '✕'), 'toggle_salary')],
+                [button('🔎 Найти вакансии', 'search:0')],
                 [button('↩ Сбросить фильтры', 'reset')]] + BACK
         await self.panel(chat, text, rows, mid)
 
@@ -154,11 +98,20 @@ class Bot:
                          [[button("Выключить", "notify:off")], [button("При проверке", "notify:instant")],
                           [button("Раз в день", "notify:daily"), button("Час подборки", "input:hour")]] + BACK, mid)
 
-    async def results(self, uid, chat, page=0):
+    async def results(self, uid, chat, page=0, after_id=None):
         settings = self.store.get_settings(uid)
         all_jobs = self.store.list_jobs()
         jobs = [j for j in all_jobs if contactable(j) and matches(j, settings)]
         page = min(max(page, 0), max((len(jobs) - 1) // PAGE_SIZE, 0))
+        start = page * PAGE_SIZE
+        if after_id is not None:
+            # A hidden card must not shift unseen jobs behind an old page offset.
+            anchor = next((i for i, job in enumerate(all_jobs) if job['id'] == after_id), None)
+            if anchor is not None:
+                before = {job['id'] for job in all_jobs[:anchor + 1]}
+                start = sum(job['id'] in before for job in jobs)
+                if start >= len(jobs):
+                    start = max(0, len(jobs) - PAGE_SIZE)
         if not jobs:
             statuses = self.store.source_status()
             collection = statuses.get('_collection', {})
@@ -172,15 +125,88 @@ class Bot:
             else:
                 text = 'Подходящих вакансий нет. Попробуйте расширить фильтры.'
                 if collection.get('state') == 'error': text += ' Последняя проверка не удалась; попробуйте позже.'
-            await self.api.send(chat, text, BACK)
+            if hidden_job_ids(settings):
+                text += '\nСкрытые вакансии можно вернуть через раздел «🙈 Скрытые».'
+            await self.api.send(chat, text, [[button('⚙️ Фильтры', 'filters'), button('🙈 Скрытые', 'hidden:0')]] + BACK)
             return
-        await self.api.send(chat, f'Найдено: {len(jobs)}. Страница {page + 1}.')
-        for job in jobs[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]:
+        await self.api.send(chat, f'<b>🔎 Найдено: {len(jobs)}</b> · Страница {page + 1}\n' + filter_summary(settings, compact=True))
+        shown = jobs[start:start + PAGE_SIZE]
+        for job in shown:
             await self.api.send(chat, job_text(job), job_buttons(job))
         pages = []
         if page: pages.append(button('← Назад', f'search:{page - 1}'))
-        if (page + 1) * PAGE_SIZE < len(jobs): pages.append(button('Далее →', f'search:{page + 1}'))
-        await self.api.send(chat, 'Изменить условия поиска можно в фильтрах.', ([pages] if pages else []) + BACK)
+        if start + PAGE_SIZE < len(jobs): pages.append(button('Далее →', f'search:{page + 1}:{shown[-1]["id"]}'))
+        await self.api.send(chat, 'Ваш поиск', ([pages] if pages else []) +
+                            [[button('⚙️ Фильтры', 'filters'), button('🙈 Скрытые', 'hidden:0')]] + BACK)
+
+    async def hidden(self, uid, chat, page=0, mid=None):
+        ids = sorted(hidden_job_ids(self.store.get_settings(uid)), reverse=True)
+        page = min(max(page, 0), max((len(ids) - 1) // PAGE_SIZE, 0))
+        if not ids:
+            await self.panel(chat, '<b>🙈 Скрытые вакансии</b>\n\nЗдесь пока пусто. '
+                             'Кнопка «Скрыть» под вакансией уберёт её из вашего поиска и уведомлений.',
+                             [[button('🔎 Найти вакансии', 'search:0')]] + BACK, mid)
+            return
+        lines = [f'<b>🙈 Скрытые вакансии · {len(ids)}</b>',
+                 'Эти объявления исключены из вашего поиска и уведомлений. Нажмите «Вернуть», чтобы снять скрытие.']
+        rows = []
+        for number, job_id in enumerate(ids[page * PAGE_SIZE:(page + 1) * PAGE_SIZE], page * PAGE_SIZE + 1):
+            job = self.store.get_job(job_id)
+            title = job.get('title') if job else f'Вакансия №{job_id} (больше нет в базе)'
+            lines.append(f'\n<b>{number}. {safe(title, 100)}</b>')
+            if job:
+                lines.append(safe(' · '.join(value for value in (job.get('company'), job.get('location')) if value), 100))
+            rows.append([button(f'↩️ Вернуть №{number}', f'restore:{job_id}:{page}')])
+        navigation = []
+        if page:
+            navigation.append(button('← Назад', f'hidden:{page - 1}'))
+        if (page + 1) * PAGE_SIZE < len(ids):
+            navigation.append(button('Далее →', f'hidden:{page + 1}'))
+        lines.append(f'\nСтраница {page + 1} из {(len(ids) - 1) // PAGE_SIZE + 1}')
+        await self.panel(chat, '\n'.join(lines), rows + ([navigation] if navigation else []) + BACK, mid)
+
+    async def hidden_card(self, chat, job, mid):
+        await self.panel(chat, '<b>🙈 Вакансия скрыта</b>\n' + safe(job['title'], 100) +
+                         '\n\nБольше не появится в вашем поиске и уведомлениях, пока вы её не вернёте.',
+                         [[button('↩️ Вернуть', f'restore:{job["id"]}'), button('🙈 Скрытые', 'hidden:0')]] + BACK, mid)
+
+    async def vacancy_action(self, uid, chat, action, mid):
+        parts = action.split(':')
+        if len(parts) not in (2, 3) or not parts[1].isascii() or not parts[1].isdigit():
+            return
+        job_id = int(parts[1])
+        if not 0 < job_id <= 2**63 - 1:
+            return
+        kind = parts[0]
+        if kind == 'job' and (len(parts) != 3 or parts[2] not in ('full', 'short')):
+            return
+        if kind == 'hide' and len(parts) != 2:
+            return
+        if kind == 'restore' and len(parts) == 3 and not parts[2].isdigit():
+            return
+        ids = hidden_job_ids(self.store.get_settings(uid))
+        job = self.store.get_job(job_id)
+        if kind == 'restore':
+            ids.discard(job_id)
+            self.store.update_settings(uid, hidden_jobs=sorted(ids))
+            if len(parts) == 3:
+                await self.hidden(uid, chat, int(parts[2]), mid)
+            else:
+                await self.panel(chat, '<b>↩️ Вакансия возвращена</b>\n'
+                                 'Она снова доступна при совпадении с вашими фильтрами. '
+                                 'История уже отправленных уведомлений сохранена.',
+                                 [[button('🔎 Найти вакансии', 'search:0'), button('🙈 Скрытые', 'hidden:0')]] + BACK, mid)
+        elif job is None:
+            await self.panel(chat, 'Вакансия больше не доступна.', BACK, mid)
+        elif kind == 'hide':
+            ids.add(job_id)
+            self.store.update_settings(uid, hidden_jobs=sorted(ids))
+            await self.hidden_card(chat, job, mid)
+        elif job_id in ids:
+            await self.hidden_card(chat, job, mid)
+        else:
+            expanded = parts[2] == 'full'
+            await self.panel(chat, job_text(job, expanded), job_buttons(job, expanded), mid)
 
     async def help(self, chat, mid=None):
         await self.panel(chat, '🆘 Связаться с владельцем и получить помощь:', [[{'text': '🆘 Помощь', 'url': HELP_URL}]] + BACK, mid)
@@ -247,11 +273,10 @@ class Bot:
                 return
             self.clear_pending(uid)
             command = text.split()[0].split("@")[0]
-            action = {"/start": "menu", "/menu": "menu", "/cancel": "menu", "/delete_me": "delete"}.get(command, "menu")
+            action = {"/start": "start", "/menu": "menu", "/cancel": "menu", "/delete_me": "delete"}.get(command, "menu")
             mid = None
-        if action == "menu":
-            await self.panel(chat_id, "<b>Работа в Сербии 🇷🇸</b>\nПоиск вакансий с вашими личными настройками.\n"
-                             "Уведомления по умолчанию выключены. С чего начнём?", MENU, mid)
+        if action in ('menu', 'start'):
+            await self.panel(chat_id, menu_text(self.store.get_settings(uid), start=action == 'start'), MENU, mid)
         elif action == "help":
             await self.help(chat_id, mid)
         elif action == "filters":
@@ -260,9 +285,19 @@ class Bot:
             self.clear_pending(uid)
             await self.panel(chat_id, 'Ввод отменён.', MENU, mid)
         elif action.startswith('search:'):
+            parts = action.split(':')
+            if len(parts) not in (2, 3): return
+            try:
+                page = int(parts[1])
+                after_id = int(parts[2]) if len(parts) == 3 else None
+            except ValueError: return
+            await self.results(uid, chat_id, page, after_id)
+        elif action.startswith('hidden:'):
             try: page = int(action.split(':')[1])
             except ValueError: return
-            await self.results(uid, chat_id, page)
+            await self.hidden(uid, chat_id, page, mid)
+        elif action.startswith(('hide:', 'restore:', 'job:')):
+            await self.vacancy_action(uid, chat_id, action, mid)
         elif action == 'sources' or action.startswith(('source:', 'favorite:', 'favorites:')):
             # Previously sent inline keyboards may remain in Telegram histories.
             # Their actions are retired and cannot mutate preserved legacy data.
@@ -280,17 +315,22 @@ class Bot:
                       "salary": "Введите минимальную зарплату в месяц: 1000 EUR или 120000 RSD. «-» — снять фильтр.",
                       "hour": "Введите час ежедневной подборки от 0 до 23, время Белграда."}[field]
             await self.panel(chat_id, prompt + "\n/cancel — отмена.", CANCEL, mid)
-        elif action in ("city", "remote", "language", "freshness"):
-            values = {"city": CITY_LABELS,
-                      "remote": {"any": "Не важно", "only": "Только удалённая", "office": "На месте"},
-                      "language": LANGUAGE_LABELS, "freshness": FRESHNESS_LABELS}[action]
-            await self.panel(chat_id, "Выберите значение фильтра.",
-                             [[button(label, f"set:{action}:{value}")] for value, label in values.items()] + BACK, mid)
-        elif action.startswith("set:"):
-            parts = action.split(":")
-            allowed = {"city": CITY_LABELS, "remote": ("any", "only", "office"),
-                       "language": LANGUAGE_LABELS, "freshness": FRESHNESS_LABELS}
-            if len(parts) == 3 and parts[1] in allowed and parts[2] in allowed[parts[1]]:
+        elif action in FILTER_OPTIONS:
+            text, rows = choice_panel(self.store.get_settings(uid), action)
+            await self.panel(chat_id, text, rows, mid)
+        elif action.startswith('choose:'):
+            parts = action.split(':')
+            if (len(parts) == 4 and parts[1] in FILTER_OPTIONS
+                    and parts[2] in FILTER_OPTIONS[parts[1]] and parts[3] in ('0', '1')):
+                field, value = parts[1:3]
+                settings = self.store.get_settings(uid)
+                self.store.update_settings(uid, **{field: select_value(settings, field, value, parts[3] == '1')})
+                text, rows = choice_panel(self.store.get_settings(uid), field)
+                await self.panel(chat_id, text, rows, mid)
+        elif action.startswith('set:'):
+            # Previously sent single-choice buttons retain their original meaning.
+            parts = action.split(':')
+            if len(parts) == 3 and parts[1] in FILTER_OPTIONS and parts[2] in FILTER_OPTIONS[parts[1]]:
                 self.store.update_settings(uid, **{parts[1]: parts[2]})
                 await self.filters(uid, chat_id, mid)
         elif action == "toggle_salary":
@@ -301,7 +341,7 @@ class Bot:
                                        min_salary=None, currency="EUR", include_unknown_salary=True, freshness="any")
             await self.filters(uid, chat_id, mid)
         elif action == "delete":
-            await self.panel(chat_id, "Удалить ваши настройки и историю уведомлений?",
+            await self.panel(chat_id, "Удалить ваши настройки, скрытые вакансии и историю уведомлений?",
                              [[button("Удалить мои данные", "delete_confirm")]] + BACK, mid)
         elif action == "delete_confirm":
             self.store.delete_user(uid)
@@ -356,7 +396,13 @@ class Bot:
             owner = str(uuid.uuid4())
             async with self.user_lock(uid):
                 if not await asyncio.to_thread(self.store.acquire_lease, key, owner, 900): return
+                user_key = f'user:{uid}'
+                user_locked = False
                 try:
+                    # Serialize delivery with hide/filter callbacks in another
+                    # webhook process too, not only inside this Bot instance.
+                    user_locked = await asyncio.to_thread(self.store.acquire_lease, user_key, owner, 900)
+                    if not user_locked: return
                     latest_user = await asyncio.to_thread(self.store.get_subscriber, uid)
                     if latest_user is None: return
                     user = latest_user
@@ -366,6 +412,7 @@ class Bot:
                     pending = [job for job in jobs if job['id'] not in delivered and contactable(job) and matches(job, settings, now)]
                     for job in pending[:10]:
                         if not await asyncio.to_thread(self.store.acquire_lease, key, owner, 900): break
+                        if not await asyncio.to_thread(self.store.acquire_lease, user_key, owner, 900): break
                         latest = await asyncio.to_thread(self.store.get_settings, uid)
                         if latest['notifications'] == 'off': break
                         if not matches(job, latest, now): continue
@@ -378,6 +425,8 @@ class Bot:
                     if error.code == 403: await asyncio.to_thread(self.store.update_settings, uid, notifications='off')
                     LOG.warning('Notification delivery failed (%s)', error.code)
                 finally:
+                    if user_locked:
+                        await asyncio.to_thread(self.store.release_lease, user_key, owner)
                     await asyncio.to_thread(self.store.release_lease, key, owner)
         semaphore = asyncio.Semaphore(4)
         async def limited(user):

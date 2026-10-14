@@ -22,6 +22,16 @@ try:
    ASSERT (SELECT settings->>'city'='nis' AND settings->>'freshness'='7' AND settings->'keywords'='["python"]'::jsonb AND settings->>'notifications'='daily' FROM sj_users WHERE user_id=1), 'Existing settings lost';
    ASSERT (SELECT settings='{}' FROM sj_users WHERE user_id=2), 'Another user modified';
  END $$;""")
+ pg.psql("""SET ROLE service_role;
+ SELECT sj_patch_settings(1, '{"city":["belgrade","novi_sad"],"language":["russian","serbian"],"hidden_jobs":[10,20]}', '{}');
+ DO $$ BEGIN
+   ASSERT (SELECT settings->'city'='["belgrade","novi_sad"]'::jsonb AND settings->'language'='["russian","serbian"]'::jsonb AND settings->'hidden_jobs'='[10,20]'::jsonb AND settings->'keywords'='["python"]'::jsonb AND settings->>'notifications'='daily' FROM sj_users WHERE user_id=1), 'Multiple selections or hidden jobs lost';
+ END $$;
+ SELECT sj_patch_settings(1, '{"hidden_jobs":[20]}', '{}');
+ DO $$ BEGIN
+   ASSERT (SELECT settings->'hidden_jobs'='[20]'::jsonb AND settings->'city'='["belgrade","novi_sad"]'::jsonb FROM sj_users WHERE user_id=1), 'Restore damaged settings';
+   ASSERT (SELECT settings='{}' FROM sj_users WHERE user_id=2), 'Another user modified';
+ END $$;""")
  with ThreadPoolExecutor(2) as pool:
   calls=[pool.submit(pg.psql,"SET ROLE service_role; SELECT sj_acquire_lease('collection','"+owner+"',900);") for owner in ('a','b')]
   output=[f.result() for f in calls]

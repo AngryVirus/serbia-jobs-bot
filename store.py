@@ -39,6 +39,7 @@ def default_settings() -> dict[str, Any]:
         "daily_hour": 9,
         "pending_input": None,
         "webhook_update_ids": [],
+        "hidden_jobs": [],
     }
 
 
