@@ -5,6 +5,7 @@ from filters import hidden_job_ids, matches
 from job_metadata import job_language_facts, valid_job_url
 from presentation import BACK, button, clipped, empty_search_text, job_text
 from translation import TranslationError, browser_translation_url
+from addresses import job_address, map_buttons
 
 MODES = ('s', 'f', 'rs', 'rf')
 ACTIONS = ('show', 'next', 'prev', 'details', 'translate', 'hide')
@@ -12,6 +13,7 @@ ACTIONS = ('show', 'next', 'prev', 'details', 'translate', 'hide')
 
 async def render_card(job, mode, translator):
     display = dict(job)
+    display['_map_address'] = job_address(job)
     notice = ''
     failed = False
     if mode.startswith('r'):
@@ -32,6 +34,7 @@ def viewer_buttons(job, index, count, mode, failed=False):
     def action(label, value):
         return button(label, f'view:{job["id"]}:{index}:{value}:{mode}')
     rows = [[{'text': '🔗 Открыть объявление', 'url': job['url']}]] if valid_job_url(job.get('url')) else []
+    rows += map_buttons(job)
     rows += [[action('Свернуть ↑' if mode.endswith('f') else 'Подробнее ↓', 'details'),
               action('🙈 Скрыть', 'hide')],
              [action('🌐 Оригинал' if mode.startswith('r') and not failed else '🇷🇺 Перевести на русский', 'translate')]]

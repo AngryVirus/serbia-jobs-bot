@@ -50,7 +50,7 @@ def remote_fact(text):
 def text_salary(text):
     from sources import parse_money_amount
     # A stated maximum is never treated as a guaranteed minimum.
-    pattern=r'(?:(up to|do|до)\s+)?([\d][\d\s.,]*)\s*(?:[-–]\s*[\d\s.,]+\s*)?(EUR|RSD|USD)\s*(?:/\s*(month|hour|year)|\b(mesecno|mesečno|monthly|hourly|annually)|(в месяц|в час|в год|мес\.))'
+    pattern=r'(?:(up to|do|до)\s+)?([\d][\d \t.,]*)\s*(?:[-–]\s*[\d \t.,]+\s*)?(EUR|RSD|USD)\s*(?:/\s*(month|hour|year)|\b(mesecno|mesečno|monthly|hourly|annually)|(в месяц|в час|в год|мес\.))'
     match=re.search(pattern,text,re.I)
     if not match: return None,None,None
     period=(match[4] or match[5] or match[6] or '').casefold()
@@ -128,6 +128,6 @@ def enrich(job, node=None):
         elif maximum is not None:
             job.salary_display='до '+str(maximum)+' '+str(salary.get('currency',''))+' / '+period
     if not job.salary_display:
-        label=re.search(r'(?i)(?:(?:up to|do|до|от|from)\s+)?\d[\d\s.,]*(?:[-–]\s*\d[\d\s.,]*)?\s*(?:EUR|RSD|USD)\s*(?:/\s*(?:month|hour|year|day)|mesecno|mesečno|monthly|hourly|annually|в месяц|в час|в год|мес\.)',job.description)
+        label=re.search(r'(?i)(?:(?:up to|do|до|от|from)\s+)?\d[\d \t.,]*(?:[-–]\s*\d[\d \t.,]*)?\s*(?:EUR|RSD|USD)\s*(?:/\s*(?:month|hour|year|day)|mesecno|mesečno|monthly|hourly|annually|в месяц|в час|в год|мес\.)',job.description)
         if label: job.salary_display=label[0].strip()[:150]
     return job

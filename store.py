@@ -13,13 +13,14 @@ import json
 from pathlib import Path
 import sqlite3
 from typing import Any, Iterable, Mapping
+from channel_catalog import CHANNELS
 
 
 SOURCE_IDS = (
     "poslovi", "workforce", "halooglasi", "careerjet", "sale_me",
     "helloworld", "lakodoposla", "klikdoposla", "jooble", "radim",
-    "serbiahub", "ovdejobs", "startit", "bulevar",
-)
+    "serbiahub", "ovdejobs", "startit", "bulevar", "infostud",
+) + tuple('telegram_' + channel for channel in CHANNELS)
 
 
 def default_settings() -> dict[str, Any]:
@@ -37,6 +38,7 @@ def default_settings() -> dict[str, Any]:
         "include_unknown_salary": True,
         "sources": list(SOURCE_IDS),
         "notifications": "off",
+        "notifications_after_id": 0,
         "daily_hour": 9,
         "pending_input": None,
         "webhook_update_ids": [],
@@ -145,7 +147,10 @@ class Store:
     def _settings(raw: str | None) -> dict[str, Any]:
         settings = default_settings()
         if raw:
-            settings.update(json.loads(raw))
+            saved = json.loads(raw)
+            settings.update(saved)
+            if 'notifications_after_id' not in saved and settings['notifications'] != 'off':
+                settings['notifications_after_id'] = None
         return settings
 
     @classmethod
@@ -236,6 +241,10 @@ class Store:
                 if existing is None:
                     inserted += 1
         return inserted
+
+    def latest_job_id(self) -> int:
+        with self._connection() as conn:
+            return conn.execute('SELECT COALESCE(MAX(id), 0) FROM jobs').fetchone()[0]
 
     def list_jobs(self) -> list[dict[str, Any]]:
         with self._connection() as conn:

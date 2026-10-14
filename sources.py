@@ -17,6 +17,8 @@ import json
 import math
 import re
 import time
+import threading
+from channel_catalog import CHANNELS
 from typing import Iterable
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlsplit, urlunsplit
@@ -69,9 +71,12 @@ class Source:
     observed_links: bool = False
     feed_url: str | None = None
     api_hosts: tuple[str, ...] = ()
+    telegram_channel: str | None = None
+    rss_feed: bool = False
 
 
 SOURCES: dict[str, Source] = {
+    "infostud": Source("infostud", "Poslovi Infostud", "https://poslovi.infostud.com/", "https://rss.infostud.com/poslovi/", (r"^/posao/.+",), api_hosts=("rss.infostud.com",), rss_feed=True),
     "poslovi": Source("poslovi", "Poslovi.rs", "https://www.poslovi.rs/", "https://www.poslovi.rs/", (r"^/job/[^/]+/[^/]+-\d+/?$",), observed_links=True),
     "workforce": Source("workforce", "Workforce", "https://www.workforce.rs/", "https://www.workforce.rs/oglasi-za-posao/", (r"^/oglas/[^/]+/?$",), observed_links=True),
     "halooglasi": Source("halooglasi", "Halo oglasi", "https://www.halooglasi.com/posao", "https://www.halooglasi.com/posao/ponuda-poslova-pretraga", (r"^/posao/ponuda-poslova-[^/]+/[^/]+/\d+/?$",), observed_links=True),
@@ -87,6 +92,15 @@ SOURCES: dict[str, Source] = {
     "startit": Source("startit", "Startit Poslovi", "https://startit.rs/poslovi/", "https://startit.rs/poslovi/", (r"^/poslovi/[^/]+/?$",), "IT-вакансии: только ссылки заголовков объявлений, без страниц тегов.", observed_links=True),
     "bulevar": Source("bulevar", "Omladinska zadruga Bulevar", "https://www.omladinskabulevar.rs/", "https://www.omladinskabulevar.rs/za-zadrugare-omladinske-zadruge/poslovi-omladinska-zadruga-beograd/", (r"^/za-zadrugare-omladinske-zadruge/poslovi-omladinska-zadruga-beograd/\d+-[^/]+\.html$",), "Вакансии молодёжного и студенческого кооператива; условия участия указаны в объявлении.", observed_links=True),
 }
+
+for _channel, _name in CHANNELS.items():
+    _source_id = 'telegram_' + _channel
+    SOURCES[_source_id] = Source(_source_id, 'Telegram · ' + _name,
+        'https://t.me/' + _channel, 'https://t.me/s/' + _channel,
+        (r'^/' + re.escape(_channel) + r'/\d+$',), telegram_channel=_channel)
+
+_TELEGRAM_PACE_LOCK = threading.Lock()
+_TELEGRAM_LAST_REQUEST = 0.0
 
 
 def clean_text(value: object) -> str:
@@ -197,6 +211,9 @@ def canonical_url(url: str) -> str:
 def _same_site(source: Source, url: str) -> bool:
     origin_host = (urlsplit(source.url).hostname or "").removeprefix("www.")
     candidate = urlsplit(url)
+    if source.telegram_channel and candidate.path != '/robots.txt':
+        if not re.fullmatch(r'/(?:s/)?' + re.escape(source.telegram_channel) + r'(?:/\d+)?/?', candidate.path, re.I):
+            return False
     return candidate.scheme in {"http", "https"} and (candidate.hostname or "").removeprefix("www.") == origin_host and not candidate.username
 
 
@@ -244,7 +261,9 @@ def _location(value: object) -> str:
     if not isinstance(address, dict):
         return ""
     # Country is omitted when a city is supplied so users can filter the city.
-    return clean_text(address.get("addressLocality") or address.get("addressRegion") or value.get("name") or address.get("addressCountry"))
+    city = clean_text(address.get("addressLocality") or address.get("addressRegion") or value.get("name") or address.get("addressCountry"))
+    street = clean_text(address.get("streetAddress"))
+    return ', '.join(dict.fromkeys(filter(None, (street, city))))
 
 
 def _numeric(value: object) -> float | None:
@@ -524,6 +543,18 @@ class Fetcher:
         self.last_request: dict[str, float] = {}
 
     def _pace(self, origin: str, delay: float) -> None:
+        if self.source.telegram_channel:
+            # All channels share the same host budget, including robots reads.
+            global _TELEGRAM_LAST_REQUEST
+            with _TELEGRAM_PACE_LOCK:
+                remaining = max(0, delay - (time.monotonic() - _TELEGRAM_LAST_REQUEST))
+                if time.monotonic() + remaining > self.deadline:
+                    raise FetchError('timeout', 'Достигнут лимит времени проверки источника.')
+                if remaining:
+                    time.sleep(remaining)
+                _TELEGRAM_LAST_REQUEST = time.monotonic()
+                self.last_request[origin] = _TELEGRAM_LAST_REQUEST
+            return
         remaining = delay - (time.monotonic() - self.last_request.get(origin, -1e9))
         if time.monotonic()+max(remaining,0) > self.deadline:
             raise FetchError('timeout', 'Достигнут лимит времени проверки источника.')
@@ -556,7 +587,8 @@ class Fetcher:
                 if response.headers.get("Content-Encoding", "identity") not in {"identity", ""}:
                     raise FetchError("error", "Неожиданное сжатие ответа; данные не разобраны.")
                 content_type = response.headers.get("Content-Type", "")
-                if not robot_file and content_type and not any(kind in content_type.lower() for kind in ("html", "text/plain", "application/json", "javascript")):
+                formats = ("html", "text/plain", "application/json", "javascript") + (("xml",) if self.source.rss_feed else ())
+                if not robot_file and content_type and not any(kind in content_type.lower() for kind in formats):
                     raise FetchError("error", "Источник вернул неподдерживаемый формат.")
                 raw = response.read(MAX_BYTES + 1)
                 if len(raw) > MAX_BYTES:
@@ -611,6 +643,12 @@ def collect_source(source: Source, *, detail_limit: int = DEFAULT_DETAIL_LIMIT, 
     if source.requires_permission:
         return [], _status(source, "requires_permission", detail=source.note)
     fetcher = fetcher or Fetcher(source)
+    if source.rss_feed:
+        from rss_sources import collect_rss
+        return collect_rss(source, fetcher)
+    if source.telegram_channel:
+        from telegram_sources import collect_channel
+        return collect_channel(source, fetcher)
     if source.id == 'serbiahub':
         return _collect_serbiahub(source, fetcher)
     if source.id == 'lakodoposla':
@@ -702,7 +740,7 @@ def _collect_feed(source: Source, fetcher: Fetcher) -> tuple[list[Job], dict]:
     return list(jobs.values()), _status(source, state, len(jobs), detail, feed=True, inspected=len(seen))
 
 
-def collect_all(enabled: Iterable[str] | None = None) -> tuple[list[Job], dict[str, dict]]:
+def collect_all(enabled: Iterable[str] | None = None, *, on_source=None) -> tuple[list[Job], dict[str, dict]]:
     """Collect selected source IDs synchronously; use asyncio.to_thread in a bot.
 
     HTML crawl visits one listing and at most eight detail pages per source. The
@@ -727,6 +765,13 @@ def collect_all(enabled: Iterable[str] | None = None) -> tuple[list[Job], dict[s
             statuses[source.id] = status
             for job in found:
                 jobs[(job.source, job.url)] = job
+            if on_source is not None:
+                try:
+                    on_source(source.id, found, status)
+                except BaseException:
+                    for pending in futures:
+                        pending.cancel()
+                    raise
     return list(jobs.values()), statuses
 
 

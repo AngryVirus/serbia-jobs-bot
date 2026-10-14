@@ -6,6 +6,7 @@ from filters import (FILTER_OPTIONS, SINGLE_CHOICE_FILTERS, hidden_job_ids,
                      parse_datetime, search_diagnostics, selected_values)
 from job_metadata import job_language_facts, valid_job_url
 from sources import SOURCES
+from addresses import job_address, maps_url, map_buttons
 
 BELGRADE = ZoneInfo('Europe/Belgrade')
 HELP_URL = 'https://t.me/AngryVirus'
@@ -13,21 +14,22 @@ LANGUAGE_NAMES = {'ru': 'Русский', 'sr': 'Сербский', 'en': 'Ан�
 FILTER_TITLES = {'city': '📍 Города', 'remote': '💻 Формат работы',
                  'language': '🗣 Языки', 'freshness': '🕒 Свежесть',
                  'residence_permit': '🪪 Наличие ВНЖ'}
-DISCLAIMER = (
-    '<b>Перед началом</b>\n'
-    'Бот собирает объявления из открытых источников и не является работодателем. '
-    'Мы не гарантируем актуальность вакансий или трудоустройство и не отвечаем '
-    'за действия работодателей. Проверяйте условия самостоятельно.'
-)
 
 
 def button(label, data):
     return {'text': label, 'callback_data': data}
 
 
-MENU = [[button('🔎 Найти вакансии', 'search:0')],
-        [button('⚙️ Фильтры', 'filters'), button('🔔 Уведомления', 'notifications')],
-        [button('🙈 Скрытые вакансии', 'hidden:0'), button('💬 Помощь', 'help')]]
+def menu_buttons(settings):
+    enabled = settings.get('notifications', 'off') != 'off'
+    return [[button('🔎 Найти вакансии', 'search:0')],
+            [button('⚙️ Фильтры', 'filters'),
+             button('🔔 Уведомления: вкл' if enabled else '🔕 Уведомления: выкл',
+                    'notify:off' if enabled else 'notify:instant')],
+            [button('🙈 Скрытые вакансии', 'hidden:0'), button('💬 Помощь', 'help')]]
+
+
+MENU = menu_buttons({})
 BACK = [[button('🏠 Главное меню', 'menu')]]
 CANCEL = [[button('✖ Отменить ввод', 'cancel')]] + BACK
 
@@ -79,15 +81,12 @@ def filter_summary(settings, compact=False):
 
 
 def menu_text(settings, start=False):
-    mode = {'off': 'выключены', 'instant': 'после проверки',
-            'daily': f"ежедневно в {settings.get('daily_hour', 9):02}:00"}.get(settings.get('notifications'), 'выключены')
+    mode = 'выключены' if settings.get('notifications', 'off') == 'off' else 'включены — новые вакансии'
     text = '<b>🇷🇸 Работа в Сербии</b>\n<i>SERBIA JOBS</i>\n\n'
     text += '<b>Ваша подборка</b>\n<blockquote>' + filter_summary(settings, compact=True) + '</blockquote>'
     text += f'\n\n🔔 Уведомления: {mode}\n🙈 Скрытые вакансии: {len(hidden_job_ids(settings))}'
     text += ('\n\n<b>«Найти вакансии»</b> — листать предложения.\n'
              'В <b>«Фильтрах»</b> выберите города, языки и условия работы.')
-    if start:
-        text += '\n\n' + DISCLAIMER
     return text
 
 
@@ -154,6 +153,8 @@ def job_text(job, expanded=False):
     place = job.get('location') or ('Удалённо' if job.get('remote') is True else 'Место не указано')
     company = safe(job.get('company'), 80 if expanded else 40)
     lines.append(('🏢 ' + company + ' · ' if company else '') + '📍 ' + safe(place, 110 if expanded else 55))
+    if maps_url(job):
+        lines.append('🗺 <a href="' + escape(maps_url(job), quote=True) + '">' + safe(job_address(job), 180) + '</a>')
     salary = job.get('salary_min')
     payment = job.get('salary_display')
     if not payment and salary is not None:
@@ -181,6 +182,7 @@ def job_text(job, expanded=False):
 
 def job_buttons(job, expanded=False, translated=False):
     rows = [[{'text': '🔗 Открыть объявление', 'url': job['url']}]] if valid_job_url(job.get('url')) else []
+    rows += map_buttons(job)
     if job.get('id'):
         prefix = 'ru_' if translated else ''
         rows.append([button('Свернуть ↑' if expanded else 'Подробнее ↓', f'job:{job["id"]}:{prefix}{"short" if expanded else "full"}'),

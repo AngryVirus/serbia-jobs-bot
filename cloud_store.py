@@ -85,7 +85,10 @@ class SupabaseStore:
     def _settings(raw: Mapping[str, Any] | str | None) -> dict[str, Any]:
         settings = default_settings()
         if raw:
-            settings.update(json.loads(raw) if isinstance(raw, str) else deepcopy(raw))
+            saved = json.loads(raw) if isinstance(raw, str) else deepcopy(raw)
+            settings.update(saved)
+            if 'notifications_after_id' not in saved and settings['notifications'] != 'off':
+                settings['notifications_after_id'] = None
         return settings
 
     @staticmethod
@@ -152,6 +155,10 @@ class SupabaseStore:
         self._request("POST", "sj_jobs", {"on_conflict": "source,url"}, list(unique.values()),
                       prefer="resolution=merge-duplicates,missing=default,return=minimal")
         return len(set(unique) - existing_pairs)
+
+    def latest_job_id(self) -> int:
+        rows = self._request('GET', 'sj_jobs', {'select': 'id', 'order': 'id.desc', 'limit': 1}) or []
+        return rows[0]['id'] if rows else 0
 
     def list_jobs(self) -> list[dict[str, Any]]:
         return [self._job(row) for row in self._rows("sj_jobs", {"order": "created_at.desc,id.desc"})]

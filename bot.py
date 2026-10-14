@@ -9,6 +9,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import threading
 import uuid
 from weakref import WeakValueDictionary
 from zoneinfo import ZoneInfo
@@ -22,7 +23,7 @@ from version import VERSION
 from translation import Translator, browser_translation_url
 from viewer import ACTIONS as VIEW_ACTIONS, MODES as VIEW_MODES, render_card, show as show_viewer
 from presentation import (MENU, BACK, CANCEL, HELP_URL, button, choice_panel,
-                          empty_search_text, filter_summary, job_text, job_buttons, menu_text, safe)
+                          empty_search_text, filter_summary, job_text, job_buttons, menu_text, menu_buttons, safe)
 
 LOG = logging.getLogger("serbia_jobs")
 BELGRADE = ZoneInfo("Europe/Belgrade")
@@ -122,14 +123,14 @@ class Bot:
 
     async def notifications(self, uid, chat, mid=None):
         s = self.get_settings(uid)
-        current = {"off": "Выключены", "instant": "После каждой проверки источников", "daily": "Ежедневная подборка"}[s["notifications"]]
+        enabled = s['notifications'] != 'off'
+        current = 'Включены' if enabled else 'Выключены'
         await self.panel(chat, f"<b>🔔 Уведомления</b>\n\n<blockquote>Сейчас: {current}</blockquote>\n"
-                         f"Проверка источников: примерно каждые {self.scan_minutes} минут.\n"
-                         f"Подборка: {s['daily_hour']:02}:00 по времени Белграда.\n"
-                         "За один проход отправляется до 10 вакансий. Остальные доступны через поиск. "
-                         "Уже отправленные вакансии не повторяются.",
-                         [[button("Выключить", "notify:off")], [button("При проверке", "notify:instant")],
-                          [button("Раз в день", "notify:daily"), button("Час подборки", "input:hour")]] + BACK, mid)
+                         'Новая вакансия по вашим фильтрам придёт сразу после обнаружения.\n'
+                         f'Источники проверяются примерно каждые {self.scan_minutes} минут.\n'
+                         'Старый каталог при включении не рассылается. Уже отправленные вакансии не повторяются.',
+                         [[button('🔕 Выключить' if enabled else '🔔 Включить',
+                                  'notify:off' if enabled else 'notify:instant')]] + BACK, mid)
 
     async def results(self, uid, chat, page=0, after_id=None, mid=None):
         # Old search pagination links still open the corresponding position.
@@ -285,14 +286,14 @@ class Bot:
             action = {"/start": "start", "/menu": "menu", "/cancel": "menu", "/delete_me": "delete"}.get(command, "menu")
             mid = None
         if action in ('menu', 'start'):
-            await self.panel(chat_id, menu_text(self.get_settings(uid), start=action == 'start'), MENU, mid)
+            await self.panel(chat_id, menu_text(self.get_settings(uid), start=action == 'start'), menu_buttons(self.get_settings(uid)), mid)
         elif action == "help":
             await self.help(chat_id, mid)
         elif action == "filters":
             await self.filters(uid, chat_id, mid)
         elif action == 'cancel':
             self.clear_pending(uid)
-            await self.panel(chat_id, 'Ввод отменён.', MENU, mid)
+            await self.panel(chat_id, 'Ввод отменён.', menu_buttons(self.get_settings(uid)), mid)
         elif action.startswith('search:'):
             parts = action.split(':')
             if len(parts) not in (2, 3): return
@@ -320,12 +321,16 @@ class Bot:
         elif action == 'sources' or action.startswith(('source:', 'favorite:', 'favorites:')):
             # Previously sent inline keyboards may remain in Telegram histories.
             # Their actions are retired and cannot mutate preserved legacy data.
-            await self.panel(chat_id, 'Меню обновлено. Выберите действие:', MENU, mid)
+            await self.panel(chat_id, 'Меню обновлено. Выберите действие:', menu_buttons(self.get_settings(uid)), mid)
         elif action == "notifications":
             await self.notifications(uid, chat_id, mid)
         elif action.startswith("notify:") and action[7:] in ("off", "instant", "daily"):
-            self.update_settings(uid, notifications=action[7:])
-            await self.notifications(uid, chat_id, mid)
+            mode = 'off' if action[7:] == 'off' else 'instant'
+            fields = {'notifications': mode}
+            if mode == 'instant' and self.get_settings(uid)['notifications'] == 'off':
+                fields['notifications_after_id'] = self.store.latest_job_id()
+            self.update_settings(uid, **fields)
+            await self.panel(chat_id, menu_text(self.get_settings(uid)), menu_buttons(self.get_settings(uid)), mid)
         elif action.startswith("input:") and action[6:] in ("keywords", "exclusions", "salary", "hour"):
             field = action[6:]
             self.set_pending(uid, field)
@@ -387,12 +392,45 @@ class Bot:
         if self.scanning: return False
         self.scanning = True
         claimed = False
+        heartbeat = None
+        stopped = threading.Event()
         try:
             claimed = await asyncio.to_thread(self.store.acquire_lease, 'collection', self.instance_id, 900)
             if not claimed: return False
+            async def renew_collection():
+                while True:
+                    await asyncio.sleep(60)
+                    try:
+                        renewed = await asyncio.to_thread(self.store.acquire_lease, 'collection', self.instance_id, 900)
+                    except Exception:
+                        renewed = False
+                    if not renewed:
+                        stopped.set()
+                        return
+            heartbeat = asyncio.create_task(renew_collection())
+            # Migrate old subscriptions before this scan discovers new jobs.
+            try:
+                await self.notify()
+            except Exception as error:
+                LOG.error('Notification initialization failed (%s)', type(error).__name__)
             await asyncio.to_thread(self.store.set_source_status, {'_collection': {'state': 'running', 'checked_at': datetime.now(timezone.utc).isoformat()}})
-            jobs, statuses = await asyncio.to_thread(collect_all)
-            added = await asyncio.to_thread(self.store.save_jobs, jobs)
+            loop = asyncio.get_running_loop()
+            added = 0
+            def on_source(source_id, found, status):
+                nonlocal added
+                if stopped.is_set():
+                    raise RuntimeError('Collection lease lost or collection cancelled')
+                new = self.store.save_jobs(found)
+                added += new
+                self.store.set_source_status({source_id: status})
+                if new:
+                    try:
+                        asyncio.run_coroutine_threadsafe(self.notify(), loop).result()
+                    except Exception as error:
+                        LOG.error('Notification cycle failed (%s); retry scheduled', type(error).__name__)
+            jobs, statuses = await asyncio.to_thread(collect_all, on_source=on_source)
+            if stopped.is_set():
+                raise RuntimeError('Collection lease lost')
             statuses['_collection'] = {'state': 'finished', 'checked_at': datetime.now(timezone.utc).isoformat(), 'count': len(jobs)}
             await asyncio.to_thread(self.store.set_source_status, statuses)
             for key, status in statuses.items():
@@ -407,6 +445,10 @@ class Bot:
                 except Exception: pass
             return False
         finally:
+            stopped.set()
+            if heartbeat:
+                heartbeat.cancel()
+                await asyncio.gather(heartbeat, return_exceptions=True)
             if claimed:
                 try: await asyncio.to_thread(self.store.release_lease, 'collection', self.instance_id)
                 except Exception as error: LOG.error('Lease release failed (%s)', type(error).__name__)
@@ -433,10 +475,17 @@ class Bot:
                     if latest_user is None: return
                     user = latest_user
                     settings = user['settings']
-                    if settings['notifications'] == 'off' or (settings['notifications'] == 'daily' and not daily_due(user, now)): return
+                    if settings['notifications'] == 'off': return
+                    if settings.get('notifications_after_id') is None:
+                        # First cycle after upgrading a legacy subscription:
+                        # establish a baseline instead of sending the old catalog.
+                        latest_id = await asyncio.to_thread(self.store.latest_job_id)
+                        await asyncio.to_thread(self.store.update_settings, uid, notifications_after_id=latest_id)
+                        return
                     delivered = await asyncio.to_thread(self.store.delivered_job_ids, uid)
-                    pending = [job for job in jobs if job['id'] not in delivered and contactable(job) and matches(job, settings, now)]
-                    for job in pending[:10]:
+                    pending = [job for job in jobs if job['id'] > settings.get('notifications_after_id', 0)
+                               and job['id'] not in delivered and contactable(job) and matches(job, settings, now)]
+                    for job in reversed(pending):
                         if not await asyncio.to_thread(self.store.acquire_lease, key, owner, 900): break
                         if not await asyncio.to_thread(self.store.acquire_lease, user_key, owner, 900): break
                         latest = await asyncio.to_thread(self.store.get_settings, uid)
@@ -498,7 +547,11 @@ class Bot:
                         try:
                             await processor.update(update)
                         except Exception as error:
-                            LOG.error("Update failed (%s)", type(error).__name__)
+                            LOG.error("Update failed (%s); retrying", type(error).__name__)
+                            # A higher offset acknowledges every earlier update.
+                            # Retry this one before processing the rest of the batch.
+                            await asyncio.sleep(5)
+                            break
                         offset = update["update_id"] + 1
                 except TelegramError as error:
                     if error.code in (401, 409):
@@ -550,7 +603,10 @@ def main():
             return
         try:
             store.set_source_status({'_collection':{'state':'running','checked_at':datetime.now(timezone.utc).isoformat()}})
-            jobs, statuses = collect_all()
+            def renew_collection(source_id, found, status):
+                if not store.acquire_lease('collection', owner, 900):
+                    raise RuntimeError('Collection lease lost')
+            jobs, statuses = collect_all(on_source=renew_collection)
             print('New vacancies:',store.save_jobs(jobs))
             statuses['_collection']={'state':'finished','count':len(jobs),'checked_at':datetime.now(timezone.utc).isoformat()}
             store.set_source_status(statuses)

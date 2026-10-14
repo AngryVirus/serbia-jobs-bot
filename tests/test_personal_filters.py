@@ -8,7 +8,7 @@ import unittest
 
 from bot import Bot
 from filters import FILTER_OPTIONS, hidden_job_ids, matches, selected_values, select_value
-from presentation import DISCLAIMER, choice_panel, filter_summary, job_buttons, job_text, menu_text
+from presentation import choice_panel, filter_summary, job_buttons, job_text, menu_text
 from store import Store, default_settings
 from test_bot import FakeAPI, callback, message, vacancy
 from test_cloud_store import MemorySupabaseStore
@@ -119,11 +119,11 @@ class NewPresentationTests(unittest.TestCase):
         settings = dict(default_settings(), city=['belgrade', 'novi_sad'], language=['russian', 'serbian'],
                         notifications='daily', daily_hour=17, hidden_jobs=[1, 2], keywords=['<script>'])
         text = menu_text(settings)
-        for value in ('Белград', 'Нови-Сад', 'Русский', 'Сербский', '17:00', 'Скрытые вакансии: 2', '&lt;script&gt;'):
+        for value in ('Белград', 'Нови-Сад', 'Русский', 'Сербский', 'включены — новые вакансии', 'Скрытые вакансии: 2', '&lt;script&gt;'):
             self.assertIn(value, text)
-        self.assertNotIn(DISCLAIMER, text)
+        self.assertNotIn('17:00', text)
         self.assertNotIn('Тестовый режим', text)
-        self.assertIn(DISCLAIMER, menu_text(settings, start=True))
+        self.assertEqual(text, menu_text(settings, start=True))
         self.assertNotIn('тестовом режиме', menu_text(settings, start=True))
         self.assertNotIn('Возможны ошибки', menu_text(settings, start=True))
         self.assertIn('«Найти вакансии»', text)
@@ -145,12 +145,15 @@ class PersonalJourneys(unittest.IsolatedAsyncioTestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    async def test_start_disclaimer_and_menu_without_repeat(self):
-        await self.bot.handle(message(1, '/start'))
-        self.assertIn(DISCLAIMER, self.api.sent[-1]['text'])
-        await self.bot.handle(message(1, '/menu'))
-        self.assertNotIn(DISCLAIMER, self.api.sent[-1]['text'])
-        self.assertIn('SERBIA JOBS', self.api.sent[-1]['text'])
+    async def test_start_and_menu_without_disclaimer(self):
+        for command in ('/start', '/menu'):
+            await self.bot.handle(message(1, command))
+            text = self.api.sent[-1]['text']
+            self.assertIn('SERBIA JOBS', text)
+            for removed in ('Перед началом', 'тестовом режиме', 'Возможны ошибки',
+                            'не является работодателем', 'не гарантируем',
+                            'Проверяйте условия самостоятельно'):
+                self.assertNotIn(removed, text)
 
     async def test_multiple_selection_stays_open_and_shows_checkmarks(self):
         for action in ('choose:city:belgrade:1', 'choose:city:novi_sad:1', 'choose:city:novi_sad:1'):

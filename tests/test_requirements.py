@@ -122,7 +122,7 @@ class ProductTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_menu_help_retired_commands_and_language_options(self):
         flat=[b for row in MENU for b in row]
-        self.assertEqual([b['text'] for b in flat],['🔎 Найти вакансии','⚙️ Фильтры','🔔 Уведомления','🙈 Скрытые вакансии','💬 Помощь'])
+        self.assertEqual([b['text'] for b in flat],['🔎 Найти вакансии','⚙️ Фильтры','🔕 Уведомления: выкл','🙈 Скрытые вакансии','💬 Помощь'])
         await self.bot.handle(callback(1, flat[-1]['callback_data']))
         help_panel = self.api.calls[-1][1]
         self.assertIn('помощь с настройками', help_panel['text'])
