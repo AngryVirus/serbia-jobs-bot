@@ -2,7 +2,7 @@
 from html import escape
 from zoneinfo import ZoneInfo
 
-from filters import FILTER_OPTIONS, hidden_job_ids, parse_datetime, selected_values
+from filters import FILTER_OPTIONS, hidden_job_ids, parse_datetime, search_diagnostics, selected_values
 from job_metadata import valid_job_url
 from sources import SOURCES
 
@@ -95,11 +95,43 @@ def choice_panel(settings, field):
             'Изменения сохраняются сразу.')
     if field == 'freshness':
         text += '\nПериоды объединяются: «7 дней» уже включает сегодня и вчера.'
+        text += '\nОбъявления без даты доступны при выборе «Не важно».'
+    elif field == 'language':
+        text += '\nУчитываются явно указанные языковые требования, а не язык текста объявления.'
+    elif field == 'remote':
+        text += '\nЕсли формат не указан, объявление доступно при выборе «Любой формат».'
     rows = [[button(('✅ ' if value in selected else '▫️ ') + label,
                     f'choose:{field}:{value}:{0 if value in selected and value != "any" else 1}')]
             for value, label in FILTER_OPTIONS[field].items()]
-    rows += [[button('✓ Готово', 'filters'), button('🔎 Найти', 'search:0')]] + BACK
+    rows += [[button('✓ Готово', 'filters')]] + BACK
     return text, rows
+
+
+def empty_search_text(jobs, settings, now=None):
+    diagnostics = search_diagnostics(jobs, settings, now)
+    text = '<b>Подходящих вакансий нет по выбранным условиям.</b>\n\n'
+    text += filter_summary(settings, compact=True)
+    if not diagnostics['available']:
+        if hidden_job_ids(settings):
+            text += '\n\nДействующих вакансий вне вашего списка скрытых сейчас нет.'
+        else:
+            text += '\n\nСейчас в базе нет доступных действующих объявлений. Попробуйте позже.'
+        return text
+    text += f'\n\nБез ограничений ваших фильтров доступно: {diagnostics["available"]}.'
+    labels = {'freshness': 'Свежесть', 'language': 'Языки', 'remote': 'Формат работы',
+              'city': 'Города', 'keywords': 'Ключевые слова', 'exclusions': 'Исключения',
+              'salary': 'Зарплата'}
+    if diagnostics['relaxed']:
+        text += '\nМожно изменить в фильтрах:'
+        for item in diagnostics['relaxed'][:2]:
+            text += f'\n• Без ограничения «{labels[item["field"]]}» — {item["count"]}.'
+    else:
+        text += '\nНужно расширить несколько условий: изменение только одного не даёт совпадений.'
+    if selected_values(settings, 'freshness') != ['any']:
+        text += '\n\nОбъявления без даты не проходят выбранный срок. Для них выберите свежесть «Не важно».'
+    if selected_values(settings, 'language') != ['any']:
+        text += '\n\nЯзык учитывается только при явно указанных требованиях работодателя.'
+    return text
 
 
 def job_text(job, expanded=False):

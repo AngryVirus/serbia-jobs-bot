@@ -133,3 +133,39 @@ def matches(job, settings, now=None):
         if salary is None or currency is None: return bool(settings.get('include_unknown_salary', True))
         if job.get('salary_period', 'month') != 'month' or currency != settings.get('currency', 'EUR') or salary < minimum: return False
     return True
+
+
+def search_diagnostics(jobs, settings, now=None):
+    """Explain an empty search without changing the user's chosen conditions.
+
+    Jobs supplied by the caller must already have usable links or contacts.
+    Hidden, expired and ineligible jobs stay excluded from suggestions.
+    """
+    now = now or datetime.now(timezone.utc)
+    resets = {
+        'freshness': {'freshness': 'any'},
+        'language': {'language': 'any'},
+        'remote': {'remote': 'any'},
+        'city': {'city': 'any'},
+        'keywords': {'keywords': []},
+        'exclusions': {'exclusions': []},
+        'salary': {'min_salary': None, 'include_unknown_salary': True},
+    }
+    unfiltered = dict(settings)
+    for changes in resets.values():
+        unfiltered.update(changes)
+    available = [job for job in jobs if matches(job, unfiltered, now)]
+    relaxed = []
+    for field, changes in resets.items():
+        if field in FILTER_OPTIONS:
+            enabled = selected_values(settings, field) != ['any']
+        elif field == 'salary':
+            enabled = settings.get('min_salary') is not None or not settings.get('include_unknown_salary', True)
+        else:
+            enabled = bool(settings.get(field))
+        if not enabled:
+            continue
+        count = sum(matches(job, dict(settings, **changes), now) for job in available)
+        if count:
+            relaxed.append({'field': field, 'count': count})
+    return {'available': len(available), 'relaxed': sorted(relaxed, key=lambda item: item['count'])}
