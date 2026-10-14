@@ -109,12 +109,12 @@ class Bot:
     async def filters(self, uid, chat, mid=None):
         s = self.get_settings(uid)
         text = ('<b>⚙️ Фильтры поиска</b>\n\n<blockquote>' + filter_summary(s) + '</blockquote>\n\n'
-                '✅ — выбранные условия. В каждой группе можно выбрать несколько вариантов. '
-                'Между группами условия действуют вместе.')
+                '✅ — выбранные условия. Города, языки, формат и свежесть допускают несколько вариантов. '
+                'Для ВНЖ выберите один вариант. Между группами условия действуют вместе.')
         rows = [[button('🔎 Ключевые слова', 'input:keywords'), button('🚫 Исключения', 'input:exclusions')],
                 [button('📍 Города', 'city'), button('💻 Формат работы', 'remote')],
                 [button('🗣 Языки', 'language'), button('💶 Минимальная зарплата', 'input:salary')],
-                [button('🕒 Свежесть вакансии', 'freshness')],
+                [button('🕒 Свежесть вакансии', 'freshness'), button('🪪 Наличие ВНЖ', 'residence_permit')],
                 [button('Без зарплаты: ' + ('✓' if s['include_unknown_salary'] else '✕'), 'toggle_salary')],
                 [button('🔎 Найти вакансии', 'search:0')],
                 [button('↩ Сбросить фильтры', 'reset')]] + BACK
@@ -357,7 +357,8 @@ class Bot:
             await self.filters(uid, chat_id, mid)
         elif action == "reset":
             self.update_settings(uid, keywords=[], exclusions=[], city="any", remote="any", language="any",
-                                       min_salary=None, currency="EUR", include_unknown_salary=True, freshness="any")
+                                       min_salary=None, currency="EUR", include_unknown_salary=True, freshness="any",
+                                       residence_permit="any")
             await self.filters(uid, chat_id, mid)
         elif action == "delete":
             await self.panel(chat_id, "Удалить ваши настройки, скрытые вакансии и историю уведомлений?",

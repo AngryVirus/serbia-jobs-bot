@@ -2,7 +2,8 @@
 from html import escape
 from zoneinfo import ZoneInfo
 
-from filters import FILTER_OPTIONS, hidden_job_ids, parse_datetime, search_diagnostics, selected_values
+from filters import (FILTER_OPTIONS, SINGLE_CHOICE_FILTERS, hidden_job_ids,
+                     parse_datetime, search_diagnostics, selected_values)
 from job_metadata import job_language_facts, valid_job_url
 from sources import SOURCES
 
@@ -10,7 +11,8 @@ BELGRADE = ZoneInfo('Europe/Belgrade')
 HELP_URL = 'https://t.me/AngryVirus'
 LANGUAGE_NAMES = {'ru': 'Русский', 'sr': 'Сербский', 'en': 'Английский', 'de': 'Немецкий'}
 FILTER_TITLES = {'city': '📍 Города', 'remote': '💻 Формат работы',
-                 'language': '🗣 Языки', 'freshness': '🕒 Свежесть'}
+                 'language': '🗣 Языки', 'freshness': '🕒 Свежесть',
+                 'residence_permit': '🪪 Наличие ВНЖ'}
 DISCLAIMER = (
     '<b>Перед началом</b>\n'
     'Бот собирает объявления из открытых источников и не является работодателем. '
@@ -91,10 +93,12 @@ def menu_text(settings, start=False):
 
 def choice_panel(settings, field):
     selected = selected_values(settings, field)
+    single = field in SINGLE_CHOICE_FILTERS
     text = (f'<b>{FILTER_TITLES[field]}</b>\n\n'
-            f'<blockquote>Выбрано: {safe(selection_label(settings, field), 250)}</blockquote>\n\n'
-            'Можно отметить несколько вариантов. Подойдёт любой из выбранных. '
-            'Изменения сохраняются сразу.')
+            f'<blockquote>Выбрано: {safe(selection_label(settings, field), 250)}</blockquote>\n\n')
+    text += ('Выберите один вариант. ' if single else
+             'Можно отметить несколько вариантов. Подойдёт любой из выбранных. ')
+    text += 'Изменения сохраняются сразу.'
     if field == 'freshness':
         text += '\nПериоды объединяются: «7 дней» уже включает сегодня и вчера.'
         text += '\nОбъявления без даты доступны при выборе «Не важно».'
@@ -102,8 +106,14 @@ def choice_panel(settings, field):
         text += '\nУчитываются явно указанные языковые требования, а не язык текста объявления.'
     elif field == 'remote':
         text += '\nЕсли формат не указан, объявление доступно при выборе «Любой формат».'
+    elif field == 'residence_permit':
+        text += ('\n\nУчитывается требование работодателя в объявлении.\n'
+                 '<b>Да</b> — наличие ВНЖ обязательно.\n'
+                 '<b>Нет</b> — явно указано, что ВНЖ не требуется.\n'
+                 '<b>Не важно</b> — все вакансии, в том числе без информации о ВНЖ.\n\n'
+                 'Помощь с оформлением ВНЖ сама по себе не означает, что можно работать без него.')
     rows = [[button(('✅ ' if value in selected else '▫️ ') + label,
-                    f'choose:{field}:{value}:{0 if value in selected and value != "any" else 1}')]
+                    f'choose:{field}:{value}:{0 if not single and value in selected and value != "any" else 1}')]
             for value, label in FILTER_OPTIONS[field].items()]
     rows += [[button('✓ Готово', 'filters')]] + BACK
     return text, rows
@@ -122,7 +132,7 @@ def empty_search_text(jobs, settings, now=None):
     text += f'\n\nБез ограничений ваших фильтров доступно: {diagnostics["available"]}.'
     labels = {'freshness': 'Свежесть', 'language': 'Языки', 'remote': 'Формат работы',
               'city': 'Города', 'keywords': 'Ключевые слова', 'exclusions': 'Исключения',
-              'salary': 'Зарплата'}
+              'salary': 'Зарплата', 'residence_permit': 'Наличие ВНЖ'}
     if diagnostics['relaxed']:
         text += '\nМожно изменить в фильтрах:'
         for item in diagnostics['relaxed'][:2]:
@@ -133,6 +143,8 @@ def empty_search_text(jobs, settings, now=None):
         text += '\n\nОбъявления без даты не проходят выбранный срок. Для них выберите свежесть «Не важно».'
     if selected_values(settings, 'language') != ['any']:
         text += '\n\nЯзык учитывается только при явно указанных требованиях работодателя.'
+    if selected_values(settings, 'residence_permit') != ['any']:
+        text += '\n\nОбъявления без явного условия о ВНЖ доступны при выборе «Наличие ВНЖ → Не важно».'
     return text
 
 

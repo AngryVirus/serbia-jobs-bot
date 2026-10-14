@@ -18,8 +18,11 @@ FRESHNESS_LABELS = {'today': '📅 Сегодня', 'yesterday': '⏮ Вчера
 LANGUAGE_LABELS = {'russian': '🇷🇺 Русский', 'serbian': '🇷🇸 Сербский',
                    'english': '🇬🇧 Английский', 'any': '🌍 Не важно'}
 REMOTE_LABELS = {'any': 'Любой формат', 'only': 'Удалённо', 'office': 'На месте / гибрид'}
+RESIDENCE_PERMIT_LABELS = {'yes': 'Да', 'no': 'Нет', 'any': 'Не важно'}
 FILTER_OPTIONS = {'city': CITY_LABELS, 'remote': REMOTE_LABELS,
-                  'language': LANGUAGE_LABELS, 'freshness': FRESHNESS_LABELS}
+                  'language': LANGUAGE_LABELS, 'freshness': FRESHNESS_LABELS,
+                  'residence_permit': RESIDENCE_PERMIT_LABELS}
+SINGLE_CHOICE_FILTERS = {'residence_permit'}
 
 
 def selected_values(settings, field):
@@ -34,6 +37,8 @@ def select_value(settings, field, value, enabled):
     """Explicit add/remove makes retries and stale button double-taps harmless."""
     if field not in FILTER_OPTIONS or value not in FILTER_OPTIONS[field]:
         raise ValueError('Unknown filter option')
+    if field in SINGLE_CHOICE_FILTERS:
+        return [value] if enabled else ['any']
     if value == 'any':
         return ['any']
     current = [v for v in selected_values(settings, field)
@@ -132,6 +137,11 @@ def matches(job, settings, now=None):
         'no_serbian': job.get('serbian_required') is False,
     }
     if not any(language_matches.get(value, False) for value in selected_languages): return False
+    permits = selected_values(settings, 'residence_permit')
+    if 'any' not in permits:
+        from residence_permit import job_residence_permit_requirement
+        required = job_residence_permit_requirement(job)
+        if required is None or ('yes' if required else 'no') not in permits: return False
     salary = job.get('salary_min')
     if salary is None and not settings.get('include_unknown_salary', True): return False
     minimum = settings.get('min_salary')
@@ -153,6 +163,7 @@ def search_diagnostics(jobs, settings, now=None):
         'freshness': {'freshness': 'any'},
         'language': {'language': 'any'},
         'remote': {'remote': 'any'},
+        'residence_permit': {'residence_permit': 'any'},
         'city': {'city': 'any'},
         'keywords': {'keywords': []},
         'exclusions': {'exclusions': []},

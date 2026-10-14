@@ -30,6 +30,7 @@ def default_settings() -> dict[str, Any]:
         "city": "any",
         "remote": "any",
         "language": "any",
+        "residence_permit": "any",
         "freshness": "any",
         "min_salary": None,
         "currency": "EUR",
