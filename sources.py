@@ -69,6 +69,7 @@ class Source:
     observed_links: bool = False
     feed_url: str | None = None
     api_hosts: tuple[str, ...] = ()
+    telegram_channel: str | None = None
 
 
 SOURCES: dict[str, Source] = {
@@ -86,6 +87,8 @@ SOURCES: dict[str, Source] = {
     "ovdejobs": Source("ovdejobs", "Ovde Jobs", "https://ovdejobs.com/", "https://ovdejobs.com/vacancies/", (r"^/jobs/[^/]+/?$",), observed_links=True),
     "startit": Source("startit", "Startit Poslovi", "https://startit.rs/poslovi/", "https://startit.rs/poslovi/", (r"^/poslovi/[^/]+/?$",), "IT-вакансии: только ссылки заголовков объявлений, без страниц тегов.", observed_links=True),
     "bulevar": Source("bulevar", "Omladinska zadruga Bulevar", "https://www.omladinskabulevar.rs/", "https://www.omladinskabulevar.rs/za-zadrugare-omladinske-zadruge/poslovi-omladinska-zadruga-beograd/", (r"^/za-zadrugare-omladinske-zadruge/poslovi-omladinska-zadruga-beograd/\d+-[^/]+\.html$",), "Вакансии молодёжного и студенческого кооператива; условия участия указаны в объявлении.", observed_links=True),
+    "tg_rabotavserbii": Source("tg_rabotavserbii", "Telegram · Работа в Сербии", "https://t.me/rabotavserbii", "https://t.me/s/rabotavserbii", (r"^/rabotavserbii/\d+/?$",), "Публичная лента канала Ovde Jobs: до двух страниц, без авторизации.", telegram_channel="rabotavserbii"),
+    "tg_radim_serbia": Source("tg_radim_serbia", "Telegram · Radim Serbia", "https://t.me/radim_serbia", "https://t.me/s/radim_serbia", (r"^/radim_serbia/\d+/?$",), "Публичная лента Radim.rs: до двух страниц, без авторизации.", telegram_channel="radim_serbia"),
 }
 
 
@@ -243,8 +246,18 @@ def _location(value: object) -> str:
         return clean_text(address)
     if not isinstance(address, dict):
         return ""
-    # Country is omitted when a city is supplied so users can filter the city.
-    return clean_text(address.get("addressLocality") or address.get("addressRegion") or value.get("name") or address.get("addressCountry"))
+    city = clean_text(address.get("addressLocality") or address.get("addressRegion") or value.get("name"))
+    street = clean_text(address.get("streetAddress"))
+    if street or city:
+        return ', '.join(dict.fromkeys(filter(None, (street, city))))
+    from location_links import coordinates
+    geo = value.get('geo') or address.get('geo')
+    if isinstance(geo, dict):
+        point = coordinates(f"{geo.get('latitude')},{geo.get('longitude')}")
+        if point:
+            return point
+    country = address.get('addressCountry')
+    return clean_text(country.get('name') if isinstance(country, dict) else country)
 
 
 def _numeric(value: object) -> float | None:
@@ -611,6 +624,9 @@ def collect_source(source: Source, *, detail_limit: int = DEFAULT_DETAIL_LIMIT, 
     if source.requires_permission:
         return [], _status(source, "requires_permission", detail=source.note)
     fetcher = fetcher or Fetcher(source)
+    if source.telegram_channel:
+        from telegram_sources import collect_telegram
+        return collect_telegram(source, fetcher)
     if source.id == 'serbiahub':
         return _collect_serbiahub(source, fetcher)
     if source.id == 'lakodoposla':
