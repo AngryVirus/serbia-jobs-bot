@@ -18,7 +18,7 @@ from typing import Any, Iterable, Mapping
 SOURCE_IDS = (
     "poslovi", "workforce", "halooglasi", "careerjet", "sale_me",
     "helloworld", "lakodoposla", "klikdoposla", "jooble", "radim",
-    "serbiahub", "ovdejobs",
+    "serbiahub", "ovdejobs", "startit", "bulevar",
 )
 
 

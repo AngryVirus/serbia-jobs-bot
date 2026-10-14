@@ -81,7 +81,12 @@ def country_values(value):
         return [country for item in value for country in country_values(item)]
     if isinstance(value,str): return [value]
     if not isinstance(value,dict): return []
-    if 'address' in value: return country_values(value['address'])
+    if 'address' in value:
+        # A free-form address (e.g. "Beograd") is not an addressCountry.
+        address = value['address']
+        if isinstance(address, list):
+            address = [item for item in address if isinstance(item, dict)]
+        return country_values(address) if isinstance(address, (dict, list)) else []
     if 'addressCountry' in value: return country_values(value['addressCountry'])
     if value.get('@type') in {'Country','AdministrativeArea'}: return country_values(value.get('name'))
     return []
