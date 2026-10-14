@@ -19,7 +19,7 @@ import re
 import time
 from typing import Iterable
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from urllib.robotparser import RobotFileParser
 
@@ -68,6 +68,7 @@ class Source:
     requires_permission: bool = False
     observed_links: bool = False
     feed_url: str | None = None
+    api_hosts: tuple[str, ...] = ()
 
 
 SOURCES: dict[str, Source] = {
@@ -77,12 +78,14 @@ SOURCES: dict[str, Source] = {
     "careerjet": Source("careerjet", "Careerjet", "https://www.careerjet.rs/", "https://www.careerjet.rs/", (r"^/jobad/[^/]+/?$",), "При проверке сайт показывал защитную проверку; бот её не обходит."),
     "sale_me": Source("sale_me", "Sale-me", "https://www.sale-me.com/serbia/vacancies", "https://www.sale-me.com/serbia/vacancies", (r"^/serbia/vacancies/[^/]+/?$", r"^/serbia/vacancy/[^/]+/?$"), "Источник не удалось проверить; пути вакансий требуют проверки владельцем."),
     "helloworld": Source("helloworld", "HelloWorld", "https://www.helloworld.rs/", "https://www.helloworld.rs/oglasi-za-posao/", (r"^/konkurs/[^/]+/[^/]+/\d+/?$",), "Сайт требует разрешение на скачивание контента. Автосбор отключён до получения разрешения.", requires_permission=True),
-    "lakodoposla": Source("lakodoposla", "Lako do posla", "https://www.lakodoposla.com/", "https://www.lakodoposla.com/", (r"^/oglasi/(?:[^/]+-)?\d+/?$",), "Пути объявлений найдены в поиске, но HTML адаптер требует проверки на сервере.", observed_links=True),
+    "lakodoposla": Source("lakodoposla", "Lako do posla", "https://www.lakodoposla.com/", "https://www.lakodoposla.com/", (r"^/oglasi/(?:[^/]+-)?\d+/?$",), "Анонимный API, используемый публичной страницей вакансий; до восьми подробных объявлений.", observed_links=True, api_hosts=("prod.lakodoposla.net",)),
     "klikdoposla": Source("klikdoposla", "Klik do posla", "https://www.klikdoposla.com/", "https://www.klikdoposla.com/", (r"^/oglasi/\d+-[^/]+/?$",), "Официальная JSON-лента для AI из /llms.txt; максимум четыре страницы за один сбор.", observed_links=True, feed_url="https://www.klikdoposla.com/ai/jobs.json"),
     "jooble": Source("jooble", "Jooble Serbia", "https://rs.jooble.org/", "https://rs.jooble.org/posao", (r"^/desc/[^/]+/?$", r"^/jdp/[^/]+/?$"), "Домен исправлен на rs.jooble.org; массовая доступность HTML не подтверждена."),
     "radim": Source("radim", "Radim.rs", "https://radim.rs/", "https://radim.rs/jobs", (r"^/jobs/[^/]+/?$",), observed_links=True),
     "serbiahub": Source("serbiahub", "SerbiaHub", "https://serbiahub.com/jobs", "https://serbiahub.com/jobs", (r"^/detail/jobs/\d+/?$",), observed_links=True),
     "ovdejobs": Source("ovdejobs", "Ovde Jobs", "https://ovdejobs.com/", "https://ovdejobs.com/vacancies/", (r"^/jobs/[^/]+/?$",), observed_links=True),
+    "startit": Source("startit", "Startit Poslovi", "https://startit.rs/poslovi/", "https://startit.rs/poslovi/", (r"^/poslovi/[^/]+/?$",), "IT-вакансии: только ссылки заголовков объявлений, без страниц тегов.", observed_links=True),
+    "bulevar": Source("bulevar", "Omladinska zadruga Bulevar", "https://www.omladinskabulevar.rs/", "https://www.omladinskabulevar.rs/za-zadrugare-omladinske-zadruge/poslovi-omladinska-zadruga-beograd/", (r"^/za-zadrugare-omladinske-zadruge/poslovi-omladinska-zadruga-beograd/\d+-[^/]+\.html$",), "Вакансии молодёжного и студенческого кооператива; условия участия указаны в объявлении.", observed_links=True),
 }
 
 
@@ -187,7 +190,8 @@ def canonical_url(url: str) -> str:
     parts = urlsplit(url)
     params = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True)
               if not key.lower().startswith("utm_") and key.lower() not in {"fbclid", "gclid"}]
-    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path or "/", urlencode(params), ""))
+    path = quote(parts.path or '/', safe="/%:@!$&'()*+,;=-._~")
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, urlencode(params), ""))
 
 
 def _same_site(source: Source, url: str) -> bool:
@@ -202,7 +206,10 @@ def is_detail_url(source: Source, url: str) -> bool:
 
 def discover_links(source: Source, page: PageParser, base_url: str) -> list[str]:
     result: list[str] = []
-    for href, _ in page.links:
+    titles = {text for tag, text in page.headings}
+    for href, label in page.links:
+        if source.id == 'startit' and label not in titles:
+            continue
         url = canonical_url(urljoin(base_url, href))
         if is_detail_url(source, url) and url not in result:
             result.append(url)
@@ -465,6 +472,9 @@ def _html_job(source: Source, page: PageParser, page_url: str) -> Job | None:
 
 
 def extract_jobs(source: Source, html: str, page_url: str, *, allow_fallback: bool = True) -> list[Job]:
+    if source.id in {'halooglasi', 'startit', 'bulevar'}:
+        from source_adapters import extract_special_jobs
+        return extract_special_jobs(source, html, page_url) if allow_fallback else []
     page = parse_page(html)
     jobs: dict[str, Job] = {}
     for script in page.json_scripts:
@@ -522,7 +532,10 @@ class Fetcher:
         self.last_request[origin] = time.monotonic()
 
     def _raw(self, url: str, *, robot_file: bool = False, redirects: int = 0) -> tuple[str, str]:
-        if redirects > 4 or not _same_site(self.source, url):
+        candidate = urlsplit(url)
+        api_allowed = (candidate.scheme == 'https' and candidate.hostname in self.source.api_hosts
+                       and not candidate.username and candidate.port in (None, 443))
+        if redirects > 4 or not (_same_site(self.source, url) or api_allowed):
             raise FetchError("error", "Перенаправление за пределы источника или слишком много перенаправлений.")
         origin = urlunsplit((*urlsplit(url)[:2], "", "", ""))
         delay = self.delay
@@ -600,6 +613,9 @@ def collect_source(source: Source, *, detail_limit: int = DEFAULT_DETAIL_LIMIT, 
     fetcher = fetcher or Fetcher(source)
     if source.id == 'serbiahub':
         return _collect_serbiahub(source, fetcher)
+    if source.id == 'lakodoposla':
+        from source_adapters import collect_lako
+        return collect_lako(source, fetcher, detail_limit)
     if source.feed_url:
         return _collect_feed(source, fetcher)
     jobs: dict[str, Job] = {}
