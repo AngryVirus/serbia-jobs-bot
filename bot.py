@@ -1,0 +1,519 @@
+"""Russian-language, multi-user Telegram job bot; Python 3.11+, no dependencies."""
+import argparse
+import asyncio
+from datetime import datetime, timezone
+from html import escape
+import logging
+import os
+from pathlib import Path
+import re
+import uuid
+from weakref import WeakValueDictionary
+from zoneinfo import ZoneInfo
+
+from filters import CITY_LABELS, FRESHNESS_LABELS, LANGUAGE_LABELS, matches, parse_datetime
+from sources import SOURCES, collect_all
+from store import Store
+from telegram_api import TelegramAPI, TelegramError
+from job_metadata import valid_job_url
+from version import VERSION
+
+LOG = logging.getLogger("serbia_jobs")
+BELGRADE = ZoneInfo("Europe/Belgrade")
+PAGE_SIZE = 5
+
+
+def button(label, data):
+    return {"text": label, "callback_data": data}
+
+
+HELP_URL = 'https://t.me/AngryVirus'
+MENU = [[button('🔎 Найти вакансии', 'search:0')], [button('⚙️ Фильтры', 'filters')],
+        [button('🔔 Уведомления', 'notifications')], [{'text': '🆘 Помощь', 'url': HELP_URL}]]
+BACK = [[button('← Главное меню', 'menu')]]
+CANCEL = [[button('✖ Отменить ввод', 'cancel')]] + BACK
+LANGUAGE_NAMES = {'ru': 'Русский', 'sr': 'Сербский', 'en': 'Английский', 'de': 'Немецкий'}
+
+
+def job_text(job):
+    def e(value, limit=120):
+        return escape(str(value or 'Не указано')[:limit])
+    lines = ['💼 <b>' + e(job.get('title')) + '</b>']
+    if job.get('company'): lines.append('🏢 ' + e(job['company'], 80))
+    location = job.get('location') or ('Удалённая работа' if job.get('remote') is True else 'Место работы не указано')
+    lines.append('📍 ' + e(location, 100))
+    salary = job.get('salary_min')
+    if job.get('salary_display'):
+        lines.append('💶 ' + e(job['salary_display']))
+    elif salary is not None:
+        lines.append('💶 от ' + e(f"{salary:g} {job.get('salary_currency') or ''}") + ' / месяц')
+    else:
+        lines.append('💶 Зарплата не указана' if not job.get('salary_currency') else '💶 Условия оплаты — в объявлении')
+    languages = job.get('languages')
+    if languages is None:
+        languages = (['ru'] if job.get('russian') is True else []) + (['sr'] if job.get('serbian_required') is True else [])
+    if languages:
+        required = job.get('required_languages') or []
+        lines.append('🗣 ' + e(', '.join(LANGUAGE_NAMES.get(code, code) + (' (обязателен)' if code in required else '') for code in languages)))
+    else:
+        lines.append('🗣 Языковые требования не указаны')
+    published = parse_datetime(job.get('published_at'))
+    if published: lines.append('📅 ' + published.astimezone(BELGRADE).strftime('%d.%m.%Y'))
+    lines.append('📝 ' + e(job.get('description') or 'Описание доступно по ссылке.', 800))
+    source = SOURCES.get(job.get('source'))
+    lines.append('🌐 ' + e(source.name if source else job.get('source')))
+    contacts = job.get('contacts') or []
+    if contacts: lines.append('☎️ ' + e(' · '.join(contacts), 160))
+    if valid_job_url(job.get('url')):
+        lines.append('<a href="' + escape(job['url'], quote=True) + '">🔗 Открыть объявление</a>')
+    return '\n'.join(lines)
+
+
+def job_buttons(job):
+    return [[{'text': '🔗 Открыть объявление', 'url': job['url']}]] if valid_job_url(job.get('url')) else []
+
+
+def contactable(job):
+    return valid_job_url(job.get('url')) or bool(job.get('contacts'))
+
+
+def daily_due(user, now):
+    settings = user["settings"]
+    local = now.astimezone(BELGRADE)
+    last = parse_datetime(user.get("last_notified_at"))
+    return (local.hour >= settings["daily_hour"] and
+            (last is None or last.astimezone(BELGRADE).date() < local.date()))
+
+
+class Bot:
+    def __init__(self, api, store, scan_minutes=30):
+        self.api, self.store = api, store
+        self.scan_minutes = scan_minutes
+        self.pending = {}
+        self.scanning = False
+        self.instance_id = str(uuid.uuid4())
+        self._locks = WeakValueDictionary()
+
+    def set_pending(self, uid, field):
+        self.pending[uid] = field
+        self.store.update_settings(uid, pending_input=field)
+
+    def clear_pending(self, uid):
+        self.pending.pop(uid, None)
+        if self.store.get_settings(uid).get("pending_input") is not None:
+            self.store.update_settings(uid, pending_input=None)
+
+    async def panel(self, chat_id, text, rows, message_id=None):
+        if message_id:
+            try:
+                await self.api.call("editMessageText", chat_id=chat_id, message_id=message_id,
+                                    text=text, parse_mode="HTML", reply_markup={"inline_keyboard": rows})
+                return
+            except TelegramError as error:
+                if "message is not modified" in str(error):
+                    return
+                if error.code != 400:
+                    raise
+        await self.api.send(chat_id, text, rows)
+
+    def user_lock(self, uid):
+        lock = self._locks.get(uid)
+        if lock is None:
+            lock = self._locks[uid] = asyncio.Lock()
+        return lock
+
+    async def filters(self, uid, chat, mid=None):
+        s = self.store.get_settings(uid)
+        keywords = escape(', '.join(s['keywords']) or 'Любые')
+        excluded = escape(', '.join(s['exclusions']) or 'Нет')
+        remote = {'any': 'Не важно', 'only': 'Только удалённая', 'office': 'На месте'}.get(s['remote'], 'Не важно')
+        language = LANGUAGE_LABELS.get(s['language'], 'Старый фильтр: без обязательного сербского')
+        salary = 'Без ограничения' if s['min_salary'] is None else f"от {s['min_salary']:g} {s['currency']} / месяц"
+        text = (f'<b>⚙️ Ваши фильтры</b>\n\n🔎 Ключевые слова: {keywords}\n🚫 Исключения: {excluded}\n'
+                f"📍 Город: {CITY_LABELS[s['city']]}\n💻 Формат: {remote}\n🗣 Язык: {language}\n"
+                f"💶 Зарплата: {salary}\nБез зарплаты: {'показывать' if s['include_unknown_salary'] else 'скрывать'}\n"
+                f"🕒 Свежесть: {FRESHNESS_LABELS.get(s.get('freshness', 'any'), FRESHNESS_LABELS['any'])}\n\n"
+                'Ключевые слова — любое совпадение; остальные фильтры применяются вместе. '
+                'При выборе языка или свежести неизвестные значения не считаются совпадением.')
+        rows = [[button('🔎 Ключевые слова', 'input:keywords'), button('🚫 Исключения', 'input:exclusions')],
+                [button('📍 Город', 'city'), button('💻 Формат работы', 'remote')],
+                [button('🗣 Язык', 'language'), button('💶 Минимальная зарплата', 'input:salary')],
+                [button('🕒 Свежесть вакансии', 'freshness')],
+                [button('Без зарплаты: ' + ('✓' if s['include_unknown_salary'] else '✕'), 'toggle_salary')],
+                [button('↩ Сбросить фильтры', 'reset')]] + BACK
+        await self.panel(chat, text, rows, mid)
+
+    async def notifications(self, uid, chat, mid=None):
+        s = self.store.get_settings(uid)
+        current = {"off": "Выключены", "instant": "После каждой проверки источников", "daily": "Ежедневная подборка"}[s["notifications"]]
+        await self.panel(chat, f"<b>Уведомления</b>\n\nСейчас: {current}\n"
+                         f"Проверка источников: примерно каждые {self.scan_minutes} минут.\n"
+                         f"Подборка: {s['daily_hour']:02}:00 по времени Белграда.\n"
+                         "За один проход отправляется до 10 вакансий. Остальные доступны через поиск. "
+                         "Уже отправленные вакансии не повторяются.",
+                         [[button("Выключить", "notify:off")], [button("При проверке", "notify:instant")],
+                          [button("Раз в день", "notify:daily"), button("Час подборки", "input:hour")]] + BACK, mid)
+
+    async def results(self, uid, chat, page=0):
+        settings = self.store.get_settings(uid)
+        all_jobs = self.store.list_jobs()
+        jobs = [j for j in all_jobs if contactable(j) and matches(j, settings)]
+        page = min(max(page, 0), max((len(jobs) - 1) // PAGE_SIZE, 0))
+        if not jobs:
+            statuses = self.store.source_status()
+            collection = statuses.get('_collection', {})
+            available = any(value.get('state') in ('ok', 'partial') for key, value in statuses.items() if not key.startswith('_'))
+            if not all_jobs and (self.scanning or collection.get('state') == 'running'):
+                text = '⏳ Сейчас проверяем вакансии. Попробуйте поиск через несколько минут.'
+            elif not available and statuses:
+                text = '⚠️ Сайты вакансий временно недоступны. Повторим проверку; попробуйте позже.'
+            elif not all_jobs and not statuses:
+                text = '⏳ База ещё наполняется. Проверка вакансий запускается при старте сервера.'
+            else:
+                text = 'Подходящих вакансий нет. Попробуйте расширить фильтры.'
+                if collection.get('state') == 'error': text += ' Последняя проверка не удалась; попробуйте позже.'
+            await self.api.send(chat, text, BACK)
+            return
+        await self.api.send(chat, f'Найдено: {len(jobs)}. Страница {page + 1}.')
+        for job in jobs[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]:
+            await self.api.send(chat, job_text(job), job_buttons(job))
+        pages = []
+        if page: pages.append(button('← Назад', f'search:{page - 1}'))
+        if (page + 1) * PAGE_SIZE < len(jobs): pages.append(button('Далее →', f'search:{page + 1}'))
+        await self.api.send(chat, 'Изменить условия поиска можно в фильтрах.', ([pages] if pages else []) + BACK)
+
+    async def help(self, chat, mid=None):
+        await self.panel(chat, '🆘 Связаться с владельцем и получить помощь:', [[{'text': '🆘 Помощь', 'url': HELP_URL}]] + BACK, mid)
+
+    async def input_value(self, uid, chat, text):
+        field = self.pending[uid]
+        try:
+            if field in ("keywords", "exclusions"):
+                values = [] if text.strip() == "-" else list(dict.fromkeys(x.strip() for x in text.split(",") if x.strip()))
+                if len(values) > 15 or any(len(x) > 60 for x in values):
+                    raise ValueError("Максимум 15 слов или фраз, до 60 символов каждое.")
+                self.store.update_settings(uid, **{field: values})
+            elif field == "salary":
+                if text.strip() == "-":
+                    self.store.update_settings(uid, min_salary=None)
+                else:
+                    match = re.fullmatch(r"\s*(\d+(?:[.,]\d{1,2})?)\s+(EUR|RSD)\s*", text.upper())
+                    if not match or float(match[1].replace(",", ".")) > 100_000_000:
+                        raise ValueError("Введите сумму в месяц и валюту: 1000 EUR или 120000 RSD. «-» — снять фильтр.")
+                    self.store.update_settings(uid, min_salary=float(match[1].replace(",", ".")), currency=match[2])
+            elif field == "hour":
+                if not text.strip().isdigit() or not 0 <= int(text.strip()) <= 23:
+                    raise ValueError("Введите час от 0 до 23 по времени Белграда.")
+                self.store.update_settings(uid, daily_hour=int(text.strip()))
+            else:
+                raise ValueError("Неизвестная настройка. Используйте /cancel.")
+        except ValueError as error:
+            await self.api.send(chat, escape(str(error)))
+            return
+        self.clear_pending(uid)
+        if field == "hour":
+            await self.notifications(uid, chat)
+        else:
+            await self.filters(uid, chat)
+
+    async def _handle(self, update):
+        callback = update.get("callback_query")
+        message = callback.get("message", {}) if callback else update.get("message", {})
+        user = callback.get("from", {}) if callback else message.get("from", {})
+        chat = message.get("chat", {})
+        if chat.get("type") != "private" or not user.get("id") or user.get("is_bot"):
+            if callback:
+                await self.api.call("answerCallbackQuery", callback_query_id=callback["id"], text="Откройте личный чат с ботом.")
+            return
+        uid, chat_id = user["id"], chat["id"]
+        self.store.ensure_user(uid, chat_id)
+        if callback:
+            await self.api.call("answerCallbackQuery", callback_query_id=callback["id"])
+            action = callback.get("data", "")
+            mid = message.get("message_id")
+            self.clear_pending(uid)
+        else:
+            text = message.get("text", "")
+            if not text:
+                return
+            if len(text) > 1000:
+                await self.api.send(chat_id, "Пожалуйста, сократите сообщение до 1000 символов.")
+                return
+            saved_pending = self.store.get_settings(uid).get("pending_input")
+            if saved_pending and uid not in self.pending:
+                self.pending[uid] = saved_pending
+            if uid in self.pending and not text.startswith("/"):
+                await self.input_value(uid, chat_id, text)
+                return
+            self.clear_pending(uid)
+            command = text.split()[0].split("@")[0]
+            action = {"/start": "menu", "/menu": "menu", "/cancel": "menu", "/delete_me": "delete"}.get(command, "menu")
+            mid = None
+        if action == "menu":
+            await self.panel(chat_id, "<b>Работа в Сербии 🇷🇸</b>\nПоиск вакансий с вашими личными настройками.\n"
+                             "Уведомления по умолчанию выключены. С чего начнём?", MENU, mid)
+        elif action == "help":
+            await self.help(chat_id, mid)
+        elif action == "filters":
+            await self.filters(uid, chat_id, mid)
+        elif action == 'cancel':
+            self.clear_pending(uid)
+            await self.panel(chat_id, 'Ввод отменён.', MENU, mid)
+        elif action.startswith('search:'):
+            try: page = int(action.split(':')[1])
+            except ValueError: return
+            await self.results(uid, chat_id, page)
+        elif action == 'sources' or action.startswith(('source:', 'favorite:', 'favorites:')):
+            # Previously sent inline keyboards may remain in Telegram histories.
+            # Their actions are retired and cannot mutate preserved legacy data.
+            await self.panel(chat_id, 'Меню обновлено. Выберите действие:', MENU, mid)
+        elif action == "notifications":
+            await self.notifications(uid, chat_id, mid)
+        elif action.startswith("notify:") and action[7:] in ("off", "instant", "daily"):
+            self.store.update_settings(uid, notifications=action[7:])
+            await self.notifications(uid, chat_id, mid)
+        elif action.startswith("input:") and action[6:] in ("keywords", "exclusions", "salary", "hour"):
+            field = action[6:]
+            self.set_pending(uid, field)
+            prompt = {"keywords": "Введите слова или фразы через запятую. Достаточно совпадения одного. «-» — очистить.",
+                      "exclusions": "Введите слова, по которым нужно исключать вакансии, через запятую. «-» — очистить.",
+                      "salary": "Введите минимальную зарплату в месяц: 1000 EUR или 120000 RSD. «-» — снять фильтр.",
+                      "hour": "Введите час ежедневной подборки от 0 до 23, время Белграда."}[field]
+            await self.panel(chat_id, prompt + "\n/cancel — отмена.", CANCEL, mid)
+        elif action in ("city", "remote", "language", "freshness"):
+            values = {"city": CITY_LABELS,
+                      "remote": {"any": "Не важно", "only": "Только удалённая", "office": "На месте"},
+                      "language": LANGUAGE_LABELS, "freshness": FRESHNESS_LABELS}[action]
+            await self.panel(chat_id, "Выберите значение фильтра.",
+                             [[button(label, f"set:{action}:{value}")] for value, label in values.items()] + BACK, mid)
+        elif action.startswith("set:"):
+            parts = action.split(":")
+            allowed = {"city": CITY_LABELS, "remote": ("any", "only", "office"),
+                       "language": LANGUAGE_LABELS, "freshness": FRESHNESS_LABELS}
+            if len(parts) == 3 and parts[1] in allowed and parts[2] in allowed[parts[1]]:
+                self.store.update_settings(uid, **{parts[1]: parts[2]})
+                await self.filters(uid, chat_id, mid)
+        elif action == "toggle_salary":
+            self.store.update_settings(uid, include_unknown_salary=not self.store.get_settings(uid)["include_unknown_salary"])
+            await self.filters(uid, chat_id, mid)
+        elif action == "reset":
+            self.store.update_settings(uid, keywords=[], exclusions=[], city="any", remote="any", language="any",
+                                       min_salary=None, currency="EUR", include_unknown_salary=True, freshness="any")
+            await self.filters(uid, chat_id, mid)
+        elif action == "delete":
+            await self.panel(chat_id, "Удалить ваши настройки и историю уведомлений?",
+                             [[button("Удалить мои данные", "delete_confirm")]] + BACK, mid)
+        elif action == "delete_confirm":
+            self.store.delete_user(uid)
+            await self.api.send(chat_id, "Ваши данные удалены. Уведомления выключены. /start — начать заново.")
+
+    async def handle(self, update):
+        callback = update.get('callback_query') or {}
+        message = callback.get('message', {}) if callback else update.get('message', {})
+        user = callback.get('from', {}) if callback else message.get('from', {})
+        uid = user.get('id')
+        async with self.user_lock(uid):
+            # Synchronous PostgREST I/O runs in a worker with its own event loop.
+            # A slow user's database calls never block the main webhook loop.
+            await asyncio.to_thread(lambda: asyncio.run(self._handle(update)))
+
+    async def scan(self):
+        if self.scanning: return False
+        self.scanning = True
+        claimed = False
+        try:
+            claimed = await asyncio.to_thread(self.store.acquire_lease, 'collection', self.instance_id, 900)
+            if not claimed: return False
+            await asyncio.to_thread(self.store.set_source_status, {'_collection': {'state': 'running', 'checked_at': datetime.now(timezone.utc).isoformat()}})
+            jobs, statuses = await asyncio.to_thread(collect_all)
+            added = await asyncio.to_thread(self.store.save_jobs, jobs)
+            statuses['_collection'] = {'state': 'finished', 'checked_at': datetime.now(timezone.utc).isoformat(), 'count': len(jobs)}
+            await asyncio.to_thread(self.store.set_source_status, statuses)
+            for key, status in statuses.items():
+                LOG.info('Source %s: %s, count=%s, reason=%s', key, status.get('state'), status.get('count', 0), status.get('detail', ''))
+            LOG.info('Collection: %d records, %d new', len(jobs), added)
+            return True
+        except Exception as error:
+            LOG.error('Collection failed (%s)', type(error).__name__)
+            if claimed:
+                try:
+                    await asyncio.to_thread(self.store.set_source_status, {'_collection': {'state': 'error', 'checked_at': datetime.now(timezone.utc).isoformat(), 'detail': type(error).__name__}})
+                except Exception: pass
+            return False
+        finally:
+            if claimed:
+                try: await asyncio.to_thread(self.store.release_lease, 'collection', self.instance_id)
+                except Exception as error: LOG.error('Lease release failed (%s)', type(error).__name__)
+            self.scanning = False
+
+    async def notify(self, now=None):
+        now = now or datetime.now(timezone.utc)
+        users = await asyncio.to_thread(self.store.subscribers)
+        jobs = await asyncio.to_thread(self.store.list_jobs)
+        async def one(user):
+            uid = user['user_id']
+            key = f'notifications:{uid}'
+            owner = str(uuid.uuid4())
+            async with self.user_lock(uid):
+                if not await asyncio.to_thread(self.store.acquire_lease, key, owner, 900): return
+                try:
+                    latest_user = await asyncio.to_thread(self.store.get_subscriber, uid)
+                    if latest_user is None: return
+                    user = latest_user
+                    settings = user['settings']
+                    if settings['notifications'] == 'off' or (settings['notifications'] == 'daily' and not daily_due(user, now)): return
+                    delivered = await asyncio.to_thread(self.store.delivered_job_ids, uid)
+                    pending = [job for job in jobs if job['id'] not in delivered and contactable(job) and matches(job, settings, now)]
+                    for job in pending[:10]:
+                        if not await asyncio.to_thread(self.store.acquire_lease, key, owner, 900): break
+                        latest = await asyncio.to_thread(self.store.get_settings, uid)
+                        if latest['notifications'] == 'off': break
+                        if not matches(job, latest, now): continue
+                        await self.api.send(user['chat_id'], job_text(job), job_buttons(job))
+                        await asyncio.to_thread(self.store.mark_delivered, uid, job['id'])
+                        await asyncio.sleep(0.1)
+                    if (await asyncio.to_thread(self.store.get_settings, uid))['notifications'] != 'off':
+                        await asyncio.to_thread(self.store.mark_notified, uid, now.isoformat())
+                except TelegramError as error:
+                    if error.code == 403: await asyncio.to_thread(self.store.update_settings, uid, notifications='off')
+                    LOG.warning('Notification delivery failed (%s)', error.code)
+                finally:
+                    await asyncio.to_thread(self.store.release_lease, key, owner)
+        semaphore = asyncio.Semaphore(4)
+        async def limited(user):
+            async with semaphore: await one(user)
+        await asyncio.gather(*(limited(user) for user in users))
+
+    async def scheduler(self):
+        next_scan = 0
+        loop = asyncio.get_running_loop()
+        while True:
+            if loop.time() >= next_scan:
+                await self.scan()
+                next_scan = loop.time() + self.scan_minutes * 60
+            try:
+                await self.notify()
+            except Exception as error:
+                LOG.error("Notification cycle failed (%s)", type(error).__name__)
+            await asyncio.sleep(60)
+
+    async def configure(self):
+        me = await self.api.call("getMe")
+        LOG.info("Telegram bot connected: @%s", me.get("username", "unknown"))
+        await self.api.call('setMyCommands', commands=[
+            {'command': 'start', 'description': 'Начать работу'},
+            {'command': 'menu', 'description': 'Открыть меню'},
+            {'command': 'cancel', 'description': 'Отменить текущий ввод'},
+            {'command': 'delete_me', 'description': 'Удалить личные данные'}])
+        LOG.info('Application version: %s', VERSION)
+
+
+    async def run(self):
+        await self.configure()
+        scheduler = asyncio.create_task(self.scheduler())
+        from web_server import WebhookProcessor
+        processor = WebhookProcessor(self)
+        offset = 0
+        try:
+            while True:
+                try:
+                    updates = await self.api.call("getUpdates", offset=offset, timeout=45,
+                                                  allowed_updates=["message", "callback_query"])
+                    for update in updates:
+                        try:
+                            await processor.update(update)
+                        except Exception as error:
+                            LOG.error("Update failed (%s)", type(error).__name__)
+                        offset = update["update_id"] + 1
+                except TelegramError as error:
+                    if error.code in (401, 409):
+                        raise
+                    LOG.warning("Telegram polling unavailable (%s); retrying", error.code)
+                    await asyncio.sleep(5)
+        finally:
+            scheduler.cancel()
+            await asyncio.gather(scheduler, return_exceptions=True)
+
+
+def load_env(path):
+    """Only task-specific variables; no shell evaluation or expansion."""
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key in ("TELEGRAM_BOT_TOKEN", "DATABASE_PATH", "SCAN_INTERVAL_MINUTES", "SUPABASE_URL",
+                   "SUPABASE_SERVICE_ROLE_KEY", "WEBHOOK_BASE_URL", "WEBHOOK_SECRET", "COLLECT_SECRET", "PORT"):
+            os.environ.setdefault(key, value.strip().strip("\"'"))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--collect", action="store_true", help="Collect once without a Telegram token")
+    parser.add_argument("--status", action="store_true", help="Print stored source statuses")
+    parser.add_argument("--webhook", action="store_true", help="Web server for free cloud hosting")
+    args = parser.parse_args()
+    load_env(Path(__file__).with_name(".env"))
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    if os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_SERVICE_ROLE_KEY"):
+        from cloud_store import SupabaseStore
+        store = SupabaseStore(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
+    else:
+        if args.webhook:
+            parser.error("Webhook mode requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY for persistent storage.")
+        store = Store(os.environ.get("DATABASE_PATH", str(Path(__file__).parent / "data" / "jobs.sqlite3")))
+    if args.status:
+        for key, status in store.source_status().items():
+            print(key, status.get("state"), status.get("count", 0), status.get("detail", ""))
+        return
+    if args.collect:
+        owner=str(uuid.uuid4())
+        if not store.acquire_lease('collection',owner,900):
+            print('Collection already running.')
+            return
+        try:
+            store.set_source_status({'_collection':{'state':'running','checked_at':datetime.now(timezone.utc).isoformat()}})
+            jobs, statuses = collect_all()
+            print('New vacancies:',store.save_jobs(jobs))
+            statuses['_collection']={'state':'finished','count':len(jobs),'checked_at':datetime.now(timezone.utc).isoformat()}
+            store.set_source_status(statuses)
+            for key, status in statuses.items():
+                print(key,status.get('state'),status.get('count',0),status.get('detail',''))
+        finally:
+            store.release_lease('collection',owner)
+        return
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if not token or any(c in token for c in "\r\n"):
+        parser.error("Set TELEGRAM_BOT_TOKEN in .env (see .env.example).")
+    try:
+        minutes = int(os.environ.get("SCAN_INTERVAL_MINUTES", "30"))
+        if minutes < 15:
+            raise ValueError
+    except ValueError:
+        parser.error("SCAN_INTERVAL_MINUTES must be an integer >= 15.")
+    try:
+        bot = Bot(TelegramAPI(token), store, minutes)
+        if args.webhook:
+            from web_server import serve
+            base_url = os.environ.get("WEBHOOK_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL", "")
+            webhook_secret = os.environ.get("WEBHOOK_SECRET", "")
+            collect_secret = os.environ.get("COLLECT_SECRET", "")
+            if not base_url.startswith("https://") or any(c in base_url for c in "?#"):
+                parser.error("Set WEBHOOK_BASE_URL to the public HTTPS service URL.")
+            if not re.fullmatch(r"[A-Za-z0-9_-]{32,256}", webhook_secret) or len(collect_secret) < 32:
+                parser.error("Set WEBHOOK_SECRET and COLLECT_SECRET to random strings of at least 32 characters.")
+            asyncio.run(serve(bot, base_url.rstrip("/"), webhook_secret, collect_secret,
+                              int(os.environ.get("PORT", "10000"))))
+        else:
+            asyncio.run(bot.run())
+    except KeyboardInterrupt:
+        pass
+    except TelegramError as error:
+        LOG.error("Telegram error: %s", str(error))
+        raise SystemExit(1) from None
+
+
+if __name__ == "__main__":
+    main()

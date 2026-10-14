@@ -1,0 +1,2 @@
+# Python 3.11+ standard library only. No third-party runtime dependencies.
+# Recommended and tested runtime: Python 3.12.14; Linux tzdata is required.

@@ -1,0 +1,49 @@
+name: Check Serbia jobs
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '7,37 * * * *'
+permissions: {}
+concurrency:
+  group: serbia-jobs-collection
+  cancel-in-progress: false
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Wake updated bot and request collection
+        env:
+          COLLECT_URL: ${{ secrets.COLLECT_URL }}
+          COLLECT_SECRET: ${{ secrets.COLLECT_SECRET }}
+        run: |
+          python3 - <<'PY'
+          import json, os, time
+          from urllib.parse import urlsplit
+          from urllib.request import Request, urlopen
+          from urllib.error import URLError, HTTPError
+          url=os.environ.get('COLLECT_URL','')
+          secret=os.environ.get('COLLECT_SECRET','')
+          parsed=urlsplit(url)
+          if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or not parsed.path.endswith('/collect') or len(secret)<32:
+              raise SystemExit('Configure COLLECT_URL and COLLECT_SECRET in repository Actions secrets.')
+          health=url[:-len('/collect')]+'/health'
+          for attempt in range(3):
+              try:
+                  with urlopen(health,timeout=100) as response:
+                      status=json.load(response)
+                  if status.get('ok') is not True or status.get('version')!='2.0.0':
+                      raise SystemExit('Deploy bot version 2.0.0 and apply its SQL migration first.')
+                  request=Request(url,data=b'',method='POST',headers={'X-Collect-Secret':secret})
+                  with urlopen(request,timeout=100) as response:
+                      if response.status!=202:
+                          raise SystemExit('Collection endpoint returned an unexpected status.')
+                      result=json.load(response)
+                  print('Collection accepted:',result.get('result'))
+                  print('Acceptance is not completion. Check source diagnostics in Supabase or Render logs.')
+                  break
+              except (URLError,TimeoutError,OSError):
+                  if attempt==2:
+                      raise SystemExit('Could not reach the bot. Check Render logs and repository secrets.')
+                  time.sleep(10)
+          PY

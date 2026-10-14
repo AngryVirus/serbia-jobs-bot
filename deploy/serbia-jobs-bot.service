@@ -1,0 +1,20 @@
+# Optional Linux polling development example; iPhone/Render instructions are in START_WITH_IPHONE.md.
+[Unit]
+Description=Serbia Jobs Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Замените пользователя и пути на значения своего сервера.
+User=serbia-bot
+WorkingDirectory=/opt/serbia-jobs-bot
+ExecStart=/usr/bin/python3 /opt/serbia-jobs-bot/bot.py
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
