@@ -50,11 +50,11 @@ def remote_fact(text):
 def text_salary(text):
     from sources import parse_money_amount
     # A stated maximum is never treated as a guaranteed minimum.
-    pattern=r'(?:(up to|do|до)\s+)?([\d][\d\s.,]*)\s*(?:[-–]\s*[\d\s.,]+\s*)?(EUR|RSD|USD)\s*(?:/\s*(month|hour|year)|\b(mesecno|mesečno|monthly|hourly|annually)|(в месяц|в час|в год|мес\.))'
+    pattern=r'(?:(up to|do|до)\s+)?([\d][\d\s.,]*)\s*(?:[-–]\s*[\d\s.,]+\s*)?(EUR|RSD|USD)\s*(?:/\s*(month|hour|year|месяц|час|год|mesec|mesecu|sat|satu|godina)|\b(mesecno|mesečno|monthly|hourly|annually)|(в месяц|в час|в год|мес\.))'
     match=re.search(pattern,text,re.I)
     if not match: return None,None,None
     period=(match[4] or match[5] or match[6] or '').casefold()
-    period='month' if period in {'month','mesecno','mesečno','monthly','в месяц','мес.'} else 'hour' if period in {'hour','hourly','в час'} else 'year'
+    period='month' if period in {'month','месяц','mesec','mesecu','mesecno','mesečno','monthly','в месяц','мес.'} else 'hour' if period in {'hour','час','sat','satu','hourly','в час'} else 'year'
     amount=None if match[1] or period!='month' else parse_money_amount(match[2].strip())
     return amount,match[3].upper(),period
 
