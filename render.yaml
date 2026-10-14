@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: serbia-jobs-bot
+    runtime: python
+    plan: free
+    buildCommand: python3 -m compileall -q bot.py sources.py store.py cloud_store.py web_server.py job_metadata.py filters.py
+    startCommand: python3 bot.py --webhook
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.14
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: WEBHOOK_SECRET
+        sync: false
+      - key: COLLECT_SECRET
+        sync: false

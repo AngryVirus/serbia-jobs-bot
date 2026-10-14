@@ -1,0 +1,124 @@
+# Запуск и обновление с iPhone — версия 2.0.0
+
+Нужны Safari, GitHub, Render и Supabase. Терминал, компьютер и Python на телефон не нужны. Секреты вводятся только в приватных полях сервисов.
+
+## Если бот уже работает: сначала сохраните действующую базу
+
+1. Откройте https://dashboard.render.com → существующий **serbia-jobs-bot → Environment**. Используйте уже настроенные `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY`; новый проект Supabase создавать не нужно. Не меняйте ключи и имя базы только ради обновления кода.
+2. Откройте https://supabase.com/dashboard → этот проект → **SQL Editor → New query**.
+3. В обновлённом GitHub откройте `supabase-schema.sql` → **Raw**, скопируйте весь текст. На iPhone кнопка Raw может находиться в меню файла; при необходимости Safari → **Запросить настольный веб-сайт**. Вставьте SQL в редактор Supabase и нажмите **Run**.
+4. Это добавляет колонки и служебные функции, не очищая пользователей, вакансии и историю. SQL можно выполнить повторно. Дождитесь успешного результата. Применить SQL нужно **до** обновления сервиса Render.
+5. Обновите код в GitHub (при подготовленном pull request: **Pull requests → нужный PR → Ready for review → Merge pull request → Confirm merge**). Убедитесь, что изменения находятся в `main`, а не только в ZIP или отдельной ветке.
+6. В Render → сервис → **Manual Deploy → Deploy latest commit**. Если Auto-Deploy включён, дождитесь автоматического обновления. Ваши прежние команды распаковки ZIP также поддерживаются: архив `serbia-jobs-bot.zip` обновлён вместе с исходниками.
+7. В **Logs** найдите `version 2.0.0` и `Webhook server is ready`. В Safari откройте адрес сервиса с `/health`: ожидается `{"ok":true,"version":"2.0.0"}`. Одного старого `{"ok":true}` недостаточно для проверки версии.
+8. В Telegram откройте https://t.me/SerbiaJobsBot и отправьте **/menu**. В новом меню ровно четыре действия: поиск, фильтры, уведомления, помощь. Старые сообщения с кнопками остаются в истории Telegram, но действия источников и избранного больше не выполняются.
+9. Проверьте расписание по разделу ниже. Вакансии, собранные в среде разработки Codex, автоматически в вашу Supabase не переносились; после обновления сервер соберёт данные сам.
+
+Если появилась ошибка с `sj_acquire_lease`, `sj_patch_settings`, `sj_leases` или новыми колонками — SQL из пункта 3 ещё не применён к той базе, которую использует Render. Проверка готовности блокирует старт неподготовленной базы.
+
+## Новый запуск: GitHub
+
+1. Войдите в https://github.com. Код должен находиться в вашем репозитории: исходники в корне и `.github/workflows/collect.yml` отдельным файлом. Workflow внутри ZIP GitHub не исполняет.
+2. Если доступен только ZIP: скачайте `serbia-jobs-bot.zip` → приложение **Файлы** → нажмите на архив для распаковки. Через **Add file → Upload files** можно загрузить ZIP с тем же именем. Для этого варианта ниже есть отдельные команды Render.
+3. Публичный репозиторий подходит для бесплатных стандартных GitHub Actions. Не загружайте `.env`, ключи, выгрузку базы и личные данные пользователей.
+
+## Новый запуск: Supabase
+
+1. https://supabase.com/dashboard → **New project** → план **Free**. Выберите имя и регион, дождитесь создания.
+2. **SQL Editor → New query** → вставьте весь `supabase-schema.sql` → **Run**.
+3. **Project Settings → Data API → Project URL**: скопируйте адрес `https://…supabase.co`.
+4. **Project Settings → API Keys**: серверный **secret key** (`sb_secret_…`) или старый **service_role**. `anon` и `sb_publishable_…` для этого сервера не подходят. Сохраните ключ приватно для Render.
+5. Для двух независимых секретов в **SQL Editor → New query → Run** выполните:
+
+```sql
+select replace(gen_random_uuid()::text, '-', '') as webhook_secret,
+       replace(gen_random_uuid()::text, '-', '') as collect_secret;
+```
+
+Результаты вводятся только в приватные настройки ниже; в чат и GitHub-файлы их не копируйте.
+
+## Новый запуск: Render
+
+1. https://dashboard.render.com → **New → Web Service** → подключите ваш репозиторий GitHub, ветку **main**.
+2. **Language / Runtime: Python 3**, **Instance Type: Free**. Используется именно Web Service.
+3. Если исходники в корне репозитория:
+
+**Build Command**
+
+```text
+python3 -m compileall -q bot.py sources.py store.py cloud_store.py web_server.py job_metadata.py filters.py
+```
+
+**Start Command**
+
+```text
+python3 bot.py --webhook
+```
+
+Если в GitHub загружен только ZIP:
+
+**Build Command**
+
+```text
+python3 -m zipfile -e serbia-jobs-bot.zip app
+```
+
+**Start Command**
+
+```text
+python3 app/serbia-jobs-bot/bot.py --webhook
+```
+
+4. В **Environment Variables** добавьте:
+
+| Name | Value |
+| --- | --- |
+| `PYTHON_VERSION` | `3.12.14` |
+| `TELEGRAM_BOT_TOKEN` | Актуальный токен своего бота от @BotFather |
+| `SUPABASE_URL` | Project URL действующей Supabase |
+| `SUPABASE_SERVICE_ROLE_KEY` | Серверный секретный ключ этой базы |
+| `WEBHOOK_SECRET` | Случайный webhook_secret, не меньше 32 символов |
+| `COLLECT_SECRET` | Другой случайный collect_secret, не меньше 32 символов |
+| `SCAN_INTERVAL_MINUTES` | `30` |
+
+Render сам предоставляет `RENDER_EXTERNAL_URL` и `PORT`. Для другого хостинга требуется `WEBHOOK_BASE_URL` с публичным HTTPS-адресом. **Health Check Path**: `/health`.
+
+5. **Deploy Web Service** → дождитесь **Live**, проверьте **Logs** и `/health` с версией 2.0.0.
+6. Откройте своего бота в Telegram → **Start** или `/start`. Первое наполнение запускается автоматически в фоне. Настройки и история хранятся в Supabase, а не на временном диске Render.
+
+## Расписание GitHub каждые 30 минут
+
+1. GitHub → ваш репозиторий → **Settings → Secrets and variables → Actions → New repository secret**:
+
+| Name | Secret |
+| --- | --- |
+| `COLLECT_URL` | `https://адрес-вашего-сервиса.onrender.com/collect` |
+| `COLLECT_SECRET` | То же приватное значение, что у `COLLECT_SECRET` в Render |
+
+2. Если `.github/workflows/collect.yml` уже находится в `main`, повторно создавать его не нужно. Если у вас только ZIP: откройте `collect-workflow.txt` после распаковки, скопируйте весь текст → GitHub **Add file → Create new file** → имя `.github/workflows/collect.yml` → вставьте текст → **Commit changes** в `main`.
+3. **Actions → Check Serbia jobs → Run workflow → Run workflow**.
+4. Успешный запрос показывает `Collection accepted: started` или `already_running`. Это подтверждает принятие, а не завершение сбора.
+5. Результаты завершения: Render **Logs** (`Source … state/count/reason`, `Collection … records`) либо Supabase **Table Editor → sj_source_status**. Строка `_collection` показывает `running`, `finished` или `error`. Пользовательской кнопки источников теперь нет.
+6. В Telegram нажмите **🔎 Найти вакансии**. Если стоит «Сегодня», неизвестные даты исключаются — при диагностике можно выбрать **🕒 Свежесть → 🌍 Не важно**.
+
+## Проверка после обновления
+
+- Два разных пользователя: независимо задайте ключевые слова и город; изменение первого не должно менять второго.
+- В **⚙️ Фильтры** есть свежесть и ровно три варианта языка.
+- Выдача и уведомления содержат кнопку **🔗 Открыть объявление** на конкретную вакансию.
+- **🆘 Помощь** открывает https://t.me/AngryVirus.
+- Уведомления включаются каждым пользователем отдельно. Выключенные настройки не включаются при обновлении.
+- После **Manual Deploy → Deploy latest commit** фильтры, состояние ввода и история отправок сохраняются.
+
+## Бесплатные тарифы и реальные ограничения
+
+Официальные страницы проверены 14 октября 2026 года:
+
+- [Render Free](https://render.com/docs/free): бесплатный Web Service доступен; сон после 15 минут без входящих запросов, пробуждение обычно около минуты; 750 часов на workspace в месяц. Диск временный, persistent disk на Free недоступен. Возможны ограничения исходящего трафика, сборки и перезапуски. Для строго бесплатного режима выбирайте Free и не включайте платные дополнения; при исчерпании квот сервис может приостановиться.
+- [Supabase Free](https://supabase.com/pricing): $0, 500 МБ базы, 5 ГБ исходящего трафика, максимум два активных бесплатных проекта, пауза после недели неактивности. Автоматические резервные копии не входят в Free. При паузе возобновите проект через Dashboard.
+- [GitHub Actions billing](https://docs.github.com/en/actions/concepts/billing-and-usage): стандартные hosted runners бесплатны для публичных репозиториев. У приватных есть квота минут. Не выбирайте платные большие runners.
+- [GitHub schedule](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule): расписание может задерживаться, отдельные запуски могут быть пропущены; файл должен быть в default branch. В публичном репозитории расписание отключается после 60 дней без активности — включите workflow снова в Actions.
+
+Непрерывная работа и доставка ровно в выбранную минуту не гарантируются. Ежедневная подборка отправляется при первой успешной проверке после выбранного часа Белграда. Во время сна внутренний таймер не работает; внешний GitHub workflow пробуждает сервис. Сбор ограничен страницами и объёмом запросов, поэтому база не является полным индексом всех вакансий.
+
+По части сайтов есть ограничения; точные результаты — в `SOURCE_NOTES.md`. Вакансия без даты может попадать в поиск только при отключённом фильтре свежести. Языковые фильтры основаны на явно указанных условиях работы, а не на языке текста объявления.
