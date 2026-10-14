@@ -162,7 +162,7 @@ class Store:
             job['salary_period'] = 'month'
         return job
 
-    def ensure_user(self, user_id: int, chat_id: int) -> None:
+    def ensure_user(self, user_id: int, chat_id: int) -> dict[str, Any]:
         now = utc_now()
         with self._connection() as conn:
             conn.execute(
@@ -172,13 +172,15 @@ class Store:
                     chat_id = excluded.chat_id, updated_at = excluded.updated_at""",
                 (user_id, chat_id, json.dumps(default_settings()), now, now),
             )
+            row = conn.execute("SELECT settings FROM users WHERE user_id = ?", (user_id,)).fetchone()
+            return self._settings(row['settings'])
 
     def get_settings(self, user_id: int) -> dict[str, Any]:
         with self._connection() as conn:
             row = conn.execute("SELECT settings FROM users WHERE user_id = ?", (user_id,)).fetchone()
         return self._settings(row["settings"] if row else None)
 
-    def update_settings(self, user_id: int, **kwargs: Any) -> None:
+    def update_settings(self, user_id: int, **kwargs: Any) -> dict[str, Any]:
         unknown = set(kwargs) - set(default_settings())
         if unknown:
             raise ValueError(f"Unknown setting(s): {', '.join(sorted(unknown))}")
@@ -195,6 +197,7 @@ class Store:
                     settings = excluded.settings, updated_at = excluded.updated_at""",
                 (user_id, user_id, json.dumps(settings, ensure_ascii=False), now, now),
             )
+            return settings
 
     def save_jobs(self, jobs: Iterable[Any]) -> int:
         """Upsert dataclasses or mappings, returning the number of new vacancies.

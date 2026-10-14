@@ -1,6 +1,8 @@
 """Russian-language, multi-user Telegram job bot; Python 3.11+, no dependencies."""
 import argparse
 import asyncio
+from contextvars import ContextVar
+from copy import deepcopy
 from datetime import datetime, timezone
 from html import escape
 import logging
@@ -44,15 +46,43 @@ class Bot:
         self.scanning = False
         self.instance_id = str(uuid.uuid4())
         self._locks = WeakValueDictionary()
+        self._request_settings = ContextVar('request_settings', default=None)
+
+    def get_settings(self, uid):
+        """Reuse only the current handler's snapshot; never cache between clicks."""
+        snapshot = self._request_settings.get()
+        if snapshot is not None and snapshot[0] == uid:
+            return deepcopy(snapshot[1])
+        return self.store.get_settings(uid)
+
+    def update_settings(self, uid, **fields):
+        saved = self.store.update_settings(uid, **fields)
+        snapshot = self._request_settings.get()
+        if snapshot is not None and snapshot[0] == uid:
+            self._request_settings.set((uid, saved))
+
+    async def acknowledge_callback(self, update):
+        callback = update.get('callback_query')
+        if not callback:
+            return
+        params = {'callback_query_id': callback['id']}
+        user = callback.get('from', {})
+        if callback.get('message', {}).get('chat', {}).get('type') != 'private' or not user.get('id') or user.get('is_bot'):
+            params['text'] = 'Откройте личный чат с ботом.'
+        try:
+            await self.api.call('answerCallbackQuery', **params)
+        except TelegramError as error:
+            # An expired callback confirmation must not prevent the requested action.
+            LOG.warning('Callback acknowledgement failed (%s)', error.code)
 
     def set_pending(self, uid, field):
         self.pending[uid] = field
-        self.store.update_settings(uid, pending_input=field)
+        self.update_settings(uid, pending_input=field)
 
     def clear_pending(self, uid):
         self.pending.pop(uid, None)
-        if self.store.get_settings(uid).get("pending_input") is not None:
-            self.store.update_settings(uid, pending_input=None)
+        if self.get_settings(uid).get("pending_input") is not None:
+            self.update_settings(uid, pending_input=None)
 
     async def panel(self, chat_id, text, rows, message_id=None):
         if message_id:
@@ -74,7 +104,7 @@ class Bot:
         return lock
 
     async def filters(self, uid, chat, mid=None):
-        s = self.store.get_settings(uid)
+        s = self.get_settings(uid)
         text = ('<b>⚙️ Ваши фильтры</b>\n\n' + filter_summary(s) + '\n\n'
                 '✅ — выбранные условия. В каждой группе можно выбрать несколько вариантов. '
                 'Между группами условия действуют вместе.')
@@ -88,7 +118,7 @@ class Bot:
         await self.panel(chat, text, rows, mid)
 
     async def notifications(self, uid, chat, mid=None):
-        s = self.store.get_settings(uid)
+        s = self.get_settings(uid)
         current = {"off": "Выключены", "instant": "После каждой проверки источников", "daily": "Ежедневная подборка"}[s["notifications"]]
         await self.panel(chat, f"<b>Уведомления</b>\n\nСейчас: {current}\n"
                          f"Проверка источников: примерно каждые {self.scan_minutes} минут.\n"
@@ -99,7 +129,7 @@ class Bot:
                           [button("Раз в день", "notify:daily"), button("Час подборки", "input:hour")]] + BACK, mid)
 
     async def results(self, uid, chat, page=0, after_id=None):
-        settings = self.store.get_settings(uid)
+        settings = self.get_settings(uid)
         all_jobs = self.store.list_jobs()
         jobs = [j for j in all_jobs if contactable(j) and matches(j, settings)]
         page = min(max(page, 0), max((len(jobs) - 1) // PAGE_SIZE, 0))
@@ -141,7 +171,7 @@ class Bot:
                             [[button('⚙️ Фильтры', 'filters'), button('🙈 Скрытые', 'hidden:0')]] + BACK)
 
     async def hidden(self, uid, chat, page=0, mid=None):
-        ids = sorted(hidden_job_ids(self.store.get_settings(uid)), reverse=True)
+        ids = sorted(hidden_job_ids(self.get_settings(uid)), reverse=True)
         page = min(max(page, 0), max((len(ids) - 1) // PAGE_SIZE, 0))
         if not ids:
             await self.panel(chat, '<b>🙈 Скрытые вакансии</b>\n\nЗдесь пока пусто. '
@@ -185,11 +215,11 @@ class Bot:
             return
         if kind == 'restore' and len(parts) == 3 and not parts[2].isdigit():
             return
-        ids = hidden_job_ids(self.store.get_settings(uid))
+        ids = hidden_job_ids(self.get_settings(uid))
         job = self.store.get_job(job_id)
         if kind == 'restore':
             ids.discard(job_id)
-            self.store.update_settings(uid, hidden_jobs=sorted(ids))
+            self.update_settings(uid, hidden_jobs=sorted(ids))
             if len(parts) == 3:
                 await self.hidden(uid, chat, int(parts[2]), mid)
             else:
@@ -201,7 +231,7 @@ class Bot:
             await self.panel(chat, 'Вакансия больше не доступна.', BACK, mid)
         elif kind == 'hide':
             ids.add(job_id)
-            self.store.update_settings(uid, hidden_jobs=sorted(ids))
+            self.update_settings(uid, hidden_jobs=sorted(ids))
             await self.hidden_card(chat, job, mid)
         elif job_id in ids:
             await self.hidden_card(chat, job, mid)
@@ -222,19 +252,19 @@ class Bot:
                 values = [] if text.strip() == "-" else list(dict.fromkeys(x.strip() for x in text.split(",") if x.strip()))
                 if len(values) > 15 or any(len(x) > 60 for x in values):
                     raise ValueError("Максимум 15 слов или фраз, до 60 символов каждое.")
-                self.store.update_settings(uid, **{field: values})
+                self.update_settings(uid, **{field: values})
             elif field == "salary":
                 if text.strip() == "-":
-                    self.store.update_settings(uid, min_salary=None)
+                    self.update_settings(uid, min_salary=None)
                 else:
                     match = re.fullmatch(r"\s*(\d+(?:[.,]\d{1,2})?)\s+(EUR|RSD)\s*", text.upper())
                     if not match or float(match[1].replace(",", ".")) > 100_000_000:
                         raise ValueError("Введите сумму в месяц и валюту: 1000 EUR или 120000 RSD. «-» — снять фильтр.")
-                    self.store.update_settings(uid, min_salary=float(match[1].replace(",", ".")), currency=match[2])
+                    self.update_settings(uid, min_salary=float(match[1].replace(",", ".")), currency=match[2])
             elif field == "hour":
                 if not text.strip().isdigit() or not 0 <= int(text.strip()) <= 23:
                     raise ValueError("Введите час от 0 до 23 по времени Белграда.")
-                self.store.update_settings(uid, daily_hour=int(text.strip()))
+                self.update_settings(uid, daily_hour=int(text.strip()))
             else:
                 raise ValueError("Неизвестная настройка. Используйте /cancel.")
         except ValueError as error:
@@ -246,19 +276,20 @@ class Bot:
         else:
             await self.filters(uid, chat)
 
-    async def _handle(self, update):
+    async def _handle(self, update, prepared_settings=None, acknowledged=False):
         callback = update.get("callback_query")
         message = callback.get("message", {}) if callback else update.get("message", {})
         user = callback.get("from", {}) if callback else message.get("from", {})
         chat = message.get("chat", {})
+        if callback and not acknowledged:
+            await self.acknowledge_callback(update)
         if chat.get("type") != "private" or not user.get("id") or user.get("is_bot"):
-            if callback:
-                await self.api.call("answerCallbackQuery", callback_query_id=callback["id"], text="Откройте личный чат с ботом.")
             return
         uid, chat_id = user["id"], chat["id"]
-        self.store.ensure_user(uid, chat_id)
+        if prepared_settings is None:
+            prepared_settings = self.store.ensure_user(uid, chat_id)
+        self._request_settings.set((uid, prepared_settings))
         if callback:
-            await self.api.call("answerCallbackQuery", callback_query_id=callback["id"])
             action = callback.get("data", "")
             mid = message.get("message_id")
             self.clear_pending(uid)
@@ -269,9 +300,11 @@ class Bot:
             if len(text) > 1000:
                 await self.api.send(chat_id, "Пожалуйста, сократите сообщение до 1000 символов.")
                 return
-            saved_pending = self.store.get_settings(uid).get("pending_input")
-            if saved_pending and uid not in self.pending:
+            saved_pending = self.get_settings(uid).get("pending_input")
+            if saved_pending:
                 self.pending[uid] = saved_pending
+            else:
+                self.pending.pop(uid, None)
             if uid in self.pending and not text.startswith("/"):
                 await self.input_value(uid, chat_id, text)
                 return
@@ -280,7 +313,7 @@ class Bot:
             action = {"/start": "start", "/menu": "menu", "/cancel": "menu", "/delete_me": "delete"}.get(command, "menu")
             mid = None
         if action in ('menu', 'start'):
-            await self.panel(chat_id, menu_text(self.store.get_settings(uid), start=action == 'start'), MENU, mid)
+            await self.panel(chat_id, menu_text(self.get_settings(uid), start=action == 'start'), MENU, mid)
         elif action == "help":
             await self.help(chat_id, mid)
         elif action == "filters":
@@ -309,7 +342,7 @@ class Bot:
         elif action == "notifications":
             await self.notifications(uid, chat_id, mid)
         elif action.startswith("notify:") and action[7:] in ("off", "instant", "daily"):
-            self.store.update_settings(uid, notifications=action[7:])
+            self.update_settings(uid, notifications=action[7:])
             await self.notifications(uid, chat_id, mid)
         elif action.startswith("input:") and action[6:] in ("keywords", "exclusions", "salary", "hour"):
             field = action[6:]
@@ -320,28 +353,28 @@ class Bot:
                       "hour": "Введите час ежедневной подборки от 0 до 23, время Белграда."}[field]
             await self.panel(chat_id, prompt + "\n/cancel — отмена.", CANCEL, mid)
         elif action in FILTER_OPTIONS:
-            text, rows = choice_panel(self.store.get_settings(uid), action)
+            text, rows = choice_panel(self.get_settings(uid), action)
             await self.panel(chat_id, text, rows, mid)
         elif action.startswith('choose:'):
             parts = action.split(':')
             if (len(parts) == 4 and parts[1] in FILTER_OPTIONS
                     and parts[2] in FILTER_OPTIONS[parts[1]] and parts[3] in ('0', '1')):
                 field, value = parts[1:3]
-                settings = self.store.get_settings(uid)
-                self.store.update_settings(uid, **{field: select_value(settings, field, value, parts[3] == '1')})
-                text, rows = choice_panel(self.store.get_settings(uid), field)
+                settings = self.get_settings(uid)
+                self.update_settings(uid, **{field: select_value(settings, field, value, parts[3] == '1')})
+                text, rows = choice_panel(self.get_settings(uid), field)
                 await self.panel(chat_id, text, rows, mid)
         elif action.startswith('set:'):
             # Previously sent single-choice buttons retain their original meaning.
             parts = action.split(':')
             if len(parts) == 3 and parts[1] in FILTER_OPTIONS and parts[2] in FILTER_OPTIONS[parts[1]]:
-                self.store.update_settings(uid, **{parts[1]: parts[2]})
+                self.update_settings(uid, **{parts[1]: parts[2]})
                 await self.filters(uid, chat_id, mid)
         elif action == "toggle_salary":
-            self.store.update_settings(uid, include_unknown_salary=not self.store.get_settings(uid)["include_unknown_salary"])
+            self.update_settings(uid, include_unknown_salary=not self.get_settings(uid)["include_unknown_salary"])
             await self.filters(uid, chat_id, mid)
         elif action == "reset":
-            self.store.update_settings(uid, keywords=[], exclusions=[], city="any", remote="any", language="any",
+            self.update_settings(uid, keywords=[], exclusions=[], city="any", remote="any", language="any",
                                        min_salary=None, currency="EUR", include_unknown_salary=True, freshness="any")
             await self.filters(uid, chat_id, mid)
         elif action == "delete":
@@ -351,7 +384,7 @@ class Bot:
             self.store.delete_user(uid)
             await self.api.send(chat_id, "Ваши данные удалены. Уведомления выключены. /start — начать заново.")
 
-    async def handle(self, update):
+    async def handle(self, update, prepared_settings=None, acknowledged=False):
         callback = update.get('callback_query') or {}
         message = callback.get('message', {}) if callback else update.get('message', {})
         user = callback.get('from', {}) if callback else message.get('from', {})
@@ -359,7 +392,13 @@ class Bot:
         async with self.user_lock(uid):
             # Synchronous PostgREST I/O runs in a worker with its own event loop.
             # A slow user's database calls never block the main webhook loop.
-            await asyncio.to_thread(lambda: asyncio.run(self._handle(update)))
+            async def run():
+                token = self._request_settings.set(None)
+                try:
+                    await self._handle(update, prepared_settings, acknowledged)
+                finally:
+                    self._request_settings.reset(token)
+            await asyncio.to_thread(lambda: asyncio.run(run()))
 
     async def scan(self):
         if self.scanning: return False

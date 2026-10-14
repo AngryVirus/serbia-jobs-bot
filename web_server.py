@@ -22,6 +22,7 @@ class WebhookProcessor:
         update_id = update.get('update_id')
         if not isinstance(update_id, int) or isinstance(update_id, bool):
             raise ValueError('Invalid update')
+        await self.bot.acknowledge_callback(update)
         owner = str(uuid.uuid4())
         claim = await asyncio.to_thread(self.bot.store.claim_update, update_id, owner, 600)
         if claim == 'completed': return
@@ -35,16 +36,17 @@ class WebhookProcessor:
         callback = update.get('callback_query') or {}
         message = callback.get('message', {}) if callback else update.get('message', {})
         user = callback.get('from', {}) if callback else message.get('from', {})
-        uid = user.get('id') if message.get('chat', {}).get('type') == 'private' else None
+        uid = user.get('id') if message.get('chat', {}).get('type') == 'private' and not user.get('is_bot') else None
         key = f'user:{uid}'
         locked = False
         heartbeat = None
         interrupted = False
+        saved = None
         try:
             if uid:
                 locked = await asyncio.to_thread(self.bot.store.acquire_lease, key, owner, 600)
                 if not locked: raise RuntimeError('Another update for this user is processing')
-                saved = await asyncio.to_thread(self.bot.store.get_settings, uid)
+                saved = await asyncio.to_thread(self.bot.store.ensure_user, uid, message['chat']['id'])
                 if update_id in saved.get('webhook_update_ids', []):
                     await asyncio.to_thread(self.bot.store.finish_update, update_id, owner)
                     return
@@ -56,7 +58,7 @@ class WebhookProcessor:
                     if locked and not await asyncio.to_thread(self.bot.store.acquire_lease, key, owner, 600):
                         raise RuntimeError('User lease expired')
             heartbeat = asyncio.create_task(renew())
-            processing = asyncio.create_task(self.bot.handle(update))
+            processing = asyncio.create_task(self.bot.handle(update, prepared_settings=saved, acknowledged=True))
             done, _ = await asyncio.wait((processing, heartbeat), return_when=asyncio.FIRST_COMPLETED)
             if heartbeat in done:
                 interrupted = True

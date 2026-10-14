@@ -210,11 +210,11 @@ class ProductTests(unittest.IsolatedAsyncioTestCase):
     async def test_slow_user_does_not_block_other_user(self):
         started=threading.Event();release=threading.Event()
         original=self.bot._handle
-        async def handle(update):
+        async def handle(update, prepared_settings=None, acknowledged=False):
             uid=update.get('message',{}).get('from',{}).get('id')
             if uid==1:
                 started.set();await asyncio.to_thread(release.wait,2)
-            await original(update)
+            await original(update, prepared_settings, acknowledged)
         self.bot._handle=handle
         task=asyncio.create_task(self.bot.handle(message(1,'/menu')))
         await asyncio.to_thread(started.wait,1)
