@@ -16,6 +16,38 @@ CITY_LABELS = {'any': 'Вся Сербия', 'belgrade': 'Белград', 'novi
 FRESHNESS_LABELS = {'today': '📅 Сегодня', 'yesterday': '⏮ Вчера', '7': '🗓 За 7 дней',
                     '30': '📆 За 30 дней', 'any': '🌍 Не важно'}
 LANGUAGE_LABELS = {'russian': '🇷🇺 Русский', 'serbian': '🇷🇸 Сербский', 'any': '🌍 Не важно'}
+REMOTE_LABELS = {'any': 'Любой формат', 'only': 'Удалённо', 'office': 'На месте / гибрид'}
+FILTER_OPTIONS = {'city': CITY_LABELS, 'remote': REMOTE_LABELS,
+                  'language': LANGUAGE_LABELS, 'freshness': FRESHNESS_LABELS}
+
+
+def selected_values(settings, field):
+    """Read both legacy scalar selections and new multiple selections."""
+    value = settings.get(field, 'any')
+    values = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+    values = list(dict.fromkeys(item for item in values if isinstance(item, str) and item))
+    return ['any'] if not values or 'any' in values else values
+
+
+def select_value(settings, field, value, enabled):
+    """Explicit add/remove makes retries and stale button double-taps harmless."""
+    if field not in FILTER_OPTIONS or value not in FILTER_OPTIONS[field]:
+        raise ValueError('Unknown filter option')
+    if value == 'any':
+        return ['any']
+    current = [v for v in selected_values(settings, field)
+               if v != 'any' and v in FILTER_OPTIONS[field]]
+    selected = set(current)
+    if enabled:
+        selected.add(value)
+    else:
+        selected.discard(value)
+    return [v for v in FILTER_OPTIONS[field] if v in selected] or ['any']
+
+
+def hidden_job_ids(settings):
+    values = settings.get('hidden_jobs') or []
+    return {value for value in values if type(value) is int and value > 0}
 
 
 def normalize(text):
@@ -72,21 +104,27 @@ def serbia_eligible(job):
 
 def matches(job, settings, now=None):
     now = now or datetime.now(timezone.utc)
+    if job.get('id') in hidden_job_ids(settings): return False
     if not active(job, now) or not serbia_eligible(job): return False
-    if not freshness_matches(job, settings.get('freshness', 'any'), now): return False
+    if not any(freshness_matches(job, period, now) for period in selected_values(settings, 'freshness')): return False
     text = normalize(' '.join(str(job.get(k) or '') for k in ('title', 'description')))
     if settings.get('keywords') and not any(contains(text, x) for x in settings['keywords']): return False
     if any(contains(text, x) for x in settings.get('exclusions', [])): return False
-    city = settings.get('city', 'any')
-    if city != 'any' and not any(contains(job.get('location') or '', x) for x in CITY_NAMES.get(city, (city,))): return False
-    remote = settings.get('remote', 'any')
-    if remote == 'only' and job.get('remote') is not True: return False
-    if remote == 'office' and job.get('remote') is not False: return False
-    language = settings.get('language', 'any')
+    cities = selected_values(settings, 'city')
+    if 'any' not in cities and not any(contains(job.get('location') or '', x)
+                                      for city in cities for x in CITY_NAMES.get(city, (city,))): return False
+    remote = selected_values(settings, 'remote')
+    if 'any' not in remote and not (('only' in remote and job.get('remote') is True)
+                                   or ('office' in remote and job.get('remote') is False)): return False
+    selected_languages = selected_values(settings, 'language')
     languages = job.get('languages')
-    if language == 'russian' and not ('ru' in (languages or []) or (languages is None and job.get('russian') is True)): return False
-    if language == 'serbian' and not ('sr' in (languages or []) or (languages is None and job.get('serbian_required') is True)): return False
-    if language == 'no_serbian' and job.get('serbian_required') is not False: return False
+    language_matches = {
+        'any': True,
+        'russian': 'ru' in (languages or []) or (languages is None and job.get('russian') is True),
+        'serbian': 'sr' in (languages or []) or (languages is None and job.get('serbian_required') is True),
+        'no_serbian': job.get('serbian_required') is False,
+    }
+    if not any(language_matches.get(value, False) for value in selected_languages): return False
     salary = job.get('salary_min')
     if salary is None and not settings.get('include_unknown_salary', True): return False
     minimum = settings.get('min_salary')

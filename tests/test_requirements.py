@@ -122,14 +122,15 @@ class ProductTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_menu_help_retired_commands_and_three_language_options(self):
         flat=[b for row in MENU for b in row]
-        self.assertEqual([b['text'] for b in flat],['🔎 Найти вакансии','⚙️ Фильтры','🔔 Уведомления','🆘 Помощь'])
+        self.assertEqual([b['text'] for b in flat],['🔎 Найти вакансии','⚙️ Фильтры','🔔 Уведомления','🙈 Скрытые','🆘 Помощь'])
         self.assertEqual(flat[-1]['url'],'https://t.me/AngryVirus')
         await self.bot.configure()
         commands=next(p['commands'] for m,p in self.api.calls if m=='setMyCommands')
         self.assertEqual([c['command'] for c in commands],['start','menu','cancel','delete_me'])
         await self.bot.handle(callback(1,'language'))
-        rows=self.api.calls[-1][1]['reply_markup']['inline_keyboard']; labels=[r[0]['text'] for r in rows[:-1]]
-        self.assertEqual(labels,['🇷🇺 Русский','🇷🇸 Сербский','🌍 Не важно'])
+        rows=self.api.calls[-1][1]['reply_markup']['inline_keyboard']
+        options=[b for row in rows for b in row if b.get('callback_data','').startswith('choose:language:')]
+        self.assertEqual([b['text'] for b in options],['▫️ 🇷🇺 Русский','▫️ 🇷🇸 Сербский','✅ 🌍 Не важно'])
         for text in ['/sources','/favorites']:
             await self.bot.handle(message(1,text))
             self.assertEqual(self.api.sent[-1]['rows'],MENU)
@@ -188,7 +189,8 @@ class ProductTests(unittest.IsolatedAsyncioTestCase):
         cards=[m for m in self.api.sent if '<b>Python developer</b>' in m['text']]
         self.assertEqual(len(cards),5)
         self.assertTrue(all(m['rows'][0][0]['text']=='🔗 Открыть объявление' for m in cards))
-        self.assertEqual(self.api.sent[-1]['rows'][0][0]['callback_data'],'search:1')
+        self.assertEqual(self.api.sent[-1]['rows'][0][0]['callback_data'],
+                         f'search:1:{self.store.list_jobs()[4]["id"]}')
 
     async def test_durable_webhook_claim_in_two_processors(self):
         first=WebhookProcessor(self.bot);second=WebhookProcessor(Bot(self.api,Store(self.path)))

@@ -32,8 +32,8 @@ jobs:
               try:
                   with urlopen(health,timeout=100) as response:
                       status=json.load(response)
-                  if status.get('ok') is not True or status.get('version')!='2.0.0':
-                      raise SystemExit('Deploy bot version 2.0.0 and apply its SQL migration first.')
+                  if status.get('ok') is not True or status.get('version')!='2.1.0':
+                      raise SystemExit('Deploy bot version 2.1.0 and apply its SQL migration first.')
                   request=Request(url,data=b'',method='POST',headers={'X-Collect-Secret':secret})
                   with urlopen(request,timeout=100) as response:
                       if response.status!=202:
