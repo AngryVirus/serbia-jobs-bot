@@ -9,15 +9,31 @@ LANGUAGE_NAMES = {'ru': ('russian', 'ruski', 'русск'), 'sr': ('serbian', 's
 
 def language_facts(text):
     accepted, required = [], []
-    sentences = re.split(r'[\n.!?;]', normalize(text))
+    sentences = [normalize(part) for part in re.split(r'[\n.!?;]', text)]
     for code, roots in LANGUAGE_NAMES.items():
         for sentence in sentences:
-            if not any(re.search(r'\b' + root + r'\w*', sentence) for root in roots): continue
+            if not any(re.search(r'\b' + re.escape(normalize(root)) + r'\w*', sentence) for root in roots): continue
             if re.search(r'not required|no .{0,25} required|не (?:нужен|требуется|обязател)|bez znanja', sentence): continue
             if re.search(r'requir|mandatory|fluency|fluent|knowledge|proficien|welcome|speak|work(?:ing)? (?:in|language)|znanje|poznavanje|obavez|знани|владени|треб|говорящ|приветств|работ.{0,20} на', sentence) and not re.search(r'datasets?|corpora|training data|учебн.{0,15}данн|обучающ.{0,15}данн',sentence):
                 if code not in accepted: accepted.append(code)
                 if re.search(r'requir|mandatory|must|obavez|треб|обязател', sentence) and code not in required: required.append(code)
     return accepted, required
+
+
+def job_language_facts(job):
+    """Keep explicit metadata and recover English missed by older collectors."""
+    languages = job.get('languages')
+    if languages is None:
+        languages = (['ru'] if job.get('russian') is True else []) + (['sr'] if job.get('serbian_required') is True else [])
+    languages = list(languages)
+    required = list(job.get('required_languages') or [])
+    if 'en' not in languages:
+        extracted, mandatory = language_facts('\n'.join(str(job.get(key) or '') for key in ('title', 'description')))
+        if 'en' in extracted:
+            languages.append('en')
+            if 'en' in mandatory and 'en' not in required:
+                required.append('en')
+    return languages, required
 
 
 def remote_fact(text):

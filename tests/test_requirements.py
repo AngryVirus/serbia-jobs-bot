@@ -120,17 +120,24 @@ class ProductTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self): self.temp.cleanup()
 
-    async def test_menu_help_retired_commands_and_three_language_options(self):
+    async def test_menu_help_retired_commands_and_language_options(self):
         flat=[b for row in MENU for b in row]
-        self.assertEqual([b['text'] for b in flat],['🔎 Найти вакансии','⚙️ Фильтры','🔔 Уведомления','🙈 Скрытые','🆘 Помощь'])
-        self.assertEqual(flat[-1]['url'],'https://t.me/AngryVirus')
+        self.assertEqual([b['text'] for b in flat],['🔎 Найти вакансии','⚙️ Фильтры','🔔 Уведомления','🙈 Скрытые вакансии','💬 Помощь'])
+        await self.bot.handle(callback(1, flat[-1]['callback_data']))
+        help_panel = self.api.calls[-1][1]
+        self.assertIn('В случае неисправностей или выявленных ошибок', help_panel['text'])
+        self.assertIn('@AngryVirus', help_panel['text'])
+        help_rows = help_panel['reply_markup']['inline_keyboard']
+        self.assertEqual(help_rows[0][0]['url'], 'https://t.me/AngryVirus')
+        await self.bot.handle(callback(1, help_rows[-1][0]['callback_data']))
+        self.assertEqual(self.api.calls[-1][1]['reply_markup']['inline_keyboard'], MENU)
         await self.bot.configure()
         commands=next(p['commands'] for m,p in self.api.calls if m=='setMyCommands')
         self.assertEqual([c['command'] for c in commands],['start','menu','cancel','delete_me'])
         await self.bot.handle(callback(1,'language'))
         rows=self.api.calls[-1][1]['reply_markup']['inline_keyboard']
         options=[b for row in rows for b in row if b.get('callback_data','').startswith('choose:language:')]
-        self.assertEqual([b['text'] for b in options],['▫️ 🇷🇺 Русский','▫️ 🇷🇸 Сербский','✅ 🌍 Не важно'])
+        self.assertEqual([b['text'] for b in options],['▫️ 🇷🇺 Русский','▫️ 🇷🇸 Сербский','▫️ 🇬🇧 Английский','✅ 🌍 Не важно'])
         for text in ['/sources','/favorites']:
             await self.bot.handle(message(1,text))
             self.assertEqual(self.api.sent[-1]['rows'],MENU)

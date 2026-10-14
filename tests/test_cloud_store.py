@@ -8,6 +8,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 import io
 import json
+import threading
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError, URLError
@@ -44,6 +46,8 @@ class MemorySupabaseStore(SupabaseStore):
         self.calls = []
         self.next_job_id = 1
         self.default_counter = 0
+        self.leases = {}
+        self.lease_lock = threading.Lock()
 
     @staticmethod
     def _matches(row, params):
@@ -84,6 +88,18 @@ class MemorySupabaseStore(SupabaseStore):
         params = dict(params or {})
         self.calls.append({"method": method, "table": table, "params": deepcopy(params),
                            "data": deepcopy(data), "prefer": prefer})
+        if table in ('rpc/sj_acquire_lease', 'rpc/sj_release_lease'):
+            with self.lease_lock:
+                key, owner = data['p_key'], data['p_owner']
+                current, expires = self.leases.get(key, (None, 0))
+                if table == 'rpc/sj_release_lease':
+                    if current == owner:
+                        self.leases.pop(key)
+                    return None
+                if current != owner and expires > time.monotonic():
+                    return False
+                self.leases[key] = (owner, time.monotonic() + data['p_seconds'])
+                return True
         if table == 'rpc/sj_patch_settings':
             rows=self.tables['sj_users']
             row=next((r for r in rows if r['user_id']==data['p_user_id']),None)

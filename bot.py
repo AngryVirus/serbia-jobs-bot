@@ -210,7 +210,10 @@ class Bot:
             await self.panel(chat, job_text(job, expanded), job_buttons(job, expanded), mid)
 
     async def help(self, chat, mid=None):
-        await self.panel(chat, '🆘 Связаться с владельцем и получить помощь:', [[{'text': '🆘 Помощь', 'url': HELP_URL}]] + BACK, mid)
+        await self.panel(chat,
+                         '<b>💬 Помощь</b>\n\nВ случае неисправностей или выявленных ошибок '
+                         f'вы можете обратиться к <a href="{HELP_URL}">@AngryVirus</a>.',
+                         [[{'text': '✉️ Написать @AngryVirus', 'url': HELP_URL}]] + BACK, mid)
 
     async def input_value(self, uid, chat, text):
         field = self.pending[uid]

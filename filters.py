@@ -15,7 +15,8 @@ CITY_LABELS = {'any': 'Вся Сербия', 'belgrade': 'Белград', 'novi
                'nis': 'Ниш', 'subotica': 'Суботица', 'kragujevac': 'Крагуевац'}
 FRESHNESS_LABELS = {'today': '📅 Сегодня', 'yesterday': '⏮ Вчера', '7': '🗓 За 7 дней',
                     '30': '📆 За 30 дней', 'any': '🌍 Не важно'}
-LANGUAGE_LABELS = {'russian': '🇷🇺 Русский', 'serbian': '🇷🇸 Сербский', 'any': '🌍 Не важно'}
+LANGUAGE_LABELS = {'russian': '🇷🇺 Русский', 'serbian': '🇷🇸 Сербский',
+                   'english': '🇬🇧 Английский', 'any': '🌍 Не важно'}
 REMOTE_LABELS = {'any': 'Любой формат', 'only': 'Удалённо', 'office': 'На месте / гибрид'}
 FILTER_OPTIONS = {'city': CITY_LABELS, 'remote': REMOTE_LABELS,
                   'language': LANGUAGE_LABELS, 'freshness': FRESHNESS_LABELS}
@@ -118,10 +119,16 @@ def matches(job, settings, now=None):
                                    or ('office' in remote and job.get('remote') is False)): return False
     selected_languages = selected_values(settings, 'language')
     languages = job.get('languages')
+    english = 'en' in (languages or [])
+    if 'english' in selected_languages and not english:
+        # Read older cached descriptions too; metadata extraction uses normalize above.
+        from job_metadata import job_language_facts
+        english = 'en' in job_language_facts(job)[0]
     language_matches = {
         'any': True,
         'russian': 'ru' in (languages or []) or (languages is None and job.get('russian') is True),
         'serbian': 'sr' in (languages or []) or (languages is None and job.get('serbian_required') is True),
+        'english': english,
         'no_serbian': job.get('serbian_required') is False,
     }
     if not any(language_matches.get(value, False) for value in selected_languages): return False
