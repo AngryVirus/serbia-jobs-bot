@@ -19,6 +19,8 @@ from store import Store
 from telegram_api import TelegramAPI, TelegramError
 from job_metadata import valid_job_url
 from version import VERSION
+from translation import Translator, browser_translation_url
+from viewer import ACTIONS as VIEW_ACTIONS, MODES as VIEW_MODES, render_card, show as show_viewer
 from presentation import (MENU, BACK, CANCEL, HELP_URL, button, choice_panel,
                           empty_search_text, filter_summary, job_text, job_buttons, menu_text, safe)
 
@@ -47,6 +49,7 @@ class Bot:
         self.instance_id = str(uuid.uuid4())
         self._locks = WeakValueDictionary()
         self._request_settings = ContextVar('request_settings', default=None)
+        self.translator = Translator()
 
     def get_settings(self, uid):
         """Reuse only the current handler's snapshot; never cache between clicks."""
@@ -105,7 +108,7 @@ class Bot:
 
     async def filters(self, uid, chat, mid=None):
         s = self.get_settings(uid)
-        text = ('<b>⚙️ Ваши фильтры</b>\n\n' + filter_summary(s) + '\n\n'
+        text = ('<b>⚙️ Фильтры поиска</b>\n\n<blockquote>' + filter_summary(s) + '</blockquote>\n\n'
                 '✅ — выбранные условия. В каждой группе можно выбрать несколько вариантов. '
                 'Между группами условия действуют вместе.')
         rows = [[button('🔎 Ключевые слова', 'input:keywords'), button('🚫 Исключения', 'input:exclusions')],
@@ -120,7 +123,7 @@ class Bot:
     async def notifications(self, uid, chat, mid=None):
         s = self.get_settings(uid)
         current = {"off": "Выключены", "instant": "После каждой проверки источников", "daily": "Ежедневная подборка"}[s["notifications"]]
-        await self.panel(chat, f"<b>Уведомления</b>\n\nСейчас: {current}\n"
+        await self.panel(chat, f"<b>🔔 Уведомления</b>\n\n<blockquote>Сейчас: {current}</blockquote>\n"
                          f"Проверка источников: примерно каждые {self.scan_minutes} минут.\n"
                          f"Подборка: {s['daily_hour']:02}:00 по времени Белграда.\n"
                          "За один проход отправляется до 10 вакансий. Остальные доступны через поиск. "
@@ -128,47 +131,9 @@ class Bot:
                          [[button("Выключить", "notify:off")], [button("При проверке", "notify:instant")],
                           [button("Раз в день", "notify:daily"), button("Час подборки", "input:hour")]] + BACK, mid)
 
-    async def results(self, uid, chat, page=0, after_id=None):
-        settings = self.get_settings(uid)
-        all_jobs = self.store.list_jobs()
-        jobs = [j for j in all_jobs if contactable(j) and matches(j, settings)]
-        page = min(max(page, 0), max((len(jobs) - 1) // PAGE_SIZE, 0))
-        start = page * PAGE_SIZE
-        if after_id is not None:
-            # A hidden card must not shift unseen jobs behind an old page offset.
-            anchor = next((i for i, job in enumerate(all_jobs) if job['id'] == after_id), None)
-            if anchor is not None:
-                before = {job['id'] for job in all_jobs[:anchor + 1]}
-                start = sum(job['id'] in before for job in jobs)
-                if start >= len(jobs):
-                    start = max(0, len(jobs) - PAGE_SIZE)
-        if not jobs:
-            statuses = self.store.source_status()
-            collection = statuses.get('_collection', {})
-            available = any(value.get('state') in ('ok', 'partial') for key, value in statuses.items() if not key.startswith('_'))
-            if not all_jobs and (self.scanning or collection.get('state') == 'running'):
-                text = '⏳ Сейчас проверяем вакансии. Попробуйте поиск через несколько минут.'
-            elif not available and statuses:
-                text = '⚠️ Сайты вакансий временно недоступны. Повторим проверку; попробуйте позже.'
-            elif not all_jobs and not statuses:
-                text = '⏳ База ещё наполняется. Проверка вакансий запускается при старте сервера.'
-            else:
-                text = (empty_search_text([job for job in all_jobs if contactable(job)], settings)
-                        if all_jobs else 'Подходящих вакансий нет. Попробуйте расширить фильтры.')
-                if collection.get('state') == 'error': text += ' Последняя проверка не удалась; попробуйте позже.'
-            if hidden_job_ids(settings):
-                text += '\nСкрытые вакансии можно вернуть через раздел «🙈 Скрытые».'
-            await self.api.send(chat, text, [[button('⚙️ Фильтры', 'filters'), button('🙈 Скрытые', 'hidden:0')]] + BACK)
-            return
-        await self.api.send(chat, f'<b>🔎 Найдено: {len(jobs)}</b> · Страница {page + 1}\n' + filter_summary(settings, compact=True))
-        shown = jobs[start:start + PAGE_SIZE]
-        for job in shown:
-            await self.api.send(chat, job_text(job), job_buttons(job))
-        pages = []
-        if page: pages.append(button('← Назад', f'search:{page - 1}'))
-        if start + PAGE_SIZE < len(jobs): pages.append(button('Далее →', f'search:{page + 1}:{shown[-1]["id"]}'))
-        await self.api.send(chat, 'Ваш поиск', ([pages] if pages else []) +
-                            [[button('⚙️ Фильтры', 'filters'), button('🙈 Скрытые', 'hidden:0')]] + BACK)
+    async def results(self, uid, chat, page=0, after_id=None, mid=None):
+        # Old search pagination links still open the corresponding position.
+        await show_viewer(self, uid, chat, index=page * PAGE_SIZE, mid=mid, after_id=after_id)
 
     async def hidden(self, uid, chat, page=0, mid=None):
         ids = sorted(hidden_job_ids(self.get_settings(uid)), reverse=True)
@@ -209,7 +174,7 @@ class Bot:
         if not 0 < job_id <= 2**63 - 1:
             return
         kind = parts[0]
-        if kind == 'job' and (len(parts) != 3 or parts[2] not in ('full', 'short')):
+        if kind == 'job' and (len(parts) != 3 or parts[2] not in ('full', 'short', 'ru_full', 'ru_short')):
             return
         if kind == 'hide' and len(parts) != 2:
             return
@@ -236,14 +201,21 @@ class Bot:
         elif job_id in ids:
             await self.hidden_card(chat, job, mid)
         else:
-            expanded = parts[2] == 'full'
-            await self.panel(chat, job_text(job, expanded), job_buttons(job, expanded), mid)
+            expanded = parts[2].endswith('full')
+            translated = parts[2].startswith('ru_')
+            text, failed = await render_card(job, ('r' if translated else '') + ('f' if expanded else 's'), self.translator)
+            rows = job_buttons(job, expanded, translated and not failed)
+            if failed:
+                rows.append([{'text': '🌐 Перевести в браузере', 'url': browser_translation_url(job)}])
+            await self.panel(chat, text, rows, mid)
 
     async def help(self, chat, mid=None):
         await self.panel(chat,
-                         '<b>💬 Помощь</b>\n\nВ случае неисправностей или выявленных ошибок '
-                         f'вы можете обратиться к <a href="{HELP_URL}">@AngryVirus</a>.',
-                         [[{'text': '✉️ Написать @AngryVirus', 'url': HELP_URL}]] + BACK, mid)
+                         '<b>💬 Помощь</b>\n\n'
+                         'Если нужна помощь с настройками, вы нашли ошибку или бот работает неправильно, '
+                         'напишите владельцу.\n\n'
+                         'Кратко опишите, что произошло. Скриншот поможет быстрее разобраться.',
+                         [[{'text': '✉️ Написать владельцу', 'url': HELP_URL}]] + BACK, mid)
 
     async def input_value(self, uid, chat, text):
         field = self.pending[uid]
@@ -328,7 +300,17 @@ class Bot:
                 page = int(parts[1])
                 after_id = int(parts[2]) if len(parts) == 3 else None
             except ValueError: return
-            await self.results(uid, chat_id, page, after_id)
+            await self.results(uid, chat_id, page, after_id, mid=mid)
+        elif action.startswith('view:'):
+            parts = action.split(':')
+            if (len(parts) != 5 or not parts[1].isascii() or not parts[1].isdigit()
+                    or not parts[2].isascii() or not parts[2].isdigit()
+                    or parts[3] not in VIEW_ACTIONS or parts[4] not in VIEW_MODES):
+                return
+            job_id, index = int(parts[1]), int(parts[2])
+            if not 0 < job_id <= 2**63 - 1 or index > 1_000_000:
+                return
+            await show_viewer(self, uid, chat_id, index, job_id, parts[3], parts[4], mid)
         elif action.startswith('hidden:'):
             try: page = int(action.split(':')[1])
             except ValueError: return

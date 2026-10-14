@@ -125,10 +125,13 @@ class ProductTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([b['text'] for b in flat],['🔎 Найти вакансии','⚙️ Фильтры','🔔 Уведомления','🙈 Скрытые вакансии','💬 Помощь'])
         await self.bot.handle(callback(1, flat[-1]['callback_data']))
         help_panel = self.api.calls[-1][1]
-        self.assertIn('В случае неисправностей или выявленных ошибок', help_panel['text'])
-        self.assertIn('@AngryVirus', help_panel['text'])
+        self.assertIn('помощь с настройками', help_panel['text'])
+        self.assertIn('вы нашли ошибку', help_panel['text'])
+        self.assertIn('бот работает неправильно', help_panel['text'])
+        self.assertNotIn('@AngryVirus', help_panel['text'])
         help_rows = help_panel['reply_markup']['inline_keyboard']
         self.assertEqual(help_rows[0][0]['url'], 'https://t.me/AngryVirus')
+        self.assertEqual(help_rows[0][0]['text'], '✉️ Написать владельцу')
         await self.bot.handle(callback(1, help_rows[-1][0]['callback_data']))
         self.assertEqual(self.api.calls[-1][1]['reply_markup']['inline_keyboard'], MENU)
         await self.bot.configure()
@@ -194,10 +197,15 @@ class ProductTests(unittest.IsolatedAsyncioTestCase):
         self.store.save_jobs([vacancy(url=f'https://www.poslovi.rs/job/{i}') for i in range(12)])
         await self.bot.results(1,1)
         cards=[m for m in self.api.sent if '<b>Python developer</b>' in m['text']]
-        self.assertEqual(len(cards),5)
+        self.assertEqual(len(cards),1)
         self.assertTrue(all(m['rows'][0][0]['text']=='🔗 Открыть объявление' for m in cards))
-        self.assertEqual(self.api.sent[-1]['rows'][0][0]['callback_data'],
-                         f'search:1:{self.store.list_jobs()[4]["id"]}')
+        next_button = next(b for row in cards[0]['rows'] for b in row if ':next:' in b.get('callback_data', ''))
+        sent = len(self.api.sent)
+        await self.bot.handle(callback(1, next_button['callback_data']))
+        self.assertEqual(len(self.api.sent), sent)
+        panel = self.api.calls[-1][1]
+        self.assertIn('Вакансия 2 из 12', panel['text'])
+        self.assertEqual(panel['reply_markup']['inline_keyboard'][0][0]['url'], self.store.list_jobs()[1]['url'])
 
     async def test_durable_webhook_claim_in_two_processors(self):
         first=WebhookProcessor(self.bot);second=WebhookProcessor(Bot(self.api,Store(self.path)))

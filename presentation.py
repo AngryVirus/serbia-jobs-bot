@@ -26,12 +26,13 @@ def button(label, data):
 MENU = [[button('🔎 Найти вакансии', 'search:0')],
         [button('⚙️ Фильтры', 'filters'), button('🔔 Уведомления', 'notifications')],
         [button('🙈 Скрытые вакансии', 'hidden:0'), button('💬 Помощь', 'help')]]
-BACK = [[button('← Главное меню', 'menu')]]
+BACK = [[button('🏠 Главное меню', 'menu')]]
 CANCEL = [[button('✖ Отменить ввод', 'cancel')]] + BACK
 
 
-def clipped(value, limit):
-    text = ' '.join(str(value or '').split())
+def clipped(value, limit, keep_lines=False):
+    text = ('\n'.join(' '.join(line.split()) for line in str(value or '').splitlines() if line.strip())
+            if keep_lines else ' '.join(str(value or '').split()))
     # Telegram entity offsets use UTF-16; astral emoji consume two units.
     if sum(2 if ord(char) > 0xFFFF else 1 for char in text) <= limit:
         return text
@@ -44,8 +45,8 @@ def clipped(value, limit):
     return ''.join(result).rstrip() + '…'
 
 
-def safe(value, limit):
-    return escape(clipped(value, limit))
+def safe(value, limit, keep_lines=False):
+    return escape(clipped(value, limit, keep_lines))
 
 
 def selection_label(settings, field):
@@ -78,11 +79,11 @@ def filter_summary(settings, compact=False):
 def menu_text(settings, start=False):
     mode = {'off': 'выключены', 'instant': 'после проверки',
             'daily': f"ежедневно в {settings.get('daily_hour', 9):02}:00"}.get(settings.get('notifications'), 'выключены')
-    text = '<b>🇷🇸 SERBIA JOBS</b>\nВакансии в Сербии в одном месте.\n\n'
-    text += '<b>Ваши условия поиска</b>\n' + filter_summary(settings, compact=True)
+    text = '<b>🇷🇸 Работа в Сербии</b>\n<i>SERBIA JOBS</i>\n\n'
+    text += '<b>Ваша подборка</b>\n<blockquote>' + filter_summary(settings, compact=True) + '</blockquote>'
     text += f'\n\n🔔 Уведомления: {mode}\n🙈 Скрытые вакансии: {len(hidden_job_ids(settings))}'
-    text += ('\n\nНажмите <b>«Найти вакансии»</b>, чтобы посмотреть предложения. '
-             'В <b>«Фильтрах»</b> можно выбрать города, языки и условия работы.')
+    text += ('\n\n<b>«Найти вакансии»</b> — листать предложения.\n'
+             'В <b>«Фильтрах»</b> выберите города, языки и условия работы.')
     if start:
         text += '\n\n' + DISCLAIMER
     return text
@@ -91,7 +92,7 @@ def menu_text(settings, start=False):
 def choice_panel(settings, field):
     selected = selected_values(settings, field)
     text = (f'<b>{FILTER_TITLES[field]}</b>\n\n'
-            f'Выбрано: {safe(selection_label(settings, field), 250)}\n\n'
+            f'<blockquote>Выбрано: {safe(selection_label(settings, field), 250)}</blockquote>\n\n'
             'Можно отметить несколько вариантов. Подойдёт любой из выбранных. '
             'Изменения сохраняются сразу.')
     if field == 'freshness':
@@ -146,13 +147,13 @@ def job_text(job, expanded=False):
     if not payment and salary is not None:
         period = {'month': 'месяц', 'hour': 'час', 'year': 'год'}.get(job.get('salary_period') or 'month', 'период не указан')
         payment = f"от {salary:g} {job.get('salary_currency') or ''} / {period}"
-    lines.append('💶 ' + safe(payment or 'Зарплата не указана', 120 if expanded else 80))
+    lines.append('💶 <b>' + safe(payment or 'Зарплата не указана', 120 if expanded else 80) + '</b>')
     languages, required = job_language_facts(job)
     language_text = ', '.join(LANGUAGE_NAMES.get(code, code) + (' (обяз.)' if code in required else '') for code in languages)
     lines.append('🗣 ' + safe(language_text or 'Языки не указаны', 140 if expanded else 80))
     description = job.get('description')
     if description:
-        lines.append(safe(description, 1800 if expanded else 150))
+        lines.append('<blockquote>' + safe(description, 1800 if expanded else 150, keep_lines=expanded) + '</blockquote>')
     contacts = job.get('contacts') or []
     if contacts:
         lines.append('☎️ ' + safe(' · '.join(contacts), 200 if expanded else 90))
@@ -166,9 +167,13 @@ def job_text(job, expanded=False):
     return '\n'.join(lines)
 
 
-def job_buttons(job, expanded=False):
+def job_buttons(job, expanded=False, translated=False):
     rows = [[{'text': '🔗 Открыть объявление', 'url': job['url']}]] if valid_job_url(job.get('url')) else []
     if job.get('id'):
-        rows.append([button('Свернуть ↑' if expanded else 'Подробнее ↓', f'job:{job["id"]}:{"short" if expanded else "full"}'),
+        prefix = 'ru_' if translated else ''
+        rows.append([button('Свернуть ↑' if expanded else 'Подробнее ↓', f'job:{job["id"]}:{prefix}{"short" if expanded else "full"}'),
                      button('🙈 Скрыть', f'hide:{job["id"]}')])
+        target = ('' if translated else 'ru_') + ('full' if expanded else 'short')
+        rows.append([button('🌐 Оригинал' if translated else '🇷🇺 Перевести на русский', f'job:{job["id"]}:{target}')])
+        rows.append([button('🗂 Смотреть подборку', 'search:0'), button('🏠 Меню', 'menu')])
     return rows

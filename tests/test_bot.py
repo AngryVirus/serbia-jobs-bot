@@ -82,12 +82,15 @@ class BotIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.get_settings(2)["city"], "any")
         self.store.save_jobs([vacancy(), vacancy(url="https://www.poslovi.rs/job/2", title="Kuvar")])
         self.api.sent.clear()
+        self.api.calls.clear()
         await self.bot.handle(callback(1, "search:0"))
         await self.bot.handle(callback(2, "search:0"))
-        self.assertIn("Python developer", self.api.text_for(1))
-        self.assertNotIn("<b>Kuvar</b>", self.api.text_for(1))
-        self.assertIn("<b>Kuvar</b>", self.api.text_for(2))
-        self.assertNotIn("Python developer", self.api.text_for(2))
+        panels = {p['chat_id']: p['text'] for method, p in self.api.calls if method == 'editMessageText'}
+        self.assertIn("Python developer", panels[1])
+        self.assertNotIn("<b>Kuvar</b>", panels[1])
+        self.assertIn("<b>Kuvar</b>", panels[2])
+        self.assertNotIn("Python developer", panels[2])
+        self.assertEqual(self.api.sent, [])
 
     async def test_retired_buttons_cannot_change_preserved_user_data(self):
         for uid in (1, 2): await self.start(uid)

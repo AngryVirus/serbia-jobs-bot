@@ -45,6 +45,8 @@ class TelegramAPI:
         return result["result"]
 
     async def call(self, method, **params):
+        if method == 'editMessageText':
+            params.setdefault('link_preview_options', {'is_disabled': True})
         for attempt in range(3):
             with self._lock:
                 remaining = self._cooldowns.get(method, 0) - time.monotonic()
