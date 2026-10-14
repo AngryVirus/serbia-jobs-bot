@@ -18,7 +18,7 @@ from telegram_api import TelegramAPI, TelegramError
 from job_metadata import valid_job_url
 from version import VERSION
 from presentation import (MENU, BACK, CANCEL, HELP_URL, button, choice_panel,
-                          filter_summary, job_text, job_buttons, menu_text, safe)
+                          empty_search_text, filter_summary, job_text, job_buttons, menu_text, safe)
 
 LOG = logging.getLogger("serbia_jobs")
 BELGRADE = ZoneInfo("Europe/Belgrade")
@@ -123,7 +123,8 @@ class Bot:
             elif not all_jobs and not statuses:
                 text = '⏳ База ещё наполняется. Проверка вакансий запускается при старте сервера.'
             else:
-                text = 'Подходящих вакансий нет. Попробуйте расширить фильтры.'
+                text = (empty_search_text([job for job in all_jobs if contactable(job)], settings)
+                        if all_jobs else 'Подходящих вакансий нет. Попробуйте расширить фильтры.')
                 if collection.get('state') == 'error': text += ' Последняя проверка не удалась; попробуйте позже.'
             if hidden_job_ids(settings):
                 text += '\nСкрытые вакансии можно вернуть через раздел «🙈 Скрытые».'
