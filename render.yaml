@@ -3,7 +3,7 @@ services:
     name: serbia-jobs-bot
     runtime: python
     plan: free
-    buildCommand: python3 -m compileall -q bot.py sources.py store.py cloud_store.py web_server.py job_metadata.py filters.py
+    buildCommand: python3 -m compileall -q bot.py sources.py telegram_sources.py telegram_templates.py channel_catalog.py rss_sources.py addresses.py location_links.py store.py cloud_store.py web_server.py job_metadata.py filters.py
     startCommand: python3 bot.py --webhook
     healthCheckPath: /health
     envVars:

@@ -19,7 +19,7 @@ from channel_catalog import CHANNELS
 SOURCE_IDS = (
     "poslovi", "workforce", "halooglasi", "careerjet", "sale_me",
     "helloworld", "lakodoposla", "klikdoposla", "jooble", "radim",
-    "serbiahub", "ovdejobs", "startit", "bulevar", "infostud",
+    "serbiahub", "ovdejobs", "startit", "bulevar", "infostud", "tg_rabotavserbii", "tg_radim_serbia",
 ) + tuple('telegram_' + channel for channel in CHANNELS)
 
 

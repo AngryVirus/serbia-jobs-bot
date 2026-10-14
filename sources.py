@@ -76,6 +76,8 @@ class Source:
 
 
 SOURCES: dict[str, Source] = {
+    "tg_rabotavserbii": Source("tg_rabotavserbii", "Telegram · Работа в Сербии", "https://t.me/rabotavserbii", "https://t.me/s/rabotavserbii", (r"^/rabotavserbii/\d+/?$",), "Публичная лента канала Ovde Jobs: до двух страниц, без авторизации.", telegram_channel="rabotavserbii"),
+    "tg_radim_serbia": Source("tg_radim_serbia", "Telegram · Radim Serbia", "https://t.me/radim_serbia", "https://t.me/s/radim_serbia", (r"^/radim_serbia/\d+/?$",), "Публичная лента Radim.rs: до двух страниц, без авторизации.", telegram_channel="radim_serbia"),
     "infostud": Source("infostud", "Poslovi Infostud", "https://poslovi.infostud.com/", "https://rss.infostud.com/poslovi/", (r"^/posao/.+",), api_hosts=("rss.infostud.com",), rss_feed=True),
     "poslovi": Source("poslovi", "Poslovi.rs", "https://www.poslovi.rs/", "https://www.poslovi.rs/", (r"^/job/[^/]+/[^/]+-\d+/?$",), observed_links=True),
     "workforce": Source("workforce", "Workforce", "https://www.workforce.rs/", "https://www.workforce.rs/oglasi-za-posao/", (r"^/oglas/[^/]+/?$",), observed_links=True),
@@ -260,10 +262,18 @@ def _location(value: object) -> str:
         return clean_text(address)
     if not isinstance(address, dict):
         return ""
-    # Country is omitted when a city is supplied so users can filter the city.
-    city = clean_text(address.get("addressLocality") or address.get("addressRegion") or value.get("name") or address.get("addressCountry"))
+    city = clean_text(address.get("addressLocality") or address.get("addressRegion") or value.get("name"))
     street = clean_text(address.get("streetAddress"))
-    return ', '.join(dict.fromkeys(filter(None, (street, city))))
+    if street or city:
+        return ', '.join(dict.fromkeys(filter(None, (street, city))))
+    from location_links import coordinates
+    geo = value.get('geo') or address.get('geo')
+    if isinstance(geo, dict):
+        point = coordinates(f"{geo.get('latitude')},{geo.get('longitude')}")
+        if point:
+            return point
+    country = address.get('addressCountry')
+    return clean_text(country.get('name') if isinstance(country, dict) else country)
 
 
 def _numeric(value: object) -> float | None:
@@ -646,6 +656,9 @@ def collect_source(source: Source, *, detail_limit: int = DEFAULT_DETAIL_LIMIT, 
     if source.rss_feed:
         from rss_sources import collect_rss
         return collect_rss(source, fetcher)
+    if source.id in {'tg_rabotavserbii', 'tg_radim_serbia'}:
+        from telegram_templates import collect_telegram
+        return collect_telegram(source, fetcher)
     if source.telegram_channel:
         from telegram_sources import collect_channel
         return collect_channel(source, fetcher)

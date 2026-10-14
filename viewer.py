@@ -1,6 +1,7 @@
 """One editable vacancy card; cursors remain meaningful after hiding a job."""
 import asyncio
 
+from location_links import job_map_url
 from filters import hidden_job_ids, matches
 from job_metadata import job_language_facts, valid_job_url
 from presentation import BACK, button, clipped, empty_search_text, job_text
@@ -27,7 +28,7 @@ async def render_card(job, mode, translator):
         except TranslationError:
             notice = 'Перевод сейчас недоступен. Попробуйте ещё раз или откройте его в браузере.\n\n'
             failed = True
-    return notice + job_text(display, mode.endswith('f')), failed
+    return notice + job_text(display, mode.endswith('f'), location_url=job_map_url(job)), failed
 
 
 def viewer_buttons(job, index, count, mode, failed=False):

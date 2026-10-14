@@ -147,12 +147,19 @@ def empty_search_text(jobs, settings, now=None):
     return text
 
 
-def job_text(job, expanded=False):
+def job_text(job, expanded=False, *, location_url=None):
     """Short preview by default; details remain available in the same message."""
     lines = ['💼 <b>' + safe(job.get('title') or 'Вакансия', 140 if expanded else 90) + '</b>']
     place = job.get('location') or ('Удалённо' if job.get('remote') is True else 'Место не указано')
     company = safe(job.get('company'), 80 if expanded else 40)
-    lines.append(('🏢 ' + company + ' · ' if company else '') + '📍 ' + safe(place, 110 if expanded else 55))
+    from location_links import job_map_url, google_maps_url
+    location_url = job_map_url(job) if location_url is None else google_maps_url(location_url)
+    place_label = safe(place, 110 if expanded else 55)
+    if location_url:
+        if not job.get('location'):
+            place_label = 'На карте'
+        place_label = '<a href="' + escape(location_url, quote=True) + '">' + place_label + '</a>'
+    lines.append(('🏢 ' + company + ' · ' if company else '') + '📍 ' + place_label)
     if maps_url(job):
         lines.append('🗺 <a href="' + escape(maps_url(job), quote=True) + '">' + safe(job_address(job), 180) + '</a>')
     salary = job.get('salary_min')
