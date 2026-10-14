@@ -23,6 +23,14 @@ try:
    ASSERT (SELECT settings='{}' FROM sj_users WHERE user_id=2), 'Another user modified';
  END $$;""")
  pg.psql("""SET ROLE service_role;
+ INSERT INTO sj_users(user_id,chat_id,updated_at) VALUES (1,101,now()),(3,303,now())
+ ON CONFLICT(user_id) DO UPDATE SET chat_id=excluded.chat_id,updated_at=excluded.updated_at
+ RETURNING settings;
+ DO $$ BEGIN
+   ASSERT (SELECT chat_id=101 AND settings->'keywords'='["python"]'::jsonb AND settings->>'notifications'='daily' FROM sj_users WHERE user_id=1), 'User upsert reset preferences';
+   ASSERT (SELECT chat_id=303 AND settings='{}' FROM sj_users WHERE user_id=3), 'New user default settings missing';
+ END $$;""")
+ pg.psql("""SET ROLE service_role;
  SELECT sj_patch_settings(1, '{"city":["belgrade","novi_sad"],"language":["russian","serbian"],"hidden_jobs":[10,20]}', '{}');
  DO $$ BEGIN
    ASSERT (SELECT settings->'city'='["belgrade","novi_sad"]'::jsonb AND settings->'language'='["russian","serbian"]'::jsonb AND settings->'hidden_jobs'='[10,20]'::jsonb AND settings->'keywords'='["python"]'::jsonb AND settings->>'notifications'='daily' FROM sj_users WHERE user_id=1), 'Multiple selections or hidden jobs lost';

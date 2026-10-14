@@ -108,24 +108,25 @@ class SupabaseStore:
             for value in values
         ) + ")"
 
-    def ensure_user(self, user_id: int, chat_id: int) -> None:
-        self._request("POST", "sj_users", {"on_conflict": "user_id"},
-                      {"user_id": user_id, "chat_id": chat_id, "settings": default_settings()},
-                      prefer="resolution=ignore-duplicates,return=minimal")
-        self._request("PATCH", "sj_users", {"user_id": f"eq.{user_id}"},
-                      {"chat_id": chat_id, "updated_at": utc_now()}, prefer="return=minimal")
+    def ensure_user(self, user_id: int, chat_id: int) -> dict[str, Any]:
+        # Omit settings from the upsert: existing preferences must never be reset.
+        rows = self._request("POST", "sj_users", {"on_conflict": "user_id", "select": "settings"},
+                             {"user_id": user_id, "chat_id": chat_id, "updated_at": utc_now()},
+                             prefer="resolution=merge-duplicates,return=representation")
+        return self._settings(rows[0].get("settings"))
 
     def get_settings(self, user_id: int) -> dict[str, Any]:
         rows = self._request("GET", "sj_users",
                              {"user_id": f"eq.{user_id}", "select": "settings", "limit": 1}) or []
         return self._settings(rows[0].get("settings") if rows else None)
 
-    def update_settings(self, user_id: int, **kwargs: Any) -> None:
+    def update_settings(self, user_id: int, **kwargs: Any) -> dict[str, Any]:
         unknown = set(kwargs) - set(default_settings())
         if unknown:
             raise ValueError(f"Unknown setting(s): {', '.join(sorted(unknown))}")
-        self._request('POST', 'rpc/sj_patch_settings', data={
+        result = self._request('POST', 'rpc/sj_patch_settings', data={
             'p_user_id': user_id, 'p_patch': kwargs, 'p_defaults': default_settings()})
+        return self._settings(result)
 
     def save_jobs(self, jobs: Iterable[Any]) -> int:
         """Validate first, upsert canonical source/URL pairs, count new pairs.
