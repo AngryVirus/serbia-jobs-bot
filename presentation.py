@@ -3,7 +3,7 @@ from html import escape
 from zoneinfo import ZoneInfo
 
 from filters import FILTER_OPTIONS, hidden_job_ids, parse_datetime, search_diagnostics, selected_values
-from job_metadata import valid_job_url
+from job_metadata import job_language_facts, valid_job_url
 from sources import SOURCES
 
 BELGRADE = ZoneInfo('Europe/Belgrade')
@@ -13,7 +13,6 @@ FILTER_TITLES = {'city': '📍 Города', 'remote': '💻 Формат ра�
                  'language': '🗣 Языки', 'freshness': '🕒 Свежесть'}
 DISCLAIMER = (
     '<b>Перед началом</b>\n'
-    'Бот работает в тестовом режиме. Возможны ошибки и неточности в объявлениях.\n'
     'Бот собирает объявления из открытых источников и не является работодателем. '
     'Мы не гарантируем актуальность вакансий или трудоустройство и не отвечаем '
     'за действия работодателей. Проверяйте условия самостоятельно.'
@@ -26,7 +25,7 @@ def button(label, data):
 
 MENU = [[button('🔎 Найти вакансии', 'search:0')],
         [button('⚙️ Фильтры', 'filters'), button('🔔 Уведомления', 'notifications')],
-        [button('🙈 Скрытые', 'hidden:0'), {'text': '🆘 Помощь', 'url': HELP_URL}]]
+        [button('🙈 Скрытые вакансии', 'hidden:0'), button('💬 Помощь', 'help')]]
 BACK = [[button('← Главное меню', 'menu')]]
 CANCEL = [[button('✖ Отменить ввод', 'cancel')]] + BACK
 
@@ -79,12 +78,14 @@ def filter_summary(settings, compact=False):
 def menu_text(settings, start=False):
     mode = {'off': 'выключены', 'instant': 'после проверки',
             'daily': f"ежедневно в {settings.get('daily_hour', 9):02}:00"}.get(settings.get('notifications'), 'выключены')
-    text = '<b>🇷🇸 SERBIA JOBS</b>\n<i>Работа под ваши условия</i>\n🧪 Тестовый режим\n\n'
+    text = '<b>🇷🇸 SERBIA JOBS</b>\nВакансии в Сербии в одном месте.\n\n'
+    text += '<b>Ваши условия поиска</b>\n' + filter_summary(settings, compact=True)
+    text += f'\n\n🔔 Уведомления: {mode}\n🙈 Скрытые вакансии: {len(hidden_job_ids(settings))}'
+    text += ('\n\nНажмите <b>«Найти вакансии»</b>, чтобы посмотреть предложения. '
+             'В <b>«Фильтрах»</b> можно выбрать города, языки и условия работы.')
     if start:
-        text += DISCLAIMER + '\n\n'
-    text += '<b>Ваш поиск</b>\n' + filter_summary(settings, compact=True)
-    text += f'\n\n🔔 {mode}  ·  🙈 скрыто: {len(hidden_job_ids(settings))}'
-    return text + '\n\nВыберите действие ↓'
+        text += '\n\n' + DISCLAIMER
+    return text
 
 
 def choice_panel(settings, field):
@@ -146,10 +147,7 @@ def job_text(job, expanded=False):
         period = {'month': 'месяц', 'hour': 'час', 'year': 'год'}.get(job.get('salary_period') or 'month', 'период не указан')
         payment = f"от {salary:g} {job.get('salary_currency') or ''} / {period}"
     lines.append('💶 ' + safe(payment or 'Зарплата не указана', 120 if expanded else 80))
-    languages = job.get('languages')
-    if languages is None:
-        languages = (['ru'] if job.get('russian') is True else []) + (['sr'] if job.get('serbian_required') is True else [])
-    required = job.get('required_languages') or []
+    languages, required = job_language_facts(job)
     language_text = ', '.join(LANGUAGE_NAMES.get(code, code) + (' (обяз.)' if code in required else '') for code in languages)
     lines.append('🗣 ' + safe(language_text or 'Языки не указаны', 140 if expanded else 80))
     description = job.get('description')

@@ -119,12 +119,15 @@ class NewPresentationTests(unittest.TestCase):
         settings = dict(default_settings(), city=['belgrade', 'novi_sad'], language=['russian', 'serbian'],
                         notifications='daily', daily_hour=17, hidden_jobs=[1, 2], keywords=['<script>'])
         text = menu_text(settings)
-        for value in ('Белград', 'Нови-Сад', 'Русский', 'Сербский', '17:00', 'скрыто: 2', '&lt;script&gt;'):
+        for value in ('Белград', 'Нови-Сад', 'Русский', 'Сербский', '17:00', 'Скрытые вакансии: 2', '&lt;script&gt;'):
             self.assertIn(value, text)
         self.assertNotIn(DISCLAIMER, text)
-        self.assertIn('🧪 Тестовый режим', text)
+        self.assertNotIn('Тестовый режим', text)
         self.assertIn(DISCLAIMER, menu_text(settings, start=True))
-        self.assertIn('Возможны ошибки и неточности', menu_text(settings, start=True))
+        self.assertNotIn('тестовом режиме', menu_text(settings, start=True))
+        self.assertNotIn('Возможны ошибки', menu_text(settings, start=True))
+        self.assertIn('«Найти вакансии»', text)
+        self.assertIn('«Фильтрах»', text)
 
 
 class PersonalJourneys(unittest.IsolatedAsyncioTestCase):
