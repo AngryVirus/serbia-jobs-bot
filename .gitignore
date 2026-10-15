@@ -6,3 +6,7 @@ data/
 dist/
 .pytest_cache/
 .DS_Store
+node_modules/
+.tgcloud/
+serverless-probe/payload.json
+serverless-probe/report.json

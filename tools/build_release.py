@@ -10,6 +10,12 @@ files += [root/name for name in ('README.md','SOURCE_NOTES.md','START_WITH_IPHON
     'supabase-schema.sql','render.yaml','collect-workflow.txt')]
 for directory in ('tests','tools','deploy','.github/workflows'):
     files += [p for p in (root/directory).glob('*') if p.is_file() and p.suffix in {'.py','.yml','.yaml','.service'}]
+probe = root/'serverless-probe'
+if probe.is_dir():
+    files += [probe/name for name in ('README.md', 'package.json', 'package-lock.json',
+                                     'tgcloud.jsonc', 'export_jobs.py', 'run_probe.py')]
+    for directory in ('tgcloud', 'tests'):
+        files += [p for p in (probe/directory).rglob('*.js') if p.is_file()]
 files=sorted(set(files),key=lambda p:str(p.relative_to(root)))
 target=root/'serbia-jobs-bot.zip'
 with ZipFile(target,'w',ZIP_DEFLATED,compresslevel=9) as archive:

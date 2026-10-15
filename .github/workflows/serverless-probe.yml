@@ -1,0 +1,55 @@
+name: Test Telegram Serverless
+on:
+  workflow_dispatch:
+    inputs:
+      chat_id:
+        description: 'Numeric private chat_id of @AngryVirus from Supabase sj_users'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: serbia-jobs-serverless-probe
+  cancel-in-progress: false
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check private configuration
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_PROBE_TOKEN }}
+          PROBE_CHAT_ID: ${{ inputs.chat_id }}
+        run: python3 serverless-probe/run_probe.py --check-config
+      - name: Install pinned CLI without install scripts
+        working-directory: serverless-probe
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Local SQLite and isolation checks
+        working-directory: serverless-probe
+        run: npm test
+      - name: Python export and runner checks
+        run: python3 -m unittest discover -s tests -p test_serverless_probe.py
+      - name: Collect up to three public vacancies
+        run: python3 serverless-probe/export_jobs.py
+      - name: Run cloud probe without deploying or changing webhook
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_PROBE_TOKEN }}
+          PROBE_CHAT_ID: ${{ inputs.chat_id }}
+        run: python3 serverless-probe/run_probe.py
+      - name: Save probe result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: serverless-probe-report
+          path: serverless-probe/report.json
+          if-no-files-found: ignore
+          retention-days: 7
