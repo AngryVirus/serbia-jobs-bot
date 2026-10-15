@@ -10,3 +10,6 @@ node_modules/
 .tgcloud/
 serverless-probe/payload.json
 serverless-probe/report.json
+
+serverless/private/
+serverless/report.json

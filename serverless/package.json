@@ -1,0 +1,14 @@
+{
+  "name": "serbia-jobs-serverless",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  },
+  "devDependencies": {
+    "@tgcloud/cli": "0.2.0"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

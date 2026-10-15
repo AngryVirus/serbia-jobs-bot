@@ -16,6 +16,12 @@ if probe.is_dir():
                                      'tgcloud.jsonc', 'export_jobs.py', 'run_probe.py')]
     for directory in ('tgcloud', 'tests'):
         files += [p for p in (probe/directory).rglob('*.js') if p.is_file()]
+cloud = root/'serverless'
+if cloud.is_dir():
+    files += [cloud/name for name in ('README.md', 'package.json', 'package-lock.json',
+        'tgcloud.jsonc', 'bridge.mjs', 'cloud.py', 'enrich_jobs.py', 'migrate.py', 'collect.py')]
+    for directory in ('tgcloud', 'tests'):
+        files += [p for p in (cloud/directory).rglob('*.js') if p.is_file()]
 files=sorted(set(files),key=lambda p:str(p.relative_to(root)))
 target=root/'serbia-jobs-bot.zip'
 with ZipFile(target,'w',ZIP_DEFLATED,compresslevel=9) as archive:

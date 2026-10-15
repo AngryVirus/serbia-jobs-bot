@@ -1,0 +1,157 @@
+import { OPTIONS } from './config.js';
+import { settings, defaults, choose, hidden, contactable, matches } from './filters.js';
+import { Store, positive } from './store.js';
+import { button, BACK, safe, menu, filtersPanel, choicePanel, emptyText, jobButtons, translatedCard, viewerButtons, browserUrl } from './ui.js';
+const PROMPTS = { keywords: 'Введите слова или фразы через запятую. Достаточно совпадения одного. «-» — очистить.', exclusions: 'Введите исключения через запятую. «-» — очистить.', salary: 'Введите минимальную зарплату в месяц: 1000 EUR или 120000 RSD. «-» — снять фильтр.', hour: 'Введите час от 0 до 23 по времени Белграда.' };
+export class Bot {
+  constructor(deps) { this.api = deps.api; this.fetch = deps.fetch; this.store = new Store(deps.db); }
+  async panel(text, rows = BACK, mid = this.mid) {
+    const params = { chat_id: this.chat, text, parse_mode: 'HTML', reply_markup: { inline_keyboard: rows }, link_preview_options: { is_disabled: true } };
+    if (mid) {
+      try { await this.api.editMessageText({ ...params, message_id: mid }); return; }
+      catch (error) { if (/message is not modified/i.test(error.description || error.message)) return; if (error.code !== 400) throw error; }
+    }
+    await this.api.sendMessage(params);
+  }
+  async patch(fields) { this.s = await this.store.patch(this.uid, fields); }
+  async notifications() {
+    await this.panel('<b>🔔 Уведомления</b>\n\nНовая вакансия по вашим фильтрам придёт сразу после обнаружения. Проверка источников запускается примерно каждые 30 минут; запуск может задержаться. Старый каталог при включении не рассылается. Уже отправленные вакансии не повторяются.', [[button(this.s.notifications === 'off' ? '🔔 Включить' : '🔕 Выключить', this.s.notifications === 'off' ? 'notify:instant' : 'notify:off')], ...BACK]);
+  }
+  async input(text) {
+    const field = this.s.pending_input; let patch;
+    if (field === 'keywords' || field === 'exclusions') {
+      const values = text.trim() === '-' ? [] : [...new Set(text.split(',').map(x => x.trim()).filter(Boolean))];
+      if (values.length > 15 || values.some(x => [...x].length > 60)) return this.panel('Максимум 15 слов или фраз, до 60 символов каждое.');
+      patch = { [field]: values };
+    } else if (field === 'salary') {
+      if (text.trim() === '-') patch = { min_salary: null };
+      else {
+        const m = /^\s*(\d+(?:[.,]\d{1,2})?)\s+(EUR|RSD)\s*$/.exec(text.toUpperCase());
+        if (!m || Number(m[1].replace(',', '.')) > 100000000) return this.panel(PROMPTS.salary);
+        patch = { min_salary: Number(m[1].replace(',', '.')), currency: m[2] };
+      }
+    } else if (field === 'hour') {
+      if (!/^\d{1,2}$/.test(text.trim()) || Number(text) > 23) return this.panel(PROMPTS.hour);
+      patch = { daily_hour: Number(text) };
+    } else return this.panel('Неизвестная настройка. Используйте /cancel.');
+    await this.patch({ ...patch, pending_input: null });
+    if (field === 'hour') await this.notifications(); else await this.panel(...filtersPanel(this.s));
+  }
+  async hiddenPanel(page = 0) {
+    const ids = [...hidden(this.s)].sort((a,b) => b-a), pages = Math.max(1, Math.ceil(ids.length / 5));
+    page = Math.min(Math.max(0, page), pages - 1);
+    if (!ids.length) return this.panel('<b>🙈 Скрытые вакансии</b>\n\nЗдесь пока пусто. Кнопка «Скрыть» уберёт вакансию из вашего поиска и уведомлений.', [[button('🔎 Найти вакансии', 'search:0')], ...BACK]);
+    const lines = [`<b>🙈 Скрытые вакансии · ${ids.length}</b>`, 'Нажмите «Вернуть», чтобы снять скрытие.'], rows = [];
+    for (let i = page*5; i < Math.min(ids.length, (page+1)*5); i++) {
+      const j = await this.store.job(ids[i]);
+      lines.push(`\n<b>${i+1}. ${safe(j?.title || `Вакансия №${ids[i]} (больше нет в базе)`,100)}</b>`);
+      rows.push([button(`↩️ Вернуть №${i+1}`, `restore:${ids[i]}:${page}`)]);
+    }
+    const nav = [];
+    if (page) nav.push(button('← Назад', `hidden:${page-1}`));
+    if (page+1 < pages) nav.push(button('Далее →', `hidden:${page+1}`));
+    if (nav.length) rows.push(nav);
+    lines.push(`\nСтраница ${page+1} из ${pages}`);
+    await this.panel(lines.join('\n'), [...rows, ...BACK]);
+  }
+  async show(index = 0, jobId = null, action = 'show', mode = 's', afterId = null) {
+    const all = await this.store.jobs(); let notice = '';
+    const eligible = () => all.filter(j => contactable(j) && matches(j, this.s));
+    if (action === 'hide' && all.some(j => j.id === jobId)) {
+      const oldIndex = eligible().findIndex(j => j.id === jobId);
+      if (oldIndex >= 0) index = oldIndex;
+      await this.patch({ hidden_jobs: [...new Set([...hidden(this.s), jobId])].sort((a,b) => a-b) });
+      notice = '<i>🙈 Вакансия скрыта</i>\n\n';
+    }
+    const jobs = eligible();
+    if (!jobs.length) return this.panel(notice + (all.length ? emptyText(all.filter(contactable), this.s) : '⏳ База ещё наполняется. Попробуйте поиск через несколько минут.'), [[button('⚙️ Фильтры', 'filters'), button('🙈 Скрытые', 'hidden:0')], ...BACK]);
+    const current = jobs.findIndex(j => j.id === jobId);
+    if (jobId !== null && current < 0 && ['show','details','translate'].includes(action)) { notice = '<i>Подборка изменилась — показана актуальная вакансия.</i>\n\n'; action = 'show'; mode = 's'; }
+    if (current >= 0) index = current + (action === 'next' ? 1 : action === 'prev' ? -1 : 0);
+    else if (action === 'prev') index--;
+    if (afterId !== null) { const anchor = all.findIndex(j => j.id === afterId); if (anchor >= 0) { const before = new Set(all.slice(0, anchor+1).map(j => j.id)); index = jobs.filter(j => before.has(j.id)).length; } }
+    index = Math.min(Math.max(0,index), jobs.length-1);
+    if (action === 'details') mode = mode.slice(0,-1) + (mode.endsWith('f') ? 's' : 'f');
+    else if (action === 'translate') mode = mode.startsWith('r') ? mode.slice(1) : 'r'+mode;
+    else if (['next','prev','hide'].includes(action)) mode = 's';
+    const result = await translatedCard(jobs[index], mode, this.fetch);
+    await this.panel(notice + `<b>🔎 Вакансия ${index+1} из ${jobs.length}</b>\n\n` + result.text, viewerButtons(jobs[index], index, jobs.length, result.mode, result.failed));
+  }
+  async vacancy(action) {
+    const m = /^(job|hide|restore):([1-9]\d*)(?::(full|short|ru_full|ru_short|\d+))?$/.exec(action);
+    if (!m || !positive(Number(m[2]))) return;
+    const [,kind,rawId,arg] = m, id = Number(rawId), ids = hidden(this.s);
+    if (kind === 'restore') {
+      if (arg !== undefined && !/^\d+$/.test(arg)) return;
+      ids.delete(id); await this.patch({ hidden_jobs: [...ids] });
+      if (arg !== undefined) return this.hiddenPanel(Number(arg));
+      return this.panel('<b>↩️ Вакансия возвращена</b>\nОна снова доступна при совпадении с вашими фильтрами. История уведомлений сохранена.', [[button('🔎 Найти вакансии', 'search:0'), button('🙈 Скрытые', 'hidden:0')], ...BACK]);
+    }
+    if (kind === 'hide' && arg !== undefined || kind === 'job' && !['full','short','ru_full','ru_short'].includes(arg)) return;
+    const j = await this.store.job(id);
+    if (!j) return this.panel('Вакансия больше не доступна.');
+    if (kind === 'hide') { ids.add(id); await this.patch({ hidden_jobs: [...ids] }); }
+    if (ids.has(id)) return this.panel('<b>🙈 Вакансия скрыта</b>\n' + safe(j.title,100), [[button('↩️ Вернуть', `restore:${id}`), button('🙈 Скрытые', 'hidden:0')], ...BACK]);
+    const mode = (arg.startsWith('ru_') ? 'r' : '') + (arg.endsWith('full') ? 'f' : 's');
+    const result = await translatedCard(j, mode, this.fetch), rows = jobButtons(j,result.mode);
+    if (result.failed && j.url) rows.push([{ text: '🌐 Перевести в браузере', url: browserUrl(j) }]);
+    await this.panel(result.text, rows);
+  }
+  async route(action) {
+    if (action === 'menu' || action === 'start' || action === 'cancel') return this.panel(...menu(this.s));
+    if (action === 'filters') return this.panel(...filtersPanel(this.s));
+    if (action === 'help') return this.panel('<b>💬 Помощь</b>\n\nЕсли нужна помощь с настройками или вы нашли ошибку, напишите владельцу. Кратко опишите, что произошло.', [[{ text: '✉️ Написать владельцу', url: 'https://t.me/AngryVirus' }], ...BACK]);
+    if (action === 'notifications') return this.notifications();
+    if (/^notify:(off|instant|daily)$/.test(action)) {
+      const mode = action === 'notify:off' ? 'off' : 'instant', patch = { notifications: mode };
+      if (mode !== 'off' && this.s.notifications === 'off') patch.notifications_after_id = await this.store.latest();
+      await this.patch(patch); return this.panel(...menu(this.s));
+    }
+    let m;
+    if ((m = /^search:(\d+)(?::(\d+))?$/.exec(action))) return this.show(Math.min(Number(m[1]),200000)*5,null,'show','s',m[2] ? Number(m[2]) : null);
+    if ((m = /^view:([1-9]\d*):(\d+):(show|next|prev|details|translate|hide):(s|f|rs|rf)$/.exec(action)) && positive(Number(m[1])) && Number(m[2]) <= 1000000) return this.show(Number(m[2]),Number(m[1]),m[3],m[4]);
+    if ((m = /^hidden:(\d+)$/.exec(action))) return this.hiddenPanel(Number(m[1]));
+    if (/^(job|hide|restore):/.test(action)) return this.vacancy(action);
+    if (/^(sources$|source:|favorite:|favorites:)/.test(action)) return this.panel(...menu(this.s));
+    if (action.startsWith('input:') && Object.hasOwn(PROMPTS,action.slice(6))) { const field = action.slice(6); await this.patch({ pending_input: field }); return this.panel(PROMPTS[field] + '\n/cancel — отмена.', [[button('✖ Отменить ввод','cancel')], ...BACK]); }
+    if (Object.hasOwn(OPTIONS,action)) return this.panel(...choicePanel(this.s,action));
+    if ((m = /^(choose|set):([^:]+):([^:]+)(?::([01]))?$/.exec(action)) && OPTIONS[m[2]] && Object.hasOwn(OPTIONS[m[2]],m[3])) {
+      if (m[1] === 'choose' && m[4] !== undefined) { await this.patch({ [m[2]]: choose(this.s,m[2],m[3],m[4] === '1') }); return this.panel(...choicePanel(this.s,m[2])); }
+      if (m[1] === 'set' && m[4] === undefined) { await this.patch({ [m[2]]: m[3] }); return this.panel(...filtersPanel(this.s)); }
+    }
+    if (action === 'toggle_salary') { await this.patch({ include_unknown_salary: !this.s.include_unknown_salary }); return this.panel(...filtersPanel(this.s)); }
+    if (action === 'reset') { const d = defaults(); await this.patch(Object.fromEntries(['keywords','exclusions','city','remote','language','min_salary','currency','include_unknown_salary','freshness','residence_permit'].map(k => [k,d[k]]))); return this.panel(...filtersPanel(this.s)); }
+    if (action === 'delete') return this.panel('Удалить ваши настройки, скрытые вакансии и историю уведомлений?', [[button('Удалить мои данные','delete_confirm')], ...BACK]);
+    if (action === 'delete_confirm') { await this.store.deleteUser(this.uid); return this.panel('Ваши данные удалены. Уведомления выключены. /start — начать заново.', [], null); }
+  }
+  async handle(update) {
+    const callback = update.callback_query, message = callback?.message || update.message || {}, user = callback?.from || message.from || {};
+    const valid = message.chat?.type === 'private' && positive(user.id) && positive(message.chat.id) && !user.is_bot;
+    if (callback) { try { await this.api.answerCallbackQuery({ callback_query_id: callback.id, ...(!valid ? { text: 'Откройте личный чат с ботом.' } : {}) }); } catch { /* expired acknowledgements do not cancel the action */ } }
+    if (!valid) return;
+    this.uid = user.id; this.chat = message.chat.id; this.mid = callback ? message.message_id : null;
+    if (!(await this.store.meta('active'))) return this.panel('⏳ Бот обновляется. Попробуйте через несколько минут.');
+    const owner = `${Date.now()}:${Math.random()}`, lock = `user:${this.uid}`;
+    if (!await this.store.lock(lock, owner, 180)) throw new Error('User operation busy; retry update');
+    const key = update.update_id != null ? `u:${update.update_id}` : callback ? `c:${callback.id}` : `m:${this.chat}:${message.message_id}`;
+    let claimed = false;
+    try {
+      claimed = await this.store.claimUpdate(key);
+      if (!claimed) return;
+      this.s = settings((await this.store.ensure(this.uid,this.chat)).settings);
+      let action;
+      if (callback) { action = callback.data || ''; if (this.s.pending_input) await this.patch({ pending_input: null }); }
+      else {
+        const text = message.text;
+        if (typeof text !== 'string' || !text.trim()) { await this.store.finishUpdate(key); return; }
+        if ([...text].length > 1000) { await this.panel('Пожалуйста, сократите сообщение до 1000 символов.'); await this.store.finishUpdate(key); return; }
+        if (this.s.pending_input && !text.startsWith('/')) { await this.input(text); await this.store.finishUpdate(key); return; }
+        if (this.s.pending_input) await this.patch({ pending_input: null });
+        action = ({ '/start': 'start', '/menu': 'menu', '/cancel': 'menu', '/delete_me': 'delete' })[text.split(/\s+/)[0].split('@')[0]] || 'menu';
+      }
+      await this.route(action);
+      await this.store.finishUpdate(key);
+    } catch (error) { if (claimed) await this.store.releaseUpdate(key); throw error; }
+    finally { await this.store.unlock(lock,owner); }
+  }
+}

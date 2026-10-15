@@ -1,0 +1,61 @@
+name: Serbia Jobs Serverless
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Operation (stage preserves current bot; cutover switches it)
+        type: choice
+        options: [check, stage, cutover, preview, collect, pause, resume]
+        default: check
+      legacy_stopped:
+        description: Render is suspended AND the old Check Serbia jobs workflow is disabled
+        type: boolean
+        default: false
+  schedule:
+    - cron: '7,37 * * * *'
+permissions:
+  contents: read
+concurrency:
+  group: serbia-jobs-collection
+  cancel-in-progress: false
+jobs:
+  cloud:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: serverless/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: serverless
+      - name: Verify runtime and migration tests
+        run: |
+          node --test serverless/tests/*.test.js
+          python3 -m unittest discover -s tests -q
+      - name: Run operation
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_PROBE_TOKEN }}
+          SUPABASE_URL: https://iajwyuldjwptkbafpmgl.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CLOUD_ACTION: ${{ inputs.action || 'collect' }}
+          LEGACY_STOPPED: ${{ inputs.legacy_stopped }}
+        run: |
+          case "$CLOUD_ACTION" in
+            collect) python3 serverless/collect.py ;;
+            cutover|resume)
+              if [ "$LEGACY_STOPPED" != 'true' ]; then
+                echo 'Suspend Render and disable its old collector before final migration.'
+                exit 1
+              fi
+              python3 serverless/migrate.py "$CLOUD_ACTION" --legacy-stopped
+              python3 serverless/collect.py
+              ;;
+            check|stage|preview|pause) python3 serverless/migrate.py "$CLOUD_ACTION" ;;
+            *) exit 1 ;;
+          esac
