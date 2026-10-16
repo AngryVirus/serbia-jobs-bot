@@ -1,6 +1,7 @@
 import { OPTIONS, CITIES, DEFAULTS } from './config.js';
 export const defaults = () => JSON.parse(JSON.stringify(DEFAULTS));
 export function settings(raw = {}) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) raw = {};
   const s = { ...defaults(), ...raw };
   if (!Object.hasOwn(raw, 'notifications_after_id') && s.notifications !== 'off') s.notifications_after_id = null;
   return s;
@@ -61,9 +62,3 @@ export function matches(j, s, now = Date.now()) {
   return true;
 }
 export const RESETS = { freshness: { freshness: 'any' }, language: { language: 'any' }, remote: { remote: 'any' }, residence_permit: { residence_permit: 'any' }, city: { city: 'any' }, keywords: { keywords: [] }, exclusions: { exclusions: [] }, salary: { min_salary: null, include_unknown_salary: true } };
-export function diagnostics(jobs, s, now = Date.now()) {
-  const available = jobs.filter(j => matches(j, Object.assign({}, s, ...Object.values(RESETS)), now));
-  const relaxed = Object.entries(RESETS).filter(([k]) => OPTIONS[k] ? !selected(s, k).includes('any') : k === 'salary' ? s.min_salary != null || s.include_unknown_salary === false : s[k]?.length)
-    .map(([field, patch]) => ({ field, count: available.filter(j => matches(j, { ...s, ...patch }, now)).length })).filter(x => x.count).sort((a,b) => a.count - b.count);
-  return { available: available.length, relaxed };
-}

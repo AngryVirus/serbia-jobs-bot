@@ -1,5 +1,6 @@
 import { Store, TABLES, assert, positive } from './store.js';
-import { settings, matches, contactable, contains, belgradeDay } from './filters.js';
+import { settings, contains, belgradeDay } from './filters.js';
+import { groupJobs, visibleJobs, hiddenGroups } from './catalog.js';
 import { SOURCE_NAMES } from './config.js';
 import { card, jobButtons, menu } from './ui.js';
 export async function notifyOne(store, api, uid) {
@@ -15,7 +16,8 @@ export async function notifyOne(store, api, uid) {
     if (s.notifications === 'off') return { sent: 0, done: true };
     if (s.notifications_after_id == null) { await store.patch(uid,{ notifications_after_id: await store.latest() }); return { sent: 0, done: true }; }
     const delivered = new Set((await store.db.all('SELECT job_id FROM sjc_deliveries WHERE user_id=:uid', { ':uid': uid })).map(r => r.job_id));
-    const j = (await store.jobs()).reverse().find(j => j.id > s.notifications_after_id && !delivered.has(j.id) && contactable(j) && matches(j,s));
+    const groups = groupJobs(await store.jobs());
+    const j = visibleJobs(groups, s).reverse().find(j => j._duplicate_ids.every(id => id > s.notifications_after_id && !delivered.has(id)));
     if (!j) return { sent: 0, done: true };
     const params = { ':uid': uid, ':jid': j.id }, payload = { user_id: uid, job_id: j.id, delivered_at: new Date().toISOString() };
     const result = await store.db.run("INSERT INTO sjc_deliveries(user_id,job_id,state,payload) VALUES(:uid,:jid,'sending',:payload) ON CONFLICT(user_id,job_id) DO NOTHING", { ...params, ':payload': JSON.stringify(payload) });
@@ -56,6 +58,15 @@ export async function administer(input, ctx, deps) {
     return { ready: true, active: Boolean(await store.meta('active')), sources: Object.keys(SOURCE_NAMES).length, counts: await store.stats() };
   }
   if (op === 'status') return { active: Boolean(await store.meta('active')), ever_active: Boolean(await store.meta('ever_active')), counts: await store.stats(), migration: await store.meta('migration') };
+  if (op === 'audit') {
+    const start = Date.now(), jobs = await store.jobs(), groups = groupJobs(jobs);
+    const visible = visibleJobs(groups, settings());
+    for (const job of jobs) {
+      assert(typeof card(job, true) === 'string', 'Invalid vacancy card');
+      assert(jobButtons(job).flat().every(b => !b.callback_data || b.callback_data.length <= 64), 'Invalid callback length');
+    }
+    return { records: jobs.length, unique: groups.length, duplicates: jobs.length-groups.length, visible: visible.length, elapsed_ms: Date.now()-start };
+  }
   if (op === 'export') return { rows: await store.rows(input.table,input.offset,input.limit) };
   if (op === 'reset_stage') {
     assert(!await store.meta('active') && !await store.meta('ever_active'), 'Cannot erase an activated bot');
@@ -87,7 +98,7 @@ export async function administer(input, ctx, deps) {
   if (op === 'owner_preview') {
     const chat = await deps.api.getChat({ chat_id: 340780041 });
     assert(chat.type === 'private' && chat.username?.toLowerCase() === 'angryvirus', 'Owner chat mismatch');
-    const s = settings((await store.user(340780041))?.settings), [text, rows] = menu(s);
+    const s = settings((await store.user(340780041))?.settings), [text, rows] = menu(s, hiddenGroups(groupJobs(await store.jobs()), s).length);
     await deps.api.sendMessage({ chat_id: 340780041, text: '<i>Проверка переноса в Telegram Serverless</i>\n\n'+text, parse_mode: 'HTML', reply_markup: { inline_keyboard: rows } });
     return { sent: 1 };
   }

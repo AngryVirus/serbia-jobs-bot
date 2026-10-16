@@ -1,5 +1,6 @@
 import { OPTIONS, TITLES, SOURCE_NAMES } from './config.js';
-import { selected, hidden, diagnostics, validUrl } from './filters.js';
+import { selected, hidden, validUrl } from './filters.js';
+import { catalogDiagnostics } from './catalog.js';
 export const button = (text, callback_data) => ({ text, callback_data });
 export const BACK = [[button('🏠 Главное меню', 'menu')]];
 export const escape = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
@@ -25,9 +26,9 @@ export function summary(s, compact = false) {
   if (s.include_unknown_salary === false || !compact) lines.push(s.include_unknown_salary === false ? '✅ Без зарплаты: скрывать' : '▫️ Без зарплаты: показывать');
   return lines.join('\n') || '🔎 Все вакансии · вся Сербия';
 }
-export function menu(s) {
+export function menu(s, hiddenCount = hidden(s).size) {
   const on = s.notifications !== 'off';
-  return ['<b>🇷🇸 Работа в Сербии</b>\n<i>SERBIA JOBS</i>\n\n<b>Ваша подборка</b>\n<blockquote>' + summary(s, true) + '</blockquote>\n\n🔔 Уведомления: ' + (on ? 'включены — новые вакансии' : 'выключены') + `\n🙈 Скрытые вакансии: ${hidden(s).size}\n\n<b>«Найти вакансии»</b> — листать предложения.\nВ <b>«Фильтрах»</b> выберите города, языки и условия работы.`,
+  return ['<b>🇷🇸 Работа в Сербии</b>\n<i>SERBIA JOBS</i>\n\n<b>Ваша подборка</b>\n<blockquote>' + summary(s, true) + '</blockquote>\n\n🔔 Уведомления: ' + (on ? 'включены — новые вакансии' : 'выключены') + `\n🙈 Скрытые вакансии: ${hiddenCount}\n\n<b>«Найти вакансии»</b> — листать предложения.\nВ <b>«Фильтрах»</b> выберите города, языки и условия работы.`,
     [[button('🔎 Найти вакансии', 'search:0')], [button('⚙️ Фильтры', 'filters'), button(on ? '🔔 Уведомления: вкл' : '🔕 Уведомления: выкл', on ? 'notify:off' : 'notify:instant')], [button('🙈 Скрытые вакансии', 'hidden:0'), button('💬 Помощь', 'help')]]];
 }
 export function filtersPanel(s) {
@@ -41,7 +42,7 @@ export function choicePanel(s, field) {
   return [text, [...Object.entries(OPTIONS[field]).map(([value, label]) => [button((values.includes(value) ? '✅ ' : '▫️ ') + label, `choose:${field}:${value}:${!single && values.includes(value) && value !== 'any' ? 0 : 1}`)]), [button('✓ Готово', 'filters')], ...BACK]];
 }
 export function emptyText(jobs, s) {
-  const d = diagnostics(jobs, s);
+  const d = catalogDiagnostics(jobs, s);
   let text = '<b>Подходящих вакансий нет по выбранным условиям.</b>\n\n' + summary(s, true);
   if (!d.available) return text + '\n\nСейчас нет доступных действующих объявлений вне вашего списка скрытых. Попробуйте позже.';
   text += `\n\nБез ограничений ваших фильтров доступно: ${d.available}.`;
@@ -52,9 +53,9 @@ export function emptyText(jobs, s) {
 export function card(j, expanded = false) {
   const f = j._cloud, lines = ['💼 <b>' + safe(j.title || 'Вакансия', expanded ? 140 : 90) + '</b>'];
   let place = safe(j.location || (j.remote === true ? 'Удалённо' : 'Место не указано'), expanded ? 110 : 55);
-  if (f.location_url) place = `<a href="${escape(f.location_url)}">${j.location ? place : 'На карте'}</a>`;
+  if (validUrl(f.location_url) && !validUrl(f.map_url)) place = `<a href="${escape(f.location_url)}">${j.location ? place : 'На карте'}</a>`;
   lines.push((j.company ? '🏢 ' + safe(j.company, expanded ? 80 : 40) + ' · ' : '') + '📍 ' + place);
-  if (f.map_url) lines.push(`<a href="${escape(f.map_url)}">🗺 ${safe(f.address, 180)}</a>`);
+  if (validUrl(f.map_url)) lines.push(`<a href="${escape(f.map_url)}">🗺 ${safe(f.address, 180)}</a>`);
   const periods = { month: 'месяц', hour: 'час', year: 'год' };
   const salary = j.salary_display || (j.salary_min != null ? `от ${j.salary_min} ${j.salary_currency || ''} / ${periods[j.salary_period || 'month'] || 'период не указан'}` : 'Зарплата не указана');
   lines.push('💶 <b>' + safe(salary, expanded ? 120 : 80) + '</b>');
@@ -62,14 +63,13 @@ export function card(j, expanded = false) {
   lines.push('🗣 ' + safe(f.languages.map(x => (names[x] || x) + (f.required_languages.includes(x) ? ' (обяз.)' : '')).join(', ') || 'Языки не указаны', expanded ? 140 : 80));
   if (j.description) lines.push('<blockquote>' + safe(j.description, expanded ? 1800 : 150, expanded) + '</blockquote>');
   if (j.contacts?.length) lines.push('☎️ ' + safe(j.contacts.join(' · '), expanded ? 200 : 90));
-  let source = safe(SOURCE_NAMES[j.source] || j.source || 'Источник', 55);
-  if (validUrl(j.url)) source = `<a href="${escape(j.url)}">${source}</a>`;
+  const source = safe(SOURCE_NAMES[j.source] || j.source || 'Источник', 55);
+  if (f.expires_ms != null && f.expires_ms <= Date.now()) lines.push('<b>⌛ Срок публикации истёк</b>');
   lines.push('📅 ' + (f.date_label || 'Дата не указана') + ' · ' + source);
   return lines.join('\n');
 }
 export function links(j) {
   const rows = validUrl(j.url) ? [[{ text: '🔗 Открыть объявление', url: j.url }]] : [];
-  if (j._cloud.map_url) rows.push([{ text: '🗺 Google Maps', url: j._cloud.map_url }]);
   return rows;
 }
 export const browserUrl = j => 'https://translate.google.com/translate?sl=auto&tl=ru&u=' + encodeURIComponent(j.url);

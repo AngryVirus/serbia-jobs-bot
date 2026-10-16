@@ -1,8 +1,9 @@
 import { OPTIONS } from './config.js';
-import { settings, defaults, choose, hidden, contactable, matches } from './filters.js';
+import { settings, defaults, choose, hidden, validUrl } from './filters.js';
+import { groupJobs, visibleJobs, hiddenGroups, includesId, decorate } from './catalog.js';
 import { Store, positive } from './store.js';
 import { button, BACK, safe, menu, filtersPanel, choicePanel, emptyText, jobButtons, translatedCard, viewerButtons, browserUrl } from './ui.js';
-const PROMPTS = { keywords: 'Введите слова или фразы через запятую. Достаточно совпадения одного. «-» — очистить.', exclusions: 'Введите исключения через запятую. «-» — очистить.', salary: 'Введите минимальную зарплату в месяц: 1000 EUR или 120000 RSD. «-» — снять фильтр.', hour: 'Введите час от 0 до 23 по времени Белграда.' };
+const PROMPTS = { keywords: 'Введите слова или фразы через запятую. Достаточно совпадения одного. «-» — очистить.', exclusions: 'Введите исключения через запятую. «-» — очистить.', salary: 'Введите минимальную зарплату в месяц: 1000 EUR или 120000 RSD. «-» — снять фильтр.' };
 export class Bot {
   constructor(deps) { this.api = deps.api; this.fetch = deps.fetch; this.store = new Store(deps.db); }
   async panel(text, rows = BACK, mid = this.mid) {
@@ -19,6 +20,7 @@ export class Bot {
   }
   async input(text) {
     const field = this.s.pending_input; let patch;
+    if (field === 'hour') { await this.patch({ pending_input: null }); return this.notifications(); }
     if (field === 'keywords' || field === 'exclusions') {
       const values = text.trim() === '-' ? [] : [...new Set(text.split(',').map(x => x.trim()).filter(Boolean))];
       if (values.length > 15 || values.some(x => [...x].length > 60)) return this.panel('Максимум 15 слов или фраз, до 60 символов каждое.');
@@ -30,20 +32,21 @@ export class Bot {
         if (!m || Number(m[1].replace(',', '.')) > 100000000) return this.panel(PROMPTS.salary);
         patch = { min_salary: Number(m[1].replace(',', '.')), currency: m[2] };
       }
-    } else if (field === 'hour') {
-      if (!/^\d{1,2}$/.test(text.trim()) || Number(text) > 23) return this.panel(PROMPTS.hour);
-      patch = { daily_hour: Number(text) };
     } else return this.panel('Неизвестная настройка. Используйте /cancel.');
     await this.patch({ ...patch, pending_input: null });
-    if (field === 'hour') await this.notifications(); else await this.panel(...filtersPanel(this.s));
+    await this.panel(...filtersPanel(this.s));
+  }
+  async home() {
+    const count = hidden(this.s).size ? hiddenGroups(groupJobs(await this.store.jobs()), this.s).length : 0;
+    return this.panel(...menu(this.s, count));
   }
   async hiddenPanel(page = 0) {
-    const ids = [...hidden(this.s)].sort((a,b) => b-a), pages = Math.max(1, Math.ceil(ids.length / 5));
+    const groups = hiddenGroups(groupJobs(await this.store.jobs()), this.s), ids = groups.map(g => g.id), pages = Math.max(1, Math.ceil(ids.length / 5));
     page = Math.min(Math.max(0, page), pages - 1);
     if (!ids.length) return this.panel('<b>🙈 Скрытые вакансии</b>\n\nЗдесь пока пусто. Кнопка «Скрыть» уберёт вакансию из вашего поиска и уведомлений.', [[button('🔎 Найти вакансии', 'search:0')], ...BACK]);
     const lines = [`<b>🙈 Скрытые вакансии · ${ids.length}</b>`, 'Нажмите «Вернуть», чтобы снять скрытие.'], rows = [];
     for (let i = page*5; i < Math.min(ids.length, (page+1)*5); i++) {
-      const j = await this.store.job(ids[i]);
+      const j = groups[i].members[0];
       lines.push(`\n<b>${i+1}. ${safe(j?.title || `Вакансия №${ids[i]} (больше нет в базе)`,100)}</b>`);
       rows.push([button(`↩️ Вернуть №${i+1}`, `restore:${ids[i]}:${page}`)]);
     }
@@ -55,21 +58,22 @@ export class Bot {
     await this.panel(lines.join('\n'), [...rows, ...BACK]);
   }
   async show(index = 0, jobId = null, action = 'show', mode = 's', afterId = null) {
-    const all = await this.store.jobs(); let notice = '';
-    const eligible = () => all.filter(j => contactable(j) && matches(j, this.s));
+    const all = await this.store.jobs(), groups = groupJobs(all); let notice = '';
+    const eligible = () => visibleJobs(groups, this.s);
+    const isAnchor = j => j._duplicate_ids.includes(jobId);
     if (action === 'hide' && all.some(j => j.id === jobId)) {
-      const oldIndex = eligible().findIndex(j => j.id === jobId);
+      const oldIndex = eligible().findIndex(isAnchor);
       if (oldIndex >= 0) index = oldIndex;
       await this.patch({ hidden_jobs: [...new Set([...hidden(this.s), jobId])].sort((a,b) => a-b) });
       notice = '<i>🙈 Вакансия скрыта</i>\n\n';
     }
     const jobs = eligible();
-    if (!jobs.length) return this.panel(notice + (all.length ? emptyText(all.filter(contactable), this.s) : '⏳ База ещё наполняется. Попробуйте поиск через несколько минут.'), [[button('⚙️ Фильтры', 'filters'), button('🙈 Скрытые', 'hidden:0')], ...BACK]);
-    const current = jobs.findIndex(j => j.id === jobId);
+    if (!jobs.length) return this.panel(notice + (all.length ? emptyText(groups, this.s) : '⏳ База ещё наполняется. Попробуйте поиск через несколько минут.'), [[button('⚙️ Фильтры', 'filters'), button('🙈 Скрытые', 'hidden:0')], ...BACK]);
+    const current = jobs.findIndex(isAnchor);
     if (jobId !== null && current < 0 && ['show','details','translate'].includes(action)) { notice = '<i>Подборка изменилась — показана актуальная вакансия.</i>\n\n'; action = 'show'; mode = 's'; }
     if (current >= 0) index = current + (action === 'next' ? 1 : action === 'prev' ? -1 : 0);
     else if (action === 'prev') index--;
-    if (afterId !== null) { const anchor = all.findIndex(j => j.id === afterId); if (anchor >= 0) { const before = new Set(all.slice(0, anchor+1).map(j => j.id)); index = jobs.filter(j => before.has(j.id)).length; } }
+    if (afterId !== null) { const anchor = all.findIndex(j => j.id === afterId); if (anchor >= 0) { const before = new Set(all.slice(0, anchor+1).map(j => j.id)); index = jobs.filter(j => j._duplicate_ids.some(id => before.has(id))).length; } }
     index = Math.min(Math.max(0,index), jobs.length-1);
     if (action === 'details') mode = mode.slice(0,-1) + (mode.endsWith('f') ? 's' : 'f');
     else if (action === 'translate') mode = mode.startsWith('r') ? mode.slice(1) : 'r'+mode;
@@ -81,38 +85,40 @@ export class Bot {
     const m = /^(job|hide|restore):([1-9]\d*)(?::(full|short|ru_full|ru_short|\d+))?$/.exec(action);
     if (!m || !positive(Number(m[2]))) return;
     const [,kind,rawId,arg] = m, id = Number(rawId), ids = hidden(this.s);
+    const group = groupJobs(await this.store.jobs()).find(g => includesId(g, id));
     if (kind === 'restore') {
       if (arg !== undefined && !/^\d+$/.test(arg)) return;
-      ids.delete(id); await this.patch({ hidden_jobs: [...ids] });
+      for (const member of group?.members || [{ id }]) ids.delete(member.id); await this.patch({ hidden_jobs: [...ids] });
       if (arg !== undefined) return this.hiddenPanel(Number(arg));
       return this.panel('<b>↩️ Вакансия возвращена</b>\nОна снова доступна при совпадении с вашими фильтрами. История уведомлений сохранена.', [[button('🔎 Найти вакансии', 'search:0'), button('🙈 Скрытые', 'hidden:0')], ...BACK]);
     }
     if (kind === 'hide' && arg !== undefined || kind === 'job' && !['full','short','ru_full','ru_short'].includes(arg)) return;
-    const j = await this.store.job(id);
+    const original = group?.members.find(j => j.id === id), j = original && decorate(group, original);
     if (!j) return this.panel('Вакансия больше не доступна.');
     if (kind === 'hide') { ids.add(id); await this.patch({ hidden_jobs: [...ids] }); }
-    if (ids.has(id)) return this.panel('<b>🙈 Вакансия скрыта</b>\n' + safe(j.title,100), [[button('↩️ Вернуть', `restore:${id}`), button('🙈 Скрытые', 'hidden:0')], ...BACK]);
+    if (group.members.some(j => ids.has(j.id))) return this.panel('<b>🙈 Вакансия скрыта</b>\n' + safe(j.title,100), [[button('↩️ Вернуть', `restore:${id}`), button('🙈 Скрытые', 'hidden:0')], ...BACK]);
     const mode = (arg.startsWith('ru_') ? 'r' : '') + (arg.endsWith('full') ? 'f' : 's');
     const result = await translatedCard(j, mode, this.fetch), rows = jobButtons(j,result.mode);
-    if (result.failed && j.url) rows.push([{ text: '🌐 Перевести в браузере', url: browserUrl(j) }]);
+    if (result.failed && validUrl(j.url)) rows.push([{ text: '🌐 Перевести в браузере', url: browserUrl(j) }]);
     await this.panel(result.text, rows);
   }
   async route(action) {
-    if (action === 'menu' || action === 'start' || action === 'cancel') return this.panel(...menu(this.s));
+    if (typeof action !== 'string') return this.home();
+    if (action === 'menu' || action === 'start' || action === 'cancel') return this.home();
     if (action === 'filters') return this.panel(...filtersPanel(this.s));
     if (action === 'help') return this.panel('<b>💬 Помощь</b>\n\nЕсли нужна помощь с настройками или вы нашли ошибку, напишите владельцу. Кратко опишите, что произошло.', [[{ text: '✉️ Написать владельцу', url: 'https://t.me/AngryVirus' }], ...BACK]);
-    if (action === 'notifications') return this.notifications();
+    if (action === 'notifications' || action === 'input:hour') return this.notifications();
     if (/^notify:(off|instant|daily)$/.test(action)) {
       const mode = action === 'notify:off' ? 'off' : 'instant', patch = { notifications: mode };
       if (mode !== 'off' && this.s.notifications === 'off') patch.notifications_after_id = await this.store.latest();
-      await this.patch(patch); return this.panel(...menu(this.s));
+      await this.patch(patch); return this.home();
     }
     let m;
     if ((m = /^search:(\d+)(?::(\d+))?$/.exec(action))) return this.show(Math.min(Number(m[1]),200000)*5,null,'show','s',m[2] ? Number(m[2]) : null);
     if ((m = /^view:([1-9]\d*):(\d+):(show|next|prev|details|translate|hide):(s|f|rs|rf)$/.exec(action)) && positive(Number(m[1])) && Number(m[2]) <= 1000000) return this.show(Number(m[2]),Number(m[1]),m[3],m[4]);
     if ((m = /^hidden:(\d+)$/.exec(action))) return this.hiddenPanel(Number(m[1]));
     if (/^(job|hide|restore):/.test(action)) return this.vacancy(action);
-    if (/^(sources$|source:|favorite:|favorites:)/.test(action)) return this.panel(...menu(this.s));
+    if (/^(sources$|source:|favorite:|favorites:)/.test(action)) return this.home();
     if (action.startsWith('input:') && Object.hasOwn(PROMPTS,action.slice(6))) { const field = action.slice(6); await this.patch({ pending_input: field }); return this.panel(PROMPTS[field] + '\n/cancel — отмена.', [[button('✖ Отменить ввод','cancel')], ...BACK]); }
     if (Object.hasOwn(OPTIONS,action)) return this.panel(...choicePanel(this.s,action));
     if ((m = /^(choose|set):([^:]+):([^:]+)(?::([01]))?$/.exec(action)) && OPTIONS[m[2]] && Object.hasOwn(OPTIONS[m[2]],m[3])) {
@@ -123,6 +129,7 @@ export class Bot {
     if (action === 'reset') { const d = defaults(); await this.patch(Object.fromEntries(['keywords','exclusions','city','remote','language','min_salary','currency','include_unknown_salary','freshness','residence_permit'].map(k => [k,d[k]]))); return this.panel(...filtersPanel(this.s)); }
     if (action === 'delete') return this.panel('Удалить ваши настройки, скрытые вакансии и историю уведомлений?', [[button('Удалить мои данные','delete_confirm')], ...BACK]);
     if (action === 'delete_confirm') { await this.store.deleteUser(this.uid); return this.panel('Ваши данные удалены. Уведомления выключены. /start — начать заново.', [], null); }
+    return this.home();
   }
   async handle(update) {
     const callback = update.callback_query, message = callback?.message || update.message || {}, user = callback?.from || message.from || {};
