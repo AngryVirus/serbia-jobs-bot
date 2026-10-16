@@ -25,6 +25,14 @@ test('menu, persisted input, independent users, explicit choices, hidden and old
   await handle(f,callback(1,'restore:42:0')); assert.deepEqual((await f.store.user(1)).settings.hidden_jobs,[]);
   await handle(f,callback(1,'sources')); assert(!JSON.stringify(f.api.edited.at(-1).reply_markup).includes('source:'));
 });
+test('old vacancy buttons and malformed actions always return a usable panel',async()=>{
+  const f=await fixture(); await f.store.putJob(job(7),true);
+  await handle(f,callback(1,'job:7')); assert(f.api.edited.at(-1).text.includes('Повар'));
+  for(const action of ['job:7:999','job:bad','restore:7:full','hide:7:short']) {
+    const before=f.api.edited.length; await handle(f,callback(1,action));
+    assert.equal(f.api.edited.length,before+1); assert(f.api.edited.at(-1).text.includes('Работа в Сербии'));
+  }
+});
 test('stale viewer anchors do not translate a different job; original map survives translation failure',async()=>{
   const f=await fixture(); await f.store.putJob(job(7,{title:'Chef',description:'We are hiring a chef with experience.'}),true);
   await handle(f,message(1,'/start')); await handle(f,callback(1,'view:999:0:translate:s'));

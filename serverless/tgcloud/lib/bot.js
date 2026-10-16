@@ -40,7 +40,7 @@ export class Bot {
   async home() {
     const count = hidden(this.s).size ? hiddenGroups(groupJobs(await this.store.jobs()), this.s).length : 0;
     const [text,rows] = menu(this.s,count);
-    if (this.uid === OWNER_ID) rows.push([button('📊 Отчёт владельца','admin')]);
+    if (this.uid === OWNER_ID) rows.push([button('Отчёт владельца','admin')]);
     return this.panel(text,rows);
   }
   async hiddenPanel(page = 0) {
@@ -54,8 +54,8 @@ export class Bot {
       rows.push([button(`↩️ Вернуть №${i+1}`, `restore:${ids[i]}:${page}`)]);
     }
     const nav = [];
-    if (page) nav.push(button('← Назад', `hidden:${page-1}`));
-    if (page+1 < pages) nav.push(button('Далее →', `hidden:${page+1}`));
+    if (page) nav.push(button('⬅️', `hidden:${page-1}`));
+    if (page+1 < pages) nav.push(button('➡️', `hidden:${page+1}`));
     if (nav.length) rows.push(nav);
     lines.push(`\nСтраница ${page+1} из ${pages}`);
     await this.panel(lines.join('\n'), [...rows, ...BACK]);
@@ -82,26 +82,26 @@ export class Bot {
     else if (action === 'translate') mode = mode.startsWith('r') ? mode.slice(1) : 'r'+mode;
     else if (['next','prev','hide'].includes(action)) mode = 's';
     const result = await translatedCard(jobs[index], mode, this.fetch, this.store);
-    await this.panel(notice + `<b>🔎 Вакансия ${index+1} из ${jobs.length}</b>\n\n` + result.text, viewerButtons(jobs[index], index, jobs.length, result.mode, result.failed));
+    await this.panel(notice + `<i>Вакансия ${index+1} из ${jobs.length}</i>\n\n` + result.text, viewerButtons(jobs[index], index, jobs.length, result.mode, result.failed));
   }
   async vacancy(action) {
     const m = /^(job|hide|restore):([1-9]\d*)(?::(full|short|ru_full|ru_short|\d+))?$/.exec(action);
-    if (!m || !positive(Number(m[2]))) return;
+    if (!m || !positive(Number(m[2]))) return this.home();
     const [,kind,rawId,arg] = m, id = Number(rawId), ids = hidden(this.s);
     const group = groupJobs(await this.store.jobs()).find(g => includesId(g, id));
     if (kind === 'restore') {
-      if (arg !== undefined && !/^\d+$/.test(arg)) return;
+      if (arg !== undefined && !/^\d+$/.test(arg)) return this.home();
       for (const member of group?.members || [{ id }]) ids.delete(member.id); await this.patch({ hidden_jobs: [...ids] });
       if (arg !== undefined) return this.hiddenPanel(Number(arg));
       return this.panel('<b>↩️ Вакансия возвращена</b>\nОна снова доступна при совпадении с вашими фильтрами. История уведомлений сохранена.', [[button('🔎 Найти вакансии', 'search:0'), button('🙈 Скрытые', 'hidden:0')], ...BACK]);
     }
-    if (kind === 'hide' && arg !== undefined || kind === 'job' && !['full','short','ru_full','ru_short'].includes(arg)) return;
+    if (kind === 'hide' && arg !== undefined || kind === 'job' && !['full','short','ru_full','ru_short',undefined].includes(arg)) return this.home();
     const original = group?.members.find(j => j.id === id), j = original && decorate(group, original);
     if (!j) return this.panel('Вакансия больше не доступна.');
     if (group.members.some(j=>j._moderated) && this.uid !== OWNER_ID) return this.panel('Объявление снято с выдачи после проверки.',[[button('🔎 Найти вакансии','search:0')],...BACK]);
     if (kind === 'hide') { ids.add(id); await this.patch({ hidden_jobs: [...ids] }); }
     if (group.members.some(j => ids.has(j.id))) return this.panel('<b>🙈 Вакансия скрыта</b>\n' + safe(j.title,100), [[button('↩️ Вернуть', `restore:${id}`), button('🙈 Скрытые', 'hidden:0')], ...BACK]);
-    const mode = (arg.startsWith('ru_') ? 'r' : '') + (arg.endsWith('full') ? 'f' : 's');
+    const mode = (arg?.startsWith('ru_') ? 'r' : '') + (arg?.endsWith('full') ? 'f' : 's');
     const result = await translatedCard(j, mode, this.fetch, this.store), rows = jobButtons(j,result.mode);
     if (result.failed && validUrl(j.url)) rows.push([{ text: '🌐 Перевести в браузере', url: browserUrl(j) }]);
     await this.panel(result.text, rows);

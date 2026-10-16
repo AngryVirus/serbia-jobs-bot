@@ -37,6 +37,8 @@ class QualityTests(unittest.TestCase):
             ('Опыт обязателен. Помогаем с оформлением ВНЖ.', True, True),
             ('Можно без опыта. Помощь с оформлением ВНЖ не предоставляется.', False, False),
             ('Без опыта не принимаем.', True, None),
+            ('Не требуется опыт работы.', False, None),
+            ('Nije potrebno radno iskustvo.', False, None),
             ('No experience required. Visa sponsorship provided.', False, True),
             ('Visa sponsorship is not available.', None, False),
             ('Potrebno radno iskustvo. Pomoc pri dobijanju radne dozvole.', True, True),

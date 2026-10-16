@@ -46,9 +46,9 @@ def explicit_requirements(text):
         clause = normalize(raw)
         if re.search(r'\b(?:если|if|ako)\b|желател|preferred|предност|pozeljn', clause):
             continue
-        no_exp = re.search(r'\bбез опыта\b|опыт(?: работы)? не (?:требуется|обязателен)|'
+        no_exp = re.search(r'\bбез опыта\b|опыт(?: работы)? не (?:требуется|обязателен)|не (?:требуется|необходим|обязателен) опыт|'
                            r'\bno experience (?:is )?(?:required|needed)|\bbez (?:radnog )?iskustva\b|'
-                           r'iskustvo nije (?:potrebno|obavezno)', clause)
+                           r'iskustvo nije (?:potrebno|obavezno)|nije (?:potrebno|obavezno) (?:radno )?iskustvo', clause)
         yes_exp = re.search(r'(?:требуется|необходим|обязателен) опыт|опыт(?: работы)? (?:обязателен|от \d|не менее \d)|'
                             r'\bexperience (?:is )?(?:required|mandatory)|\b(?:at least|minimum|must have) \d+\+? years? (?:of )?experience|'
                             r'\b(?:potrebno|obavezno) (?:radno )?iskustvo', clause)
