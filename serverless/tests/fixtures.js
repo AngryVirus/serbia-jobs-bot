@@ -20,4 +20,3 @@ let updateId=100;
 export const message = (uid,text) => ({update_id:++updateId,message:{message_id:updateId,chat:{id:uid,type:'private'},from:{id:uid},text}});
 export const callback = (uid,data) => ({update_id:++updateId,callback_query:{id:String(updateId),from:{id:uid},message:{message_id:1,chat:{id:uid,type:'private'}},data}});
 export async function handle(f,u) { await new Bot(f).handle(u); }
-
