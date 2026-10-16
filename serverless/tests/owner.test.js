@@ -18,6 +18,15 @@ test('compact cards keep paging and put secondary actions in a contextual submen
   assert(actions.flat().some(b=>b.callback_data==='view:8:3:translate:rf'));
 });
 
+test('large catalog reads stay bounded and retain every job across sparse ID pages',async()=>{
+  const f=await fixture();
+  for(let i=1;i<=215;i++) await f.store.putJob(job(i*3,{description:'x'.repeat(15000)}),true);
+  const original=f.db.all.bind(f.db),sizes=[];
+  f.db.all=async(...args)=>{const rows=await original(...args); if(args[0].includes('FROM sjc_jobs')) {sizes.push(rows.length);assert(rows.length<=100,'oversized database response');} return rows;};
+  const jobs=await f.store.jobs(); assert.equal(jobs.length,215); assert.equal(new Set(jobs.map(j=>j.id)).size,215);
+  assert.deepEqual(sizes,[100,100,15]); assert.equal(jobs[0].id,645); assert.equal(jobs.at(-1).id,3);
+});
+
 test('complaints are personal, deduplicated and removed with personal data',async()=>{
   const f=await fixture();
   await f.store.putJob(job(1,{url:'https://example.rs/jobs/1'}),true);

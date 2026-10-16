@@ -42,7 +42,16 @@ export class Store {
   }
   async jobs() {
     const blocked = new Set((await this.records('moderation')).filter(r => r.blocked).flatMap(r => r.ids));
-    return (await this.db.all('SELECT id,payload FROM sjc_jobs ORDER BY id DESC')).map(r => ({ ...JSON.parse(r.payload), id: r.id, ...(blocked.has(r.id) ? { _moderated: true } : {}) })).sort((a,b) => (Date.parse(b.created_at) - Date.parse(a.created_at) || b.id-a.id));
+    // Bound each SDK database response: the growing catalog can exceed the
+    // platform's response size even though the isolate can process all jobs.
+    const rows=[]; let before=Number.MAX_SAFE_INTEGER;
+    while(true) {
+      const page=await this.db.all('SELECT id,payload FROM sjc_jobs WHERE id<:before ORDER BY id DESC LIMIT 100',{':before':before});
+      rows.push(...page);
+      if(page.length<100) break;
+      before=page[page.length-1].id;
+    }
+    return rows.map(r => ({ ...JSON.parse(r.payload), id: r.id, ...(blocked.has(r.id) ? { _moderated: true } : {}) })).sort((a,b) => (Date.parse(b.created_at) - Date.parse(a.created_at) || b.id-a.id));
   }
   async records(kind) { return (await this.db.all('SELECT payload FROM sjc_records WHERE kind=:kind ORDER BY record_key', { ':kind': kind })).map(r => JSON.parse(r.payload)); }
   async record(kind, key, value) { await this.db.run('INSERT INTO sjc_records(kind,record_key,payload) VALUES(:kind,:key,:payload) ON CONFLICT(kind,record_key) DO UPDATE SET payload=excluded.payload', { ':kind': kind, ':key': String(key), ':payload': JSON.stringify(value) }); }
