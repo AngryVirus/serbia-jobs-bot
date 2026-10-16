@@ -90,10 +90,22 @@ test('fact refresh preserves IDs, source fields and concurrent edits',async()=>{
 
 test('collection report records completion, counts, sources and uncertain deliveries without user IDs',async()=>{
   const f=await fixture(), owner='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  const previous=job(1,{source:'tg_rabotavserbii',url:'https://t.me/rabotavserbii/1'});
+  await f.store.putJob(previous,true);
   await administer({operation:'collection_begin',owner},{ownerRun:true},f);
-  await administer({operation:'collect',owner,source:'tg_rabotavserbii',jobs:[job(1)],status:{state:'ok',checked_at:new Date().toISOString()}},{ownerRun:true},f);
-  await administer({operation:'collection_end',owner,failed:false,totals:{sources:1,added:1,sent:0,uncertain:0}},{ownerRun:true},f);
-  const report=await ownerReport(f.store); assert(report.text.includes('Новых доступных вакансий: 1')); assert(report.text.includes('успешно'));
-  assert(report.issues.length>0); assert(!report.text.includes(String(OWNER_ID)));
+  await administer({operation:'collect',owner,source:'telegram_serbia_jobs',jobs:[job(2,{source:'telegram_serbia_jobs',url:previous.url})],status:{state:'error',detail:'Источник отвечает ошибкой',checked_at:new Date().toISOString()}},{ownerRun:true},f);
+  await administer({operation:'collect',owner,source:'tg_radim_serbia',jobs:[job(3,{source:'tg_radim_serbia',url:'https://t.me/radim_serbia/3'})],status:{state:'ok',checked_at:new Date().toISOString()}},{ownerRun:true},f);
+  await f.db.run("INSERT INTO sjc_deliveries(user_id,job_id,state,payload) VALUES(1,3,'blocked',:payload)",{':payload':JSON.stringify({user_id:1,job_id:3,delivered_at:new Date().toISOString()})});
+  await administer({operation:'collection_end',owner,failed:false,totals:{sources:2,added:2,sent:0,uncertain:1}},{ownerRun:true},f);
+  const report=await ownerReport(f.store);
+  assert(report.text.includes('Новых доступных вакансий: 1'));
+  assert(report.text.includes('повторов за сбор: 1'));
+  assert(report.text.includes('Ошибки доставки за сбор: 1 блокировок, 1 неопределённых отправок'));
+  assert(report.text.includes('Последний завершённый сбор:'));
+  const failedSource=report.issues.findIndex(s=>s.id==='telegram_serbia_jobs'&&s.state==='error');
+  assert(failedSource>=0);
+  await handle(f,callback(OWNER_ID,`admin:sources:${Math.floor(failedSource/6)}`));
+  assert(f.api.edited.at(-1).text.includes('Telegram · Serbia IT Jobs — ошибка.'));
+  assert(!report.text.includes(String(OWNER_ID)));
   await assert.rejects(administer({operation:'collection_end',owner:'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'},{ownerRun:true},f),/owner mismatch/);
 });

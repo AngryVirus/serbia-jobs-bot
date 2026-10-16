@@ -131,14 +131,18 @@ export async function administer(input, ctx, deps) {
       const run=await store.meta('collection_run');
       assert(run?.owner===input.owner,'Collection owner mismatch');
       const jobs=await store.jobs(), groups=groupJobs(jobs), now=new Date().toISOString();
-      const result={...run,state:input.failed?'error':'finished',failed:Boolean(input.failed),finished_at:now,totals:input.totals || {},new_unique:visibleJobs(groups,settings()).filter(j=>j._duplicate_ids.every(id=>id>run.baseline)).length};
+      const newRows=jobs.filter(j=>j.id>run.baseline);
+      const newGroups=groups.filter(g=>g.members.every(j=>j.id>run.baseline)).length;
+      const blocked=(await store.db.get("SELECT COUNT(*) AS n FROM sjc_deliveries WHERE state='blocked'")).n;
+      const result={...run,state:input.failed?'error':'finished',failed:Boolean(input.failed),finished_at:now,totals:{...(input.totals || {}),blocked:Math.max(0,blocked-(run.blocked_baseline ?? blocked))},new_unique:visibleJobs(groups,settings()).filter(j=>j._duplicate_ids.every(id=>id>run.baseline)).length,new_duplicates:newRows.length-newGroups};
       await store.setMeta('last_collection',result); await store.setMeta('collection_run',result);
       await store.sourceStatus('_collection', { state: result.state, checked_at: now }); await store.unlock('collection',input.owner); return { released: true };
     }
     assert(await store.lock('collection',input.owner,900), 'Collection in progress');
     if (op === 'collection_begin') {
       const now=new Date().toISOString();
-      await store.setMeta('collection_run',{owner:input.owner,state:'running',started_at:now,baseline:await store.latest()});
+      const blocked=(await store.db.get("SELECT COUNT(*) AS n FROM sjc_deliveries WHERE state='blocked'")).n;
+      await store.setMeta('collection_run',{owner:input.owner,state:'running',started_at:now,baseline:await store.latest(),blocked_baseline:blocked});
       await store.sourceStatus('_collection', { state: 'running', checked_at: now }); return { claimed: true };
     }
     assert(Object.hasOwn(SOURCE_NAMES,input.source) && Array.isArray(input.jobs) && input.jobs.length <= 50 && input.jobs.every(j => j.source === input.source), 'Invalid source batch');
