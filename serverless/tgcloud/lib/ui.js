@@ -17,7 +17,7 @@ export function summary(s, compact = false) {
   const lines = [];
   for (const [field, title] of Object.entries(TITLES)) {
     const values = selected(s, field), active = !values.includes('any');
-    if (active || !compact) lines.push(`${active ? '✅' : '▫️'} ${title}: ${safe(values.map(x => OPTIONS[field][x] || x).join(' · '), 230)}`);
+    if (active || !compact || field === 'residence_permit') lines.push(`${active ? '✅' : '▫️'} ${title}: ${safe(values.map(x => OPTIONS[field][x] || x).join(' · '), 230)}`);
   }
   for (const [field, title] of [['keywords', 'Ключевые слова'], ['exclusions', 'Исключения']]) {
     if (s[field]?.length || !compact) lines.push(`${s[field]?.length ? '✅' : '▫️'} ${title}: ${safe(s[field]?.join(', ') || 'Нет', compact ? 90 : 950)}`);
