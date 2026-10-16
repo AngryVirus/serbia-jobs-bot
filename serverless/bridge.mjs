@@ -23,6 +23,7 @@ try {
   process.stdout.write(JSON.stringify({ ok: true, result }));
 } catch (error) {
   process.stdout.write(JSON.stringify({ ok: false, status: error.status || null, code: error.code || null,
+    retry_after: Number(error.parameters?.retry_after) || null,
     reason: String(error.message || '').replace(/app\d+:[A-Za-z0-9_-]+/g,'[redacted]').slice(0,250) }));
   process.exitCode = 1;
 }

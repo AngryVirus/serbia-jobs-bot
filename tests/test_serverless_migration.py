@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import random
+from types import SimpleNamespace
 import subprocess
 import sys
 import unittest
@@ -15,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'serverless'))
 from enrich_jobs import enrich_job
 from migrate import digest_snapshot, stage, TABLES
+import cloud
 
 
 class MigrationTests(unittest.TestCase):
@@ -87,6 +89,33 @@ class MigrationTests(unittest.TestCase):
         with patch('migrate.invoke',side_effect=invoke), patch('migrate.call',return_value={'url':'https://example.com/old'}):
             with self.assertRaisesRegex(RuntimeError,'verification failed'):
                 stage(snapshot)
+
+    def test_management_429_waits_and_retries_identical_payload(self):
+        limited = SimpleNamespace(returncode=1, stdout=json.dumps({'ok': False, 'status': 429, 'code': 429, 'retry_after': 7}))
+        success = SimpleNamespace(returncode=0, stdout=json.dumps({'ok': True, 'result': {'added': 3}}))
+        with patch('cloud.environment', return_value={}), patch('cloud.subprocess.run', side_effect=[limited, success]) as run, patch('cloud.time.sleep') as sleep, patch('sys.stderr'):
+            self.assertEqual(cloud.invoke('collect', jobs=[]), {'added': 3})
+        sleep.assert_called_once_with(7)
+        self.assertEqual(run.call_args_list[0].kwargs['input'], run.call_args_list[1].kwargs['input'])
+
+    def test_management_errors_with_possible_side_effects_are_not_retried(self):
+        for status, code in [(500, 500), (400, 429), (401, 401)]:
+            response = SimpleNamespace(returncode=1, stdout=json.dumps({'ok': False, 'status': status, 'code': code}))
+            with patch('cloud.environment', return_value={}), patch('cloud.subprocess.run', return_value=response) as run, patch('cloud.time.sleep') as sleep:
+                with self.assertRaises(RuntimeError): cloud.invoke('import', rows=[])
+                self.assertEqual(run.call_count, 1)
+                sleep.assert_not_called()
+        with patch('cloud.environment', return_value={}), patch('cloud.subprocess.run', side_effect=subprocess.TimeoutExpired('node', 150)) as run:
+            with self.assertRaisesRegex(RuntimeError, 'timed out'): cloud.invoke('notify', user_id=1)
+            self.assertEqual(run.call_count, 1)
+
+    def test_rate_limit_retries_are_bounded_and_private_errors_stay_hidden(self):
+        response = SimpleNamespace(returncode=1, stdout=json.dumps({'ok': False, 'status': 429, 'code': 429, 'reason': 'private payload'}))
+        with patch('cloud.environment', return_value={}), patch('cloud.subprocess.run', return_value=response) as run, patch('cloud.time.sleep') as sleep, patch('sys.stderr'):
+            with self.assertRaises(RuntimeError) as error: cloud.invoke('status')
+        self.assertEqual(run.call_count, 4)
+        self.assertEqual([c.args[0] for c in sleep.call_args_list], [60, 120, 180])
+        self.assertNotIn('private payload', str(error.exception))
 
     def test_stated_address_and_language_facts_survive_export(self):
         j=enrich_job({'title':'Повар','description':'English required. Адрес: Knez Mihailova 12, Beograd','location':'Beograd','url':'https://t.me/test/12'})
