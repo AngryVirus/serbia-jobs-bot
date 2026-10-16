@@ -5,9 +5,9 @@ from pathlib import Path
 import sys
 from cloud import call, cli, invoke, routing_identity
 
-# Reviewed predecessor: 184c40e0c3fd63951196bbac0683d33bed07989a.
+# Reviewed predecessor: c12ead5cf255fc687307a114022d930002d292c2.
 # A later release must explicitly review and update its predecessor digest.
-PREVIOUS_DIGEST = 'f9744a1d27afe87ec91f0ce3ebb12d3d118e32d80d573f3321770ec2df90c3cf'
+PREVIOUS_DIGEST = 'd88404894c270f30322a924aff468b2fe52ca95e8e1a9485cf96e2be1d6efacd'
 
 
 def digest(modules):
