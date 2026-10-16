@@ -6,6 +6,7 @@ import re
 from filters import CITY_NAMES, active, freshness_matches, normalize, serbia_eligible
 from job_metadata import enrich, remote_fact, text_salary
 from sources import FetchError, Job, _status, safe_date
+from job_quality import quality_reason
 
 MAX_PAGES = 2
 MAX_POSTS = 60
@@ -63,23 +64,9 @@ class ChannelPage(HTMLParser):
 
 
 def hiring_post(text):
+    if quality_reason(text):
+        return False
     value = normalize(text)
-    seeker = (r'\b(?:ищу|ищем)\s+(?:(?:новую|удаленную|постоянную|любую)\s+)?работу\b|'
-              r'\bв поиске работы\b|#(?:резюме|cv)\b|\bмое резюме\b|'
-              r'\bищу\s+(?:позицию|вакансию|подработку)\b|\bрассматриваю\s+(?:вакансии|предложения)\b|'
-              r'\b(?:looking for|seeking)\s+(?:a\s+)?(?:job|employment)\b|\bopen to work\b|'
-              r'\btrazim posao\b|\bтражим посао\b|'
-              r'\b(?:предлагаю|оказываю)\s+услуги\b|\bищу клиентов\b')
-    if re.search(seeker, value):
-        return False
-    if re.search(r'подписыва[йи]тесь|подборка каналов|каталог вакансии|\bищу_?работу\b', value):
-        return False
-    if re.search(r'вакансии на сегодня|подборка вакансии|вакансии недели|даиджест|'
-                 r'подборк[аиу].{0,30}компании|#top_vacancies|ловите.{0,30}вакансии|'
-                 r'navigating the job market|job digest|weekly job|job round.?up', value):
-        return False
-    if re.search(r'ваканси[яи]\s+закрыт|позиция закрыта|position (?:is )?filled|konkurs je zavrsen', value):
-        return False
     # Publisher footers offer advertising, not employment.
     value = re.sub(r'(?:разместить|опубликовать)\s+вакансию|post (?:a |your )?vacancy', '', value)
     return bool(re.search(
@@ -127,6 +114,7 @@ def post_job(source, post):
 
 def collect_channel(source, fetcher):
     jobs, seen = {}, set()
+    withdrawn = []
     url = source.listing_url
     pages = rejected = 0
     try:
@@ -144,6 +132,8 @@ def collect_channel(source, fetcher):
                 break
             for post in new:
                 seen.add(post['id'])
+                if quality_reason(post['text']) == 'closed':
+                    withdrawn.append(f'https://t.me/{source.telegram_channel}/{post["id"]}')
                 job = post_job(source, post)
                 if job:
                     jobs[job.url] = job
@@ -154,7 +144,7 @@ def collect_channel(source, fetcher):
             url = source.listing_url + '?before=' + str(min(post['id'] for post in new))
     except FetchError as error:
         return list(jobs.values()), _status(source, 'partial' if jobs else error.state, len(jobs), error.detail,
-                                            inspected=len(seen), rejected=rejected, listing_pages=pages)
+                                            inspected=len(seen), rejected=rejected, listing_pages=pages, withdrawn_urls=withdrawn)
     return list(jobs.values()), _status(source, 'ok' if jobs else 'empty', len(jobs),
         'Публичные сообщения о найме в Сербии; до двух страниц и 60 постов. Резюме и услуги исключаются.',
-        inspected=len(seen), rejected=rejected, listing_pages=pages)
+        inspected=len(seen), rejected=rejected, listing_pages=pages, withdrawn_urls=withdrawn)

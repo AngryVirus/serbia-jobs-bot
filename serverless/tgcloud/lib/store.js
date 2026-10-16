@@ -37,9 +37,33 @@ export class Store {
     // Callers hold the same user lease as notification delivery.
     await this.db.run('DELETE FROM sjc_deliveries WHERE user_id=:id', { ':id': uid });
     await this.db.run("DELETE FROM sjc_records WHERE kind='favorites' AND record_key LIKE :prefix", { ':prefix': uid + ':' + '%' });
+    await this.db.run("DELETE FROM sjc_records WHERE kind='report' AND record_key LIKE :prefix", { ':prefix': uid + ':' + '%' });
     await this.db.run('DELETE FROM sjc_users WHERE id=:id', { ':id': uid });
   }
-  async jobs() { return (await this.db.all('SELECT id,payload FROM sjc_jobs ORDER BY id DESC')).map(r => ({ ...JSON.parse(r.payload), id: r.id })).sort((a,b) => (Date.parse(b.created_at) - Date.parse(a.created_at) || b.id-a.id)); }
+  async jobs() {
+    const blocked = new Set((await this.records('moderation')).filter(r => r.blocked).flatMap(r => r.ids));
+    return (await this.db.all('SELECT id,payload FROM sjc_jobs ORDER BY id DESC')).map(r => ({ ...JSON.parse(r.payload), id: r.id, ...(blocked.has(r.id) ? { _moderated: true } : {}) })).sort((a,b) => (Date.parse(b.created_at) - Date.parse(a.created_at) || b.id-a.id));
+  }
+  async records(kind) { return (await this.db.all('SELECT payload FROM sjc_records WHERE kind=:kind ORDER BY record_key', { ':kind': kind })).map(r => JSON.parse(r.payload)); }
+  async record(kind, key, value) { await this.db.run('INSERT INTO sjc_records(kind,record_key,payload) VALUES(:kind,:key,:payload) ON CONFLICT(kind,record_key) DO UPDATE SET payload=excluded.payload', { ':kind': kind, ':key': String(key), ':payload': JSON.stringify(value) }); }
+  async withdraw(source, urls) {
+    for (const url of urls) {
+      const row = await this.db.get('SELECT payload FROM sjc_jobs WHERE source_key=:key', { ':key': JSON.stringify([source,url]) });
+      if (!row) continue;
+      const job = JSON.parse(row.payload);
+      job._withdrawn_at = new Date().toISOString(); job.updated_at = job._withdrawn_at;
+      job._cloud.quality = { version: 1, reason: 'closed' };
+      await this.db.run('UPDATE sjc_jobs SET payload=:payload WHERE source_key=:key AND payload=:old', { ':key': JSON.stringify([source,url]), ':old': row.payload, ':payload': JSON.stringify(job) });
+    }
+  }
+  async refreshFacts(row) {
+    const saved = await this.db.get('SELECT payload FROM sjc_jobs WHERE id=:id', { ':id': row.id });
+    if (!saved) return false;
+    const job = JSON.parse(saved.payload);
+    if (['title','description','updated_at','_withdrawn_at'].some(k => (job[k] ?? null) !== (row[k] ?? null))) return false;
+    for (const key of ['quality','experience','paperwork_assistance']) job._cloud[key] = row._cloud[key];
+    return (await this.db.run('UPDATE sjc_jobs SET payload=:payload WHERE id=:id AND payload=:old', { ':id': row.id, ':old': saved.payload, ':payload': JSON.stringify(job) })).rowsAffected === 1;
+  }
   async job(id) { const row = await this.db.get('SELECT id,payload FROM sjc_jobs WHERE id=:id', { ':id': id }); return row ? { ...JSON.parse(row.payload), id: row.id } : null; }
   async latest() { return (await this.db.get('SELECT COALESCE(MAX(id),0) AS id FROM sjc_jobs')).id; }
   async putJob(raw, migration = false) {

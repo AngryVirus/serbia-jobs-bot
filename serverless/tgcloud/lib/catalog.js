@@ -87,7 +87,7 @@ export function groupJobs(jobs) {
 }
 export const includesId = (group, id) => group.members.some(j => j.id === id);
 export const decorate = (group, job) => ({ ...job, _duplicate_ids: group.members.map(j => j.id) });
-function currentPublications(group) {
+export function currentPublications(group) {
   const originals = new Map();
   for (const job of group.members) {
     const key = canonicalUrl(job.url) || job.id, previous = originals.get(key);
@@ -101,6 +101,7 @@ export function visibleJobs(groups, s, now = Date.now()) {
   const ids = hidden(s), result = [];
   for (const group of groups) {
     if (group.members.some(j => ids.has(j.id))) continue;
+    if (group.members.some(j => j._moderated) || currentPublications(group).some(j => j._cloud?.quality?.reason === 'closed')) continue;
     // Select only among records matching the user's complete filter. Do not
     // invent a composite salary/language/location from different publications.
     const choices = currentPublications(group).filter(j => contactable(j) && matches(j, s, now));

@@ -2,7 +2,8 @@ import { Store, TABLES, assert, positive } from './store.js';
 import { settings, contains, belgradeDay } from './filters.js';
 import { groupJobs, visibleJobs, hiddenGroups } from './catalog.js';
 import { SOURCE_NAMES } from './config.js';
-import { card, jobButtons, menu } from './ui.js';
+import { ownerReport, OWNER_ID } from './owner.js';
+import { card, jobButtons, menu, translatedCard } from './ui.js';
 export async function notifyOne(store, api, uid) {
   assert(positive(uid), 'Invalid subscriber');
   const cooldown = await store.meta('notification_cooldown');
@@ -58,6 +59,20 @@ export async function administer(input, ctx, deps) {
     return { ready: true, active: Boolean(await store.meta('active')), sources: Object.keys(SOURCE_NAMES).length, counts: await store.stats() };
   }
   if (op === 'status') return { active: Boolean(await store.meta('active')), ever_active: Boolean(await store.meta('ever_active')), counts: await store.stats(), migration: await store.meta('migration') };
+  if (op === 'owner_report') {
+    const report=await ownerReport(store), jobs=(await store.jobs()).filter(j=>j.source==='halooglasi'), groups=groupJobs(jobs);
+    return {text:report.text,halo:{stored:jobs.length,available:visibleJobs(groups,settings()).length,owner_matching:visibleJobs(groups,settings((await store.user(OWNER_ID))?.settings)).length,status:report.sources.find(s=>s.id==='halooglasi')}};
+  }
+  if (op === 'translation_check') {
+    const jobs=await store.jobs(), sample=jobs.find(j=>j.source==='halooglasi') || jobs.find(j=>j.source==='klikdoposla') || jobs[0];
+    const requests=[];
+    const fetch=async url=>{
+      try { const response=await deps.fetch(url); requests.push({status:response.status,ok:response.ok}); return response; }
+      catch(error) { requests.push({error:String(error.message || '').slice(0,180)}); throw error; }
+    };
+    const result=sample ? await translatedCard(sample,'rf',fetch,store) : null;
+    return {sample_source:sample?.source,requests,failed:result?.failed ?? true,preview:result&&!result.failed?result.text.slice(0,250):null};
+  }
   if (op === 'audit') {
     const start = Date.now(), jobs = await store.jobs(), groups = groupJobs(jobs);
     const visible = visibleJobs(groups, settings());
@@ -68,6 +83,12 @@ export async function administer(input, ctx, deps) {
     return { records: jobs.length, unique: groups.length, duplicates: jobs.length-groups.length, visible: visible.length, elapsed_ms: Date.now()-start };
   }
   if (op === 'export') return { rows: await store.rows(input.table,input.offset,input.limit) };
+  if (op === 'refresh_facts') {
+    assert(Array.isArray(input.rows) && input.rows.length <= 25 && input.rows.every(r=>positive(r.id) && r._cloud?.quality?.version===1), 'Invalid facts batch');
+    let updated=0;
+    for(const row of input.rows) if(await store.refreshFacts(row)) updated++;
+    return {updated,skipped:input.rows.length-updated};
+  }
   if (op === 'reset_stage') {
     assert(!await store.meta('active') && !await store.meta('ever_active'), 'Cannot erase an activated bot');
     for (const table of ['sjc_users','sjc_jobs','sjc_deliveries','sjc_records']) await deps.db.run(`DELETE FROM ${table}`);
@@ -106,12 +127,26 @@ export async function administer(input, ctx, deps) {
   assert(await store.meta('active'), 'Cloud bot not active');
   if (op === 'collection_begin' || op === 'collect' || op === 'collection_end') {
     assert(typeof input.owner === 'string' && /^[a-f0-9-]{36}$/.test(input.owner), 'Collection owner required');
-    if (op === 'collection_end') { await store.sourceStatus('_collection', { state: input.failed ? 'error' : 'finished', checked_at: new Date().toISOString() }); await store.unlock('collection',input.owner); return { released: true }; }
+    if (op === 'collection_end') {
+      const run=await store.meta('collection_run');
+      assert(run?.owner===input.owner,'Collection owner mismatch');
+      const jobs=await store.jobs(), groups=groupJobs(jobs), now=new Date().toISOString();
+      const result={...run,state:input.failed?'error':'finished',failed:Boolean(input.failed),finished_at:now,totals:input.totals || {},new_unique:visibleJobs(groups,settings()).filter(j=>j._duplicate_ids.every(id=>id>run.baseline)).length};
+      await store.setMeta('last_collection',result); await store.setMeta('collection_run',result);
+      await store.sourceStatus('_collection', { state: result.state, checked_at: now }); await store.unlock('collection',input.owner); return { released: true };
+    }
     assert(await store.lock('collection',input.owner,900), 'Collection in progress');
-    if (op === 'collection_begin') { await store.sourceStatus('_collection', { state: 'running', checked_at: new Date().toISOString() }); return { claimed: true }; }
+    if (op === 'collection_begin') {
+      const now=new Date().toISOString();
+      await store.setMeta('collection_run',{owner:input.owner,state:'running',started_at:now,baseline:await store.latest()});
+      await store.sourceStatus('_collection', { state: 'running', checked_at: now }); return { claimed: true };
+    }
     assert(Object.hasOwn(SOURCE_NAMES,input.source) && Array.isArray(input.jobs) && input.jobs.length <= 50 && input.jobs.every(j => j.source === input.source), 'Invalid source batch');
     let added = 0;
     for (const j of input.jobs) if (await store.putJob(j)) added++;
+    const withdrawn=input.status?.withdrawn_urls || [];
+    assert(Array.isArray(withdrawn) && withdrawn.length<=120 && withdrawn.every(url=>typeof url==='string' && /^https:\/\/t\.me\/[A-Za-z0-9_]+\/\d+$/.test(url)), 'Invalid withdrawn links');
+    await store.withdraw(input.source,withdrawn);
     if (input.status) await store.sourceStatus(input.source,input.status);
     return { added };
   }

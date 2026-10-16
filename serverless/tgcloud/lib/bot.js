@@ -2,7 +2,8 @@ import { OPTIONS } from './config.js';
 import { settings, defaults, choose, hidden, validUrl } from './filters.js';
 import { groupJobs, visibleJobs, hiddenGroups, includesId, decorate } from './catalog.js';
 import { Store, positive } from './store.js';
-import { button, BACK, safe, menu, filtersPanel, choicePanel, emptyText, jobButtons, translatedCard, viewerButtons, browserUrl } from './ui.js';
+import { OWNER_ID, complaint, ownerRoute } from './owner.js';
+import { button, BACK, safe, menu, filtersPanel, choicePanel, emptyText, jobButtons, translatedCard, viewerButtons, browserUrl, cardActions } from './ui.js';
 const PROMPTS = { keywords: 'Введите слова или фразы через запятую. Достаточно совпадения одного. «-» — очистить.', exclusions: 'Введите исключения через запятую. «-» — очистить.', salary: 'Введите минимальную зарплату в месяц: 1000 EUR или 120000 RSD. «-» — снять фильтр.' };
 export class Bot {
   constructor(deps) { this.api = deps.api; this.fetch = deps.fetch; this.store = new Store(deps.db); }
@@ -38,7 +39,9 @@ export class Bot {
   }
   async home() {
     const count = hidden(this.s).size ? hiddenGroups(groupJobs(await this.store.jobs()), this.s).length : 0;
-    return this.panel(...menu(this.s, count));
+    const [text,rows] = menu(this.s,count);
+    if (this.uid === OWNER_ID) rows.push([button('📊 Отчёт владельца','admin')]);
+    return this.panel(text,rows);
   }
   async hiddenPanel(page = 0) {
     const groups = hiddenGroups(groupJobs(await this.store.jobs()), this.s), ids = groups.map(g => g.id), pages = Math.max(1, Math.ceil(ids.length / 5));
@@ -78,7 +81,7 @@ export class Bot {
     if (action === 'details') mode = mode.slice(0,-1) + (mode.endsWith('f') ? 's' : 'f');
     else if (action === 'translate') mode = mode.startsWith('r') ? mode.slice(1) : 'r'+mode;
     else if (['next','prev','hide'].includes(action)) mode = 's';
-    const result = await translatedCard(jobs[index], mode, this.fetch);
+    const result = await translatedCard(jobs[index], mode, this.fetch, this.store);
     await this.panel(notice + `<b>🔎 Вакансия ${index+1} из ${jobs.length}</b>\n\n` + result.text, viewerButtons(jobs[index], index, jobs.length, result.mode, result.failed));
   }
   async vacancy(action) {
@@ -95,10 +98,11 @@ export class Bot {
     if (kind === 'hide' && arg !== undefined || kind === 'job' && !['full','short','ru_full','ru_short'].includes(arg)) return;
     const original = group?.members.find(j => j.id === id), j = original && decorate(group, original);
     if (!j) return this.panel('Вакансия больше не доступна.');
+    if (group.members.some(j=>j._moderated) && this.uid !== OWNER_ID) return this.panel('Объявление снято с выдачи после проверки.',[[button('🔎 Найти вакансии','search:0')],...BACK]);
     if (kind === 'hide') { ids.add(id); await this.patch({ hidden_jobs: [...ids] }); }
     if (group.members.some(j => ids.has(j.id))) return this.panel('<b>🙈 Вакансия скрыта</b>\n' + safe(j.title,100), [[button('↩️ Вернуть', `restore:${id}`), button('🙈 Скрытые', 'hidden:0')], ...BACK]);
     const mode = (arg.startsWith('ru_') ? 'r' : '') + (arg.endsWith('full') ? 'f' : 's');
-    const result = await translatedCard(j, mode, this.fetch), rows = jobButtons(j,result.mode);
+    const result = await translatedCard(j, mode, this.fetch, this.store), rows = jobButtons(j,result.mode);
     if (result.failed && validUrl(j.url)) rows.push([{ text: '🌐 Перевести в браузере', url: browserUrl(j) }]);
     await this.panel(result.text, rows);
   }
@@ -114,6 +118,13 @@ export class Bot {
       await this.patch(patch); return this.home();
     }
     let m;
+    if (action === 'admin' || action.startsWith('admin:')) return ownerRoute(this,action);
+    if ((m = /^actions:([1-9]\d*):(-1|\d+):(s|f|rs|rf)$/.exec(action)) && positive(Number(m[1])) && Number(m[2])<=1000000) {
+      const j=await this.store.job(Number(m[1]));
+      return j ? this.panel(...cardActions(j,Number(m[2]),m[3])) : this.panel('Вакансия больше не найдена.');
+    }
+    if ((m = /^report:([1-9]\d*):(choose|not_job|duplicate|outdated):(-1|\d+):(s|f|rs|rf)$/.exec(action)) && positive(Number(m[1])) && Number(m[3])<=1000000) return complaint(this,Number(m[1]),m[2]==='choose'?null:m[2],Number(m[3]),m[4]);
+    if ((m = /^report:([1-9]\d*)(?::(not_job|duplicate|outdated))?$/.exec(action)) && positive(Number(m[1]))) return complaint(this,Number(m[1]),m[2]);
     if ((m = /^search:(\d+)(?::(\d+))?$/.exec(action))) return this.show(Math.min(Number(m[1]),200000)*5,null,'show','s',m[2] ? Number(m[2]) : null);
     if ((m = /^view:([1-9]\d*):(\d+):(show|next|prev|details|translate|hide):(s|f|rs|rf)$/.exec(action)) && positive(Number(m[1])) && Number(m[2]) <= 1000000) return this.show(Number(m[2]),Number(m[1]),m[3],m[4]);
     if ((m = /^hidden:(\d+)$/.exec(action))) return this.hiddenPanel(Number(m[1]));
@@ -127,7 +138,7 @@ export class Bot {
     }
     if (action === 'toggle_salary') { await this.patch({ include_unknown_salary: !this.s.include_unknown_salary }); return this.panel(...filtersPanel(this.s)); }
     if (action === 'reset') { const d = defaults(); await this.patch(Object.fromEntries(['keywords','exclusions','city','remote','language','min_salary','currency','include_unknown_salary','freshness','residence_permit'].map(k => [k,d[k]]))); return this.panel(...filtersPanel(this.s)); }
-    if (action === 'delete') return this.panel('Удалить ваши настройки, скрытые вакансии и историю уведомлений?', [[button('Удалить мои данные','delete_confirm')], ...BACK]);
+    if (action === 'delete') return this.panel('Удалить ваши настройки, скрытые вакансии, жалобы и историю уведомлений?', [[button('Удалить мои данные','delete_confirm')], ...BACK]);
     if (action === 'delete_confirm') { await this.store.deleteUser(this.uid); return this.panel('Ваши данные удалены. Уведомления выключены. /start — начать заново.', [], null); }
     return this.home();
   }
@@ -154,7 +165,7 @@ export class Bot {
         if ([...text].length > 1000) { await this.panel('Пожалуйста, сократите сообщение до 1000 символов.'); await this.store.finishUpdate(key); return; }
         if (this.s.pending_input && !text.startsWith('/')) { await this.input(text); await this.store.finishUpdate(key); return; }
         if (this.s.pending_input) await this.patch({ pending_input: null });
-        action = ({ '/start': 'start', '/menu': 'menu', '/cancel': 'menu', '/delete_me': 'delete' })[text.split(/\s+/)[0].split('@')[0]] || 'menu';
+        action = ({ '/start': 'start', '/menu': 'menu', '/cancel': 'menu', '/delete_me': 'delete', '/admin': 'admin' })[text.split(/\s+/)[0].split('@')[0]] || 'menu';
       }
       await this.route(action);
       await this.store.finishUpdate(key);

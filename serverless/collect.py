@@ -72,7 +72,7 @@ def main():
         failed = False
         print('Collection complete:', json.dumps(totals))
     finally:
-        invoke('collection_end',owner=owner,failed=failed)
+        invoke('collection_end',owner=owner,failed=failed,totals=totals)
 
 
 if __name__ == '__main__':

@@ -27,17 +27,17 @@ export function contains(text, term) {
 }
 // EU daylight-saving transitions, 01:00 UTC on the last Sunday of March/October.
 // No dependency on Intl/time-zone data in the platform's JavaScript isolate.
-export function belgradeDay(ms) {
+export function belgradeOffset(ms) {
   const year = new Date(ms).getUTCFullYear();
   const transition = month => { const last = new Date(Date.UTC(year, month + 1, 0)); return Date.UTC(year, month, last.getUTCDate() - last.getUTCDay(), 1); };
-  const offset = ms >= transition(2) && ms < transition(9) ? 7200000 : 3600000;
-  return Math.floor((ms + offset) / 86400000);
+  return ms >= transition(2) && ms < transition(9) ? 7200000 : 3600000;
 }
+export const belgradeDay = ms => Math.floor((ms + belgradeOffset(ms)) / 86400000);
 export const validUrl = url => typeof url === 'string' && url.length <= 2048 && /^https?:\/\/[^\s/@<>"\\]+\/[^\s<>"\\]+$/i.test(url);
 export const contactable = j => validUrl(j.url) || Boolean(j.contacts?.length);
 export function matches(j, s, now = Date.now()) {
   const f = j._cloud;
-  if (!f || hidden(s).has(j.id) || !f.serbia || (f.expires_ms != null && f.expires_ms <= now)) return false;
+  if (!f || f.quality?.reason || j._moderated || hidden(s).has(j.id) || !f.serbia || (f.expires_ms != null && f.expires_ms <= now)) return false;
   const periods = selected(s, 'freshness'), age = f.published_day == null ? null : belgradeDay(now) - f.published_day;
   if (age !== null && (age < 0 || (!f.date_only && f.published_ms > now))) return false;
   if (!periods.some(p => p === 'any' || age !== null && ({ today: age === 0, yesterday: age === 1, 7: age >= 0 && age < 7, 30: age >= 0 && age < 30 })[p])) return false;

@@ -26,7 +26,7 @@ test('menu, persisted input, independent users, explicit choices, hidden and old
   await handle(f,callback(1,'sources')); assert(!JSON.stringify(f.api.edited.at(-1).reply_markup).includes('source:'));
 });
 test('stale viewer anchors do not translate a different job; original map survives translation failure',async()=>{
-  const f=await fixture(); await f.store.putJob(job(7),true);
+  const f=await fixture(); await f.store.putJob(job(7,{title:'Chef',description:'We are hiring a chef with experience.'}),true);
   await handle(f,message(1,'/start')); await handle(f,callback(1,'view:999:0:translate:s'));
   assert(f.api.edited.at(-1).text.includes('Подборка изменилась')); assert(!f.api.edited.at(-1).text.includes('Перевод сейчас'));
   await handle(f,callback(1,'view:7:0:translate:s'));

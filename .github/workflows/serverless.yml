@@ -47,7 +47,10 @@ jobs:
           LEGACY_STOPPED: ${{ inputs.legacy_stopped }}
         run: |
           case "$CLOUD_ACTION" in
-            deploy) python3 serverless/deploy.py ;;
+            deploy)
+              python3 serverless/deploy.py
+              python3 serverless/refresh_facts.py
+              ;;
             collect) python3 serverless/collect.py ;;
             cutover|resume)
               if [ "$LEGACY_STOPPED" != 'true' ]; then

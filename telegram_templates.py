@@ -12,6 +12,7 @@ from filters import active, parse_datetime, serbia_eligible
 from job_metadata import enrich, remote_fact
 from location_links import google_maps_url
 from sources import FetchError, Job, PageParser, _status, canonical_url
+from job_quality import quality_reason
 
 
 VOID = {'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'}
@@ -107,6 +108,8 @@ def _job(source, post):
             lines.append(line)
     if not lines:
         return None
+    if quality_reason('\n'.join(lines)):
+        return None
     title = lines[0].strip()
     if len(title) > 180 or re.search(r'(?i)ищу работу|ищу подработку|резюме|дайджест|подборка|свежие вакансии|интенсив|вебинар|#ad', title):
         return None
@@ -182,6 +185,7 @@ def _preview_url(source, value):
 
 def collect_telegram(source, fetcher):
     jobs, seen_posts, seen_pages = {}, set(), set()
+    withdrawn = []
     url = source.listing_url
     try:
         while url and len(seen_pages) < 2 and url not in seen_pages:
@@ -200,6 +204,8 @@ def collect_telegram(source, fetcher):
                 if post_id in seen_posts:
                     continue
                 seen_posts.add(post_id)
+                if post.get('body') and quality_reason('\n'.join(post['body'].lines)) == 'closed':
+                    withdrawn.append('https://t.me/' + post_id)
                 job = _job(source, post)
                 if job and active(job.__dict__) and serbia_eligible(job.__dict__):
                     jobs[job.url] = job
@@ -210,7 +216,7 @@ def collect_telegram(source, fetcher):
                         and int(params.get('before', '0')) <= oldest), None)
     except FetchError as exc:
         return list(jobs.values()), _status(source, 'partial' if jobs else exc.state,
-                                           len(jobs), exc.detail, listing_pages=len(seen_pages), inspected=len(seen_posts))
+                                           len(jobs), exc.detail, listing_pages=len(seen_pages), inspected=len(seen_posts), withdrawn_urls=withdrawn)
     return list(jobs.values()), _status(source, 'ok' if jobs else 'empty', len(jobs),
         'Публичная Telegram-лента: до двух страниц. Только распознанные вакансии; реклама и подборки исключаются.',
-        listing_pages=len(seen_pages), inspected=len(seen_posts))
+        listing_pages=len(seen_pages), inspected=len(seen_posts), withdrawn_urls=withdrawn)

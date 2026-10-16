@@ -1,6 +1,7 @@
 import { OPTIONS, TITLES, SOURCE_NAMES } from './config.js';
 import { selected, hidden, validUrl } from './filters.js';
 import { catalogDiagnostics } from './catalog.js';
+import { translateVacancy } from './translation.js';
 export const button = (text, callback_data) => ({ text, callback_data });
 export const BACK = [[button('🏠 Главное меню', 'menu')]];
 export const escape = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
@@ -61,48 +62,52 @@ export function card(j, expanded = false) {
   lines.push('💶 <b>' + safe(salary, expanded ? 120 : 80) + '</b>');
   const names = { ru: 'Русский', sr: 'Сербский', en: 'Английский', de: 'Немецкий' };
   lines.push('🗣 ' + safe(f.languages.map(x => (names[x] || x) + (f.required_languages.includes(x) ? ' (обяз.)' : '')).join(', ') || 'Языки не указаны', expanded ? 140 : 80));
+  if (f.permit === true || f.permit === false) lines.push('🪪 ВНЖ: ' + (f.permit ? 'обязателен' : 'не требуется'));
+  if (f.experience === true || f.experience === false) lines.push('🧰 Опыт: ' + (f.experience ? 'требуется' : 'можно без опыта'));
+  if (f.paperwork_assistance === true || f.paperwork_assistance === false) lines.push('📄 Помощь с документами: ' + (f.paperwork_assistance ? 'указана работодателем' : 'не предоставляется'));
   if (j.description) lines.push('<blockquote>' + safe(j.description, expanded ? 1800 : 150, expanded) + '</blockquote>');
   if (j.contacts?.length) lines.push('☎️ ' + safe(j.contacts.join(' · '), expanded ? 200 : 90));
   const source = safe(SOURCE_NAMES[j.source] || j.source || 'Источник', 55);
   if (f.expires_ms != null && f.expires_ms <= Date.now()) lines.push('<b>⌛ Срок публикации истёк</b>');
+  if (f.quality?.reason === 'closed') lines.push('<b>⌛ Работодатель сообщил о закрытии набора</b>');
+  else if (f.quality?.reason) lines.push('<i>Объявление исключено из поиска проверкой качества.</i>');
   lines.push('📅 ' + (f.date_label || 'Дата не указана') + ' · ' + source);
   return lines.join('\n');
 }
-export function links(j) {
+export function links(j, report = false) {
   const rows = validUrl(j.url) ? [[{ text: '🔗 Открыть объявление', url: j.url }]] : [];
+  if (report) rows.push([button('🚩 Пожаловаться',`report:${j.id}`)]);
   return rows;
 }
 export const browserUrl = j => 'https://translate.google.com/translate?sl=auto&tl=ru&u=' + encodeURIComponent(j.url);
 export function jobButtons(j, mode = 's') {
-  return [...links(j), [button(mode.endsWith('f') ? 'Свернуть ↑' : 'Подробнее ↓', `job:${j.id}:${mode.startsWith('r') ? 'ru_' : ''}${mode.endsWith('f') ? 'short' : 'full'}`), button('🙈 Скрыть', `hide:${j.id}`)], [button(mode.startsWith('r') ? '🌐 Оригинал' : '🇷🇺 Перевести на русский', `job:${j.id}:${mode.startsWith('r') ? '' : 'ru_'}${mode.endsWith('f') ? 'full' : 'short'}`)], [button('🗂 Смотреть подборку', 'search:0'), button('🏠 Меню', 'menu')]];
+  return [...links(j), [button(mode.endsWith('f') ? 'Свернуть ↑' : 'Подробнее ↓', `job:${j.id}:${mode.startsWith('r') ? 'ru_' : ''}${mode.endsWith('f') ? 'short' : 'full'}`), button('⋯ Ещё',`actions:${j.id}:-1:${mode}`)], [button('🗂 Смотреть подборку', 'search:0'), button('🏠 Меню', 'menu')]];
 }
 export function viewerButtons(j, index, count, mode, failed) {
   const b = (label, action) => button(label, `view:${j.id}:${index}:${action}:${mode}`);
-  const rows = [...links(j), [b(mode.endsWith('f') ? 'Свернуть ↑' : 'Подробнее ↓', 'details'), b('🙈 Скрыть', 'hide')], [b(mode.startsWith('r') ? '🌐 Оригинал' : '🇷🇺 Перевести на русский', 'translate')]];
+  const rows = [...links(j), [b(mode.endsWith('f') ? 'Свернуть ↑' : 'Подробнее ↓', 'details'), button('⋯ Ещё',`actions:${j.id}:${index}:${mode}`)]];
   if (failed && validUrl(j.url)) rows.push([{ text: '🌐 Перевести в браузере', url: browserUrl(j) }]);
   const nav = [];
   if (index) nav.push(b('← Предыдущая', 'prev'));
   if (index + 1 < count) nav.push(b('Следующая →', 'next'));
   if (nav.length) rows.push(nav);
-  rows.push([button('⚙️ Фильтры', 'filters'), button('🏠 Меню', 'menu')]);
   return rows;
 }
-export async function translatedCard(j, mode, fetch) {
+export function cardActions(j, index, mode) {
+  const standalone=index===-1;
+  const back=standalone ? `job:${j.id}:${mode.startsWith('r')?'ru_':''}${mode.endsWith('f')?'full':'short'}` : `view:${j.id}:${index}:show:${mode}`;
+  const translate=standalone ? `job:${j.id}:${mode.startsWith('r')?'':'ru_'}${mode.endsWith('f')?'full':'short'}` : `view:${j.id}:${index}:translate:${mode}`;
+  return ['<b>Действия с вакансией</b>\n\n'+safe(j.title,140),[
+    [button(mode.startsWith('r')?'🌐 Оригинал':'🇷🇺 Перевести',translate),button('🙈 Скрыть',standalone?`hide:${j.id}`:`view:${j.id}:${index}:hide:${mode}`)],
+    [button('🚩 Пожаловаться',`report:${j.id}:choose:${index}:${mode}`)],
+    [button('⚙️ Фильтры','filters'),button('🏠 Меню','menu')],
+    [button('↩️ К вакансии',back)],
+  ]];
+}
+export async function translatedCard(j, mode, fetch, store) {
   if (!mode.startsWith('r')) return { text: card(j, mode.endsWith('f')), mode, failed: false };
   try {
-    const translate = async text => {
-      let result = '';
-      const chars = [...text];
-      for (let i = 0; i < chars.length; i += 800) {
-        const response = await fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ru&dt=t&q=' + encodeURIComponent(chars.slice(i, i+800).join('')));
-        if (!response.ok) throw new Error('Translation unavailable');
-        const data = await response.json();
-        if (!Array.isArray(data?.[0])) throw new Error('Invalid translation');
-        for (const part of data[0]) { if (typeof part?.[0] !== 'string') throw new Error('Invalid translation'); result += part[0]; }
-      }
-      return result;
-    };
-    const [title, description] = await Promise.all([translate(clip(j.title,140)), translate(clip(j.description,1800,true))]);
+    const [title, description] = await translateVacancy(j.id,clip(j.title,140),clip(j.description,1800,true),fetch,store);
     return { text: '<i>🇷🇺 Перевод на русский</i>\n\n' + card({ ...j, title, description }, mode.endsWith('f')), mode, failed: false };
   } catch {
     return { text: 'Перевод сейчас недоступен. Попробуйте ещё раз или откройте его в браузере.\n\n' + card(j, mode.endsWith('f')), mode: mode.slice(1), failed: true };

@@ -36,7 +36,7 @@
 | --- | --- | --- |
 | [Poslovi.rs](https://www.poslovi.rs/) | JobPosting JSON-LD / HTML отдельных вакансий | 8 |
 | [Workforce](https://www.workforce.rs/oglasi-za-posao/) | HTML списка и карточек `/oglas/…` | 8 |
-| [Halo oglasi](https://www.halooglasi.com/posao) | Актуальный публичный объект `CurrentClassified` внутри страницы | **8; исправлен сбор** |
+| [Halo oglasi](https://www.halooglasi.com/posao) | Актуальный публичный объект `CurrentClassified` внутри страницы | **Локально 8; в GitHub Actions HTTP 403 (16.10.2026)** |
 | [Careerjet](https://www.careerjet.rs/) | Проверена главная страница | Защитная проверка, `blocked`; не обходится |
 | [Sale-me](https://www.sale-me.com/serbia/vacancies) | Проверены адрес вакансий и корень сайта | HTTP 404; рабочий путь не найден |
 | [HelloWorld](https://www.helloworld.rs/) | Автосбор отключён до разрешения владельца | `requires_permission`; запросы сбора не выполнялись |
