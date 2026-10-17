@@ -12,7 +12,7 @@ DATE = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
 
 
 def post(number, text, channel='serbia_jobs', date=DATE):
-    return (f'<div class="tgme_widget_message_wrap"><div class="tgme_widget_message" data-post="{channel}/{number}">'
+    return ('<meta property="og:title" content="Работа Сербия">' + f'<div class="tgme_widget_message_wrap"><div class="tgme_widget_message" data-post="{channel}/{number}">'
             '<div class="tgme_widget_message_text js-message_text">' + escape(text).replace('\n', '<br/>') +
             f'</div><a class="tgme_widget_message_date"><time datetime="{date}">Today</time></a></div></div>')
 
@@ -114,5 +114,8 @@ class TelegramSourceTests(unittest.TestCase):
         seen = []
         with patch('sources.collect_source', return_value=([], {'state': 'empty'})) as collect:
             _, statuses = collect_all(on_source=lambda key, jobs, status: seen.append(key))
-        self.assertEqual(collect.call_count, len(SOURCES))
+        from source_policy import source_enabled
+        self.assertEqual(collect.call_count, sum(source_enabled(key) for key in SOURCES))
+        self.assertNotIn('telegram_python_jobs', statuses)
+        self.assertNotIn('halooglasi', statuses)
         self.assertEqual(set(seen), set(statuses))

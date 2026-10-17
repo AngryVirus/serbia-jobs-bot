@@ -16,7 +16,7 @@ def post(channel, number, body, *, date='2026-10-14T12:00:00+00:00'):
 
 def preview(channel, posts, before=None):
     more = f'<a class="tme_messages_more" href="/s/{channel}?before={before}">Older</a>' if before else ''
-    return '<html><body>' + ''.join(posts) + more + '</body></html>'
+    return '<html><meta property="og:title" content="Работа Сербия"><body>' + ''.join(posts) + more + '</body></html>'
 
 
 class FakeFetcher:

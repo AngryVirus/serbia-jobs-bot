@@ -19,6 +19,7 @@ import re
 import time
 import threading
 from channel_catalog import CHANNELS
+from source_policy import source_enabled
 from typing import Iterable
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlsplit, urlunsplit
@@ -763,7 +764,7 @@ def collect_all(enabled: Iterable[str] | None = None, *, on_source=None) -> tupl
     ids = list(SOURCES) if enabled is None else list(dict.fromkeys(enabled))
     statuses: dict[str, dict] = {}
     jobs: dict[tuple[str, str], Job] = {}
-    selected = [SOURCES[source_id] for source_id in ids if source_id in SOURCES]
+    selected = [SOURCES[source_id] for source_id in ids if source_id in SOURCES and source_enabled(source_id)]
     for source_id in ids:
         if source_id not in SOURCES:
             statuses[source_id] = {"state": "error", "count": 0, "detail": "Неизвестный источник.", "experimental": True}

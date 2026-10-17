@@ -2,6 +2,7 @@ import { Store, TABLES, assert, positive } from './store.js';
 import { settings, contains, belgradeDay } from './filters.js';
 import { groupJobs, visibleJobs, hiddenGroups } from './catalog.js';
 import { SOURCE_NAMES } from './config.js';
+import { sourceEnabled } from './source-policy.js';
 import { ownerReport, OWNER_ID } from './owner.js';
 import { card, jobButtons, menu, translatedCard } from './ui.js';
 export async function notifyOne(store, api, uid) {
@@ -56,7 +57,7 @@ export async function administer(input, ctx, deps) {
     await store.init();
     assert(contains('Русский повар','повар') && !contains('повариха','повар'), 'Runtime Unicode mismatch');
     assert(belgradeDay(Date.UTC(2026,9,25,23,30)) === Math.floor(Date.UTC(2026,9,26)/86400000), 'Runtime date mismatch');
-    return { ready: true, active: Boolean(await store.meta('active')), sources: Object.keys(SOURCE_NAMES).length, counts: await store.stats() };
+    return { ready: true, active: Boolean(await store.meta('active')), sources: Object.keys(SOURCE_NAMES).filter(sourceEnabled).length, counts: await store.stats() };
   }
   if (op === 'status') return { active: Boolean(await store.meta('active')), ever_active: Boolean(await store.meta('ever_active')), counts: await store.stats(), migration: await store.meta('migration') };
   if (op === 'owner_report') {

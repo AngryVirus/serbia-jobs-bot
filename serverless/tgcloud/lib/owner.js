@@ -1,4 +1,5 @@
 import { SOURCE_NAMES } from './config.js';
+import { sourceEnabled } from './source-policy.js';
 import { defaults, belgradeOffset } from './filters.js';
 import { groupJobs, visibleJobs, includesId } from './catalog.js';
 import { button, BACK, safe, card, links } from './ui.js';
@@ -6,7 +7,7 @@ export const OWNER_ID = 340780041;
 export const REASONS = { not_job: 'Не вакансия / реклама', duplicate: 'Повтор объявления', outdated: 'Набор закрыт / устарело' };
 const OWNER_BACK = [[button('📊 Отчёт владельца', 'admin')], ...BACK];
 const date = value => Number.isFinite(Date.parse(value)) ? new Date(Date.parse(value)+belgradeOffset(Date.parse(value))).toISOString().replace('T',' ').slice(0,16) + ' (Белград)' : 'нет данных';
-const STATES = { ok:'работает', empty:'нет подходящих объявлений', partial:'частичный сбор', blocked:'доступ заблокирован', robots_disallowed:'автосбор запрещён', unsupported:'нет доступной ленты', requires_permission:'нужно разрешение', error:'ошибка', unknown:'не проверен' };
+const STATES = { ok:'работает', empty:'нет подходящих объявлений', partial:'частичный сбор', blocked:'доступ заблокирован', robots_disallowed:'автосбор запрещён', unsupported:'нет доступной ленты', requires_permission:'нужно разрешение', excluded:'не подходит название канала', error:'ошибка', unknown:'не проверен' };
 
 export async function complaint(bot, id, reason, index=-1, mode='s') {
   const group = groupJobs(await bot.store.jobs()).find(g => includesId(g,id));
@@ -30,7 +31,7 @@ export async function ownerReport(store) {
   const statuses = await store.records('source_status'), reports = await store.records('report');
   const last = await store.meta('last_collection'), running = await store.meta('collection_run');
   const bySource = new Map(statuses.map(s=>[s.source,s.payload]));
-  const sources = Object.keys(SOURCE_NAMES).map(id=>({id,...(bySource.get(id) || {state:'unknown'})}));
+  const sources = Object.keys(SOURCE_NAMES).filter(sourceEnabled).map(id=>({id,...(bySource.get(id) || {state:'unknown'})}));
   const issues = sources.filter(s=>!['ok','empty'].includes(s.state));
   const totals = Object.fromEntries(Object.keys(STATES).map(s=>[s,sources.filter(x=>x.state===s).length]));
   const deliveryStates = await store.db.all('SELECT state,COUNT(*) AS n FROM sjc_deliveries GROUP BY state');
@@ -44,20 +45,34 @@ export async function ownerReport(store) {
   if (!last || last.failed || Date.now()-Date.parse(last.finished_at)>7200000) text += '⚠️ Нет подтверждения успешного свежего сбора за последние 2 часа.\n';
   text += `\nИсточники: ${totals.ok} работают, ${totals.empty} без подходящих объявлений, ${issues.length} требуют внимания.\nОшибки доставки за всё время: ${delivery.blocked || 0} блокировок, ${counts.uncertain} неопределённых.\nЖалоб ожидает проверки: ${reports.filter(r=>r.state==='open').length}.`;
   if (cooldown>Date.now()) text += `\nTelegram ограничил отправку до ${date(new Date(cooldown).toISOString())}.`;
-  return { text, issues, sources, groups, reports };
+  const details = text;
+  const pending = reports.filter(r=>r.state==='open').length;
+  const stale = !last || !Number.isFinite(Date.parse(last.finished_at)) || Date.now()-Date.parse(last.finished_at)>7200000;
+  const stuck = running?.state==='running' && Date.now()-Date.parse(running.started_at)>1800000;
+  const health = stuck ? '⚠️ Сбор затянулся' : running?.state==='running' ? '🔄 Идёт сбор вакансий' : last?.failed ? '⚠️ Последний сбор с ошибкой' : stale ? '⚠️ Данные давно не обновлялись' : '✅ Сбор работает';
+  text = `<b>📊 Отчёт владельца</b>\n${health}\n\n`;
+  text += `<b>💼 Вакансии</b>\nВ поиске: <b>${visibleJobs(groups,defaults()).length}</b> · новых за сбор: <b>${last?.new_unique ?? '—'}</b>\n`;
+  text += `<b>📡 Источники</b>\nРаботают: ${totals.ok + totals.empty}/${sources.length} · требуют внимания: ${issues.length}\n\n`;
+  text += `<b>🔔 Последний сбор</b>\nУведомлений: ${last?.totals?.sent ?? '—'} · повторов: ${last?.new_duplicates ?? '—'}\n`;
+  text += `<b>🚩 Жалобы</b> · ${pending} ожидают проверки\n`;
+  if (last?.totals?.blocked || last?.totals?.uncertain) text += `\n⚠️ Доставка: ${last.totals.blocked || 0} блокировок · ${last.totals.uncertain || 0} неподтверждённых\n`;
+  if (cooldown>Date.now()) text += `\n⏳ Пауза отправки до ${date(new Date(cooldown).toISOString())}\n`;
+  text += `\n<i>Обновление: ${date(last?.finished_at)}</i>`;
+  return { text, details, issues, sources, groups, reports };
 }
 
 export async function ownerRoute(bot, action) {
   if (bot.uid !== OWNER_ID || bot.chat !== OWNER_ID) return bot.panel('Этот раздел доступен только владельцу бота.');
   const data = await ownerReport(bot.store);
-  if (action === 'admin') return bot.panel(data.text, [[button('🔄 Обновить','admin'),button('⚠️ Источники','admin:sources:0')],[button('🚩 Жалобы','admin:reports:0'),button('🙈 Снятые с выдачи','admin:blocked:0')],...BACK]);
+  if (action === 'admin') return bot.panel(data.text, [[button('📡 Источники','admin:sources:0'),button('🚩 Жалобы','admin:reports:0')],[button('📋 Подробности','admin:details'),button('🙈 Снятые','admin:blocked:0')],[button('🔄 Обновить','admin'),button('🏠 Меню','menu')]]);
+  if (action === 'admin:details') return bot.panel(data.details,OWNER_BACK);
   let m;
   if ((m=/^admin:sources:(\d+)$/.exec(action))) {
     const page=Math.min(Number(m[1]),Math.max(0,Math.ceil(data.issues.length/6)-1));
     const text='<b>⚠️ Источники, требующие внимания</b>\n\n'+(data.issues.slice(page*6,page*6+6).map(s=>`${safe(SOURCE_NAMES[s.id],80)} — ${STATES[s.state] || 'ошибка'}.\n${safe(s.detail,150)}\nПроверка: ${date(s.checked_at)}`).join('\n\n') || 'Проблем по последней диагностике нет.');
     const rows=[];
-    if(page) rows.push(button('← Назад',`admin:sources:${page-1}`));
-    if((page+1)*6<data.issues.length) rows.push(button('Далее →',`admin:sources:${page+1}`));
+    if(page) rows.push(button('⬅️',`admin:sources:${page-1}`));
+    if((page+1)*6<data.issues.length) rows.push(button('➡️',`admin:sources:${page+1}`));
     return bot.panel(text,[...(rows.length?[rows]:[]),...OWNER_BACK]);
   }
   if ((m=/^admin:(reports|blocked):(\d+)$/.exec(action))) {

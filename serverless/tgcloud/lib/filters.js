@@ -1,4 +1,5 @@
 import { OPTIONS, CITIES, DEFAULTS } from './config.js';
+import { sourceEnabled } from './source-policy.js';
 export const defaults = () => JSON.parse(JSON.stringify(DEFAULTS));
 export function settings(raw = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) raw = {};
@@ -36,6 +37,7 @@ export const belgradeDay = ms => Math.floor((ms + belgradeOffset(ms)) / 86400000
 export const validUrl = url => typeof url === 'string' && url.length <= 2048 && /^https?:\/\/[^\s/@<>"\\]+\/[^\s<>"\\]+$/i.test(url);
 export const contactable = j => validUrl(j.url) || Boolean(j.contacts?.length);
 export function matches(j, s, now = Date.now()) {
+  if (!sourceEnabled(j.source)) return false;
   const f = j._cloud;
   if (!f || f.quality?.reason || j._moderated || hidden(s).has(j.id) || !f.serbia || (f.expires_ms != null && f.expires_ms <= now)) return false;
   const periods = selected(s, 'freshness'), age = f.published_day == null ? null : belgradeDay(now) - f.published_day;

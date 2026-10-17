@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import re
 import unicodedata
 from zoneinfo import ZoneInfo
+from source_policy import source_enabled
 
 BELGRADE = ZoneInfo('Europe/Belgrade')
 CITY_NAMES = {
@@ -109,6 +110,7 @@ def serbia_eligible(job):
 
 
 def matches(job, settings, now=None):
+    if not source_enabled(job.get('source') or ''): return False
     now = now or datetime.now(timezone.utc)
     if job.get('id') in hidden_job_ids(settings): return False
     if not active(job, now) or not serbia_eligible(job): return False

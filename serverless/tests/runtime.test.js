@@ -4,6 +4,23 @@ import assert from 'node:assert/strict';
 import { administer, notifyOne } from '../tgcloud/lib/admin.js';
 import { settings, defaults, matches, contains, belgradeDay } from '../tgcloud/lib/filters.js';
 import { card, clip } from '../tgcloud/lib/ui.js';
+test('excluded sources stay out of search and notification matching even with legacy user settings', () => {
+  for (const source of ['telegram_python_jobs','telegram_vacancies_worldwide','halooglasi','infostud']) {
+    assert(!matches(job(1,{source}), {...defaults(),sources:[source]}));
+  }
+  for (const source of ['tg_rabotavserbii','tg_radim_serbia','telegram_youritjob','poslovi']) {
+    assert(matches(job(1,{source}), {...defaults(),sources:[]}));
+  }
+});
+test('existing excluded publications do not send notifications', async () => {
+  const f=await fixture();
+  await handle(f,message(1,'/start'));
+  await f.store.patch(1,{notifications:'instant',notifications_after_id:0});
+  await f.store.putJob(job(1,{source:'telegram_python_jobs'}),true);
+  f.api.sent.length=0;
+  await notifyOne(f.store,f.api,1);
+  assert.equal(f.api.sent.length,0);
+});
 test('filters: Unicode word boundaries and Belgrade DST calendar', () => {
   assert(contains('Требуется ПОВАР','повар')); assert(!contains('повариха','повар')); assert(contains('Niš','nis')); assert(!contains('business','nis'));
   assert.equal(belgradeDay(Date.parse('2026-03-29T22:30Z')), Math.floor(Date.parse('2026-03-30T00:00Z')/86400000));

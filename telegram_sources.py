@@ -7,6 +7,7 @@ from filters import CITY_NAMES, active, freshness_matches, normalize, serbia_eli
 from job_metadata import enrich, remote_fact, text_salary
 from sources import FetchError, Job, _status, safe_date
 from job_quality import quality_reason
+from source_policy import validate_channel_page
 
 MAX_PAGES = 2
 MAX_POSTS = 60
@@ -120,6 +121,8 @@ def collect_channel(source, fetcher):
     try:
         for _ in range(MAX_PAGES):
             html, _ = fetcher.get(url)
+            if not pages:
+                validate_channel_page(html)
             parser = ChannelPage(source.telegram_channel)
             parser.feed(html)
             pages += 1

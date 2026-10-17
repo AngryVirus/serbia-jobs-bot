@@ -47,7 +47,10 @@ test('owner-only reports and moderation enforce authorization even for forged ca
   await handle(f,callback(2,'admin:block:1')); assert.equal((await f.store.records('moderation')).length,0);
   assert(f.api.edited.at(-1).text.includes('только владельцу'));
   await handle(f,message(OWNER_ID,'/start')); assert(JSON.stringify(f.api.sent.at(-1)).includes('Отчёт владельца'));
-  await handle(f,message(OWNER_ID,'/admin')); assert(f.api.sent.at(-1).text.includes('Каталог:'));
+  await handle(f,message(OWNER_ID,'/admin')); assert(f.api.sent.at(-1).text.includes('💼 Вакансии'));
+  assert(f.api.sent.at(-1).text.length < 1000);
+  await handle(f,callback(OWNER_ID,'admin:details')); assert(f.api.edited.at(-1).text.includes('Каталог:'));
+  await handle(f,callback(2,'admin:details')); assert(f.api.edited.at(-1).text.includes('только владельцу'));
 });
 
 test('moderation removes every copy from search and notifications; restore retains delivery history',async()=>{
@@ -102,19 +105,20 @@ test('collection report records completion, counts, sources and uncertain delive
   const previous=job(1,{source:'tg_rabotavserbii',url:'https://t.me/rabotavserbii/1'});
   await f.store.putJob(previous,true);
   await administer({operation:'collection_begin',owner},{ownerRun:true},f);
-  await administer({operation:'collect',owner,source:'telegram_serbia_jobs',jobs:[job(2,{source:'telegram_serbia_jobs',url:previous.url})],status:{state:'error',detail:'Источник отвечает ошибкой',checked_at:new Date().toISOString()}},{ownerRun:true},f);
+  await administer({operation:'collect',owner,source:'telegram_youritjob',jobs:[job(2,{source:'telegram_youritjob',url:previous.url})],status:{state:'error',detail:'Источник отвечает ошибкой',checked_at:new Date().toISOString()}},{ownerRun:true},f);
   await administer({operation:'collect',owner,source:'tg_radim_serbia',jobs:[job(3,{source:'tg_radim_serbia',url:'https://t.me/radim_serbia/3'})],status:{state:'ok',checked_at:new Date().toISOString()}},{ownerRun:true},f);
   await f.db.run("INSERT INTO sjc_deliveries(user_id,job_id,state,payload) VALUES(1,3,'blocked',:payload)",{':payload':JSON.stringify({user_id:1,job_id:3,delivered_at:new Date().toISOString()})});
   await administer({operation:'collection_end',owner,failed:false,totals:{sources:2,added:2,sent:0,uncertain:1}},{ownerRun:true},f);
   const report=await ownerReport(f.store);
-  assert(report.text.includes('Новых доступных вакансий: 1'));
-  assert(report.text.includes('повторов за сбор: 1'));
-  assert(report.text.includes('Ошибки доставки за сбор: 1 блокировок, 1 неопределённых отправок'));
-  assert(report.text.includes('Последний завершённый сбор:'));
-  const failedSource=report.issues.findIndex(s=>s.id==='telegram_serbia_jobs'&&s.state==='error');
+  assert(report.text.includes('новых за сбор: <b>1</b>'));
+  assert(report.details.includes('повторов за сбор: 1'));
+  assert(report.details.includes('Ошибки доставки за сбор: 1 блокировок, 1 неопределённых отправок'));
+  assert(report.details.includes('Последний завершённый сбор:'));
+  const failedSource=report.issues.findIndex(s=>s.id==='telegram_youritjob'&&s.state==='error');
+  assert(!report.sources.some(s=>s.id==='halooglasi'||s.id==='telegram_python_jobs'));
   assert(failedSource>=0);
   await handle(f,callback(OWNER_ID,`admin:sources:${Math.floor(failedSource/6)}`));
-  assert(f.api.edited.at(-1).text.includes('Telegram · Serbia IT Jobs — ошибка.'));
+  assert(f.api.edited.at(-1).text.includes('Telegram · IT Работа: Сербия и удалёнка — ошибка.'));
   assert(!report.text.includes(String(OWNER_ID)));
   await assert.rejects(administer({operation:'collection_end',owner:'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'},{ownerRun:true},f),/owner mismatch/);
 });

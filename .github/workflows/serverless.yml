@@ -5,7 +5,7 @@ on:
       action:
         description: Operation (stage preserves current bot; cutover switches it)
         type: choice
-        options: [check, deploy, stage, cutover, preview, collect, pause, resume]
+        options: [check, sources, deploy, stage, cutover, preview, collect, pause, resume]
         default: check
       legacy_stopped:
         description: Render is suspended AND the old Check Serbia jobs workflow is disabled
@@ -47,6 +47,7 @@ jobs:
           LEGACY_STOPPED: ${{ inputs.legacy_stopped }}
         run: |
           case "$CLOUD_ACTION" in
+            sources) python3 tools/check_sources.py ;;
             deploy)
               python3 serverless/deploy.py
               python3 serverless/refresh_facts.py

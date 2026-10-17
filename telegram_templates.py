@@ -13,6 +13,7 @@ from job_metadata import enrich, remote_fact
 from location_links import google_maps_url
 from sources import FetchError, Job, PageParser, _status, canonical_url
 from job_quality import quality_reason
+from source_policy import validate_channel_page
 
 
 VOID = {'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'}
@@ -192,6 +193,8 @@ def collect_telegram(source, fetcher):
             if not _preview_url(source, url):
                 raise FetchError('unsupported', 'Неподдерживаемая ссылка публичной ленты Telegram.')
             html, final_url = fetcher.get(url)
+            if not seen_pages:
+                validate_channel_page(html)
             seen_pages.add(url)
             if not _preview_url(source, final_url):
                 raise FetchError('unsupported', 'Публичная лента канала недоступна; вход не выполняется.')

@@ -19,13 +19,13 @@ export function summary(s, compact = false) {
   const lines = [];
   for (const [field, title] of Object.entries(TITLES)) {
     const values = selected(s, field), active = !values.includes('any');
-    if (active || !compact || ['city','residence_permit'].includes(field)) lines.push(`${label(title)}: ${safe(values.map(x => label(OPTIONS[field][x] || x)).join(' · '), 230)}`);
+    if (active || !compact || ['city','residence_permit'].includes(field)) lines.push(`<b>${escape(title)}:</b> ${safe(values.map(x => label(OPTIONS[field][x] || x)).join(' · '), 230)}`);
   }
-  for (const [field, title] of [['keywords', 'Ключевые слова'], ['exclusions', 'Исключения']]) {
-    if (s[field]?.length || !compact) lines.push(`${title}: ${safe(s[field]?.join(', ') || 'Нет', compact ? 90 : 950)}`);
+  for (const [field, title] of [['keywords', '🔎 Ключевые слова'], ['exclusions', '🚫 Исключения']]) {
+    if (s[field]?.length || !compact) lines.push(`<b>${title}:</b> ${safe(s[field]?.join(', ') || 'Нет', compact ? 90 : 950)}`);
   }
-  if (s.min_salary != null || !compact) lines.push(`Зарплата: ${s.min_salary != null ? safe(`от ${s.min_salary} ${s.currency} / месяц`, 100) : 'Любая'}`);
-  if (s.include_unknown_salary === false || !compact) lines.push(s.include_unknown_salary === false ? 'Без зарплаты: скрывать' : 'Без зарплаты: показывать');
+  if (s.min_salary != null || !compact) lines.push(`<b>💶 Зарплата:</b> ${s.min_salary != null ? safe(`от ${s.min_salary} ${s.currency} / месяц`, 100) : 'Любая'}`);
+  if (s.include_unknown_salary === false || !compact) lines.push('<b>💶 Без зарплаты:</b> ' + (s.include_unknown_salary === false ? 'скрывать' : 'показывать'));
   return lines.join('\n');
 }
 export function menu(s, hiddenCount = hidden(s).size) {

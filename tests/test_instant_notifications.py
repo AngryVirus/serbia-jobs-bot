@@ -83,7 +83,7 @@ class InstantNotificationTests(unittest.IsolatedAsyncioTestCase):
         from test_telegram_sources import DATE
         post = {'id': 123, 'date': DATE, 'text':
                 'Вакансия\nPython developer\nBeograd\nEnglish required\nAddress: Knez Mihailova 12'}
-        job = post_job(SOURCES['telegram_serbia_jobs'], post)
+        job = post_job(SOURCES['telegram_youritjob'], post)
         with tempfile.TemporaryDirectory() as directory:
             for store in (Store(Path(directory) / 'telegram.db'), MemorySupabaseStore()):
                 api = FakeAPI(); bot = Bot(api, store)
@@ -92,7 +92,7 @@ class InstantNotificationTests(unittest.IsolatedAsyncioTestCase):
                 store.save_jobs([job])
                 await bot.notify()
                 self.assertEqual(len(api.sent), 1)
-                self.assertIn('https://t.me/serbia_jobs/123', api.sent[0]['text'])
+                self.assertIn('https://t.me/youritjob/123', api.sent[0]['text'])
                 self.assertIn('Google Maps', str(api.sent[0]['rows']))
                 # Editing a source post preserves identity and delivery history.
                 job.description += '\nSalary: 2000 EUR / month'

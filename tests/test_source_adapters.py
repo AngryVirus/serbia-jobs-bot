@@ -43,8 +43,12 @@ class PageAdapterTests(unittest.TestCase):
         self.assertEqual(job.location, 'Beograd')
         self.assertIsNone(job.country)
         self.assertEqual(job.expires_at, '2026-11-13T08:00:00Z')
-        self.assertTrue(matches(asdict(job), dict(default_settings(), freshness=['today'], residence_permit=['no']),
+        # Adapter remains testable for a future recheck, but this blocked source
+        # is excluded from live search by the reviewed source policy.
+        self.assertFalse(matches(asdict(job), dict(default_settings(), freshness=['today'], residence_permit=['no']),
                                 datetime(2026, 10, 14, 12, tzinfo=timezone.utc)))
+        from filters import freshness_matches
+        self.assertTrue(freshness_matches(asdict(job), 'today', datetime(2026, 10, 14, 12, tzinfo=timezone.utc)))
         renewed = extract_jobs(SOURCES['halooglasi'], halo(ValidToProlonged='2026-12-13T08:00:00Z'), HALO_URL)[0]
         self.assertEqual(renewed.expires_at, '2026-12-13T08:00:00Z')
 
