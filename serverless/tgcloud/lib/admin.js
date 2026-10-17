@@ -3,6 +3,7 @@ import { settings, contains, belgradeDay } from './filters.js';
 import { groupJobs, visibleJobs, hiddenGroups } from './catalog.js';
 import { SOURCE_NAMES } from './config.js';
 import { sourceEnabled } from './source-policy.js';
+import { adTick } from './ads.js';
 import { ownerReport, OWNER_ID, notifyReports } from './owner.js';
 import { card, jobButtons, menu, translatedCard } from './ui.js';
 export async function notifyOne(store, api, uid) {
@@ -53,6 +54,7 @@ export async function administer(input, ctx, deps) {
   const me = await deps.api.getMe();
   assert(me.is_bot && me.id === 8802394224 && me.username?.toLowerCase() === 'serbiajobsbot', 'Wrong bot; stopped');
   const store = new Store(deps.db), op = input?.operation;
+  if(op==='ads_tick') return adTick(store,deps.api);
   if (op === 'init') {
     await store.init();
     assert(contains('Русский повар','повар') && !contains('повариха','повар'), 'Runtime Unicode mismatch');
@@ -75,6 +77,9 @@ export async function administer(input, ctx, deps) {
     return {sample_source:sample?.source,requests,failed:result?.failed ?? true,preview:result&&!result.failed?result.text.slice(0,250):null};
   }
   if (op === 'audit') {
+    assert(typeof deps.api.sendPhoto==='function','Photo sending is unavailable in this runtime');
+    const sql=await store.db.get("SELECT json_extract(json_object('enabled',1),'$.enabled') AS enabled,printf('%020d',42) AS key");
+    assert(sql.enabled===1 && sql.key==='00000000000000000042','Advertising queue SQL unsupported');
     const start = Date.now(), jobs = await store.jobs(), groups = groupJobs(jobs);
     const visible = visibleJobs(groups, settings());
     for (const job of jobs) {

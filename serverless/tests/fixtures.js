@@ -11,7 +11,7 @@ export function sqlite() {
 export function telegram() {
   const sent = [], edited = [];
   return { sent, edited, async getMe() { return { id: 8802394224, is_bot:true, username:'SerbiaJobsBot' }; }, async getChat() { return { id:340780041, type:'private', username:'AngryVirus' }; },
-    async sendMessage(p) { sent.push(p); return { message_id:sent.length }; }, async editMessageText(p) { edited.push(p); }, async answerCallbackQuery() {} };
+    async sendMessage(p) { sent.push(p); return { message_id:sent.length }; }, async sendPhoto(p) { sent.push(p); return { message_id:sent.length }; }, async editMessageText(p) { edited.push(p); }, async answerCallbackQuery() {} };
 }
 export const job = (id, extra = {}) => ({ id,source:'tg_rabotavserbii',url:`https://t.me/rabotavserbii/${id}`,title:'Повар <&>',description:'Нужен повар. Адрес: Knez Mihailova 12',location:'Beograd',salary_min:1200,salary_currency:'EUR',salary_period:'month',remote:false,
   _cloud:{ version:1,serbia:true,languages:['ru'],required_languages:[],permit:null,published_ms:null,published_day:null,date_only:false,expires_ms:null,date_label:null,address:'Knez Mihailova 12',map_url:'https://www.google.com/maps/search/?api=1&query=Knez+Mihailova+12',location_url:null }, ...extra });

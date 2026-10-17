@@ -88,7 +88,7 @@ export async function ownerReport(store) {
 export async function ownerRoute(bot, action) {
   if (bot.uid !== OWNER_ID || bot.chat !== OWNER_ID) return bot.panel('Этот раздел доступен только владельцу бота.');
   const data = await ownerReport(bot.store);
-  if (action === 'admin') return bot.panel(data.text, [[button('📡 Источники','admin:sources:0'),button('🚩 Жалобы','admin:reports:0')],[button('📋 Подробности','admin:details'),button('🙈 Снятые','admin:blocked:0')],[button('🔄 Обновить','admin'),button('🏠 Меню','menu')]]);
+  if (action === 'admin') return bot.panel(data.text, [[button('📣 Реклама','ads')],[button('📡 Источники','admin:sources:0'),button('🚩 Жалобы','admin:reports:0')],[button('📋 Подробности','admin:details'),button('🙈 Снятые','admin:blocked:0')],[button('🔄 Обновить','admin'),button('🏠 Меню','menu')]]);
   if (action === 'admin:details') return bot.panel(data.details,OWNER_BACK);
   let m;
   if ((m=/^admin:sources:(\d+)$/.exec(action))) {

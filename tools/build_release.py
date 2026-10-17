@@ -19,7 +19,7 @@ if probe.is_dir():
 cloud = root/'serverless'
 if cloud.is_dir():
     files += [cloud/name for name in ('README.md', 'package.json', 'package-lock.json',
-        'tgcloud.jsonc', 'bridge.mjs', 'cloud.py', 'enrich_jobs.py', 'migrate.py', 'collect.py', 'deploy.py', 'refresh_facts.py')]
+        'tgcloud.jsonc', 'bridge.mjs', 'cloud.py', 'enrich_jobs.py', 'migrate.py', 'collect.py', 'deploy.py', 'refresh_facts.py', 'ads_worker.py')]
     for directory in ('tgcloud', 'tests'):
         files += [p for p in (cloud/directory).rglob('*.js') if p.is_file()]
 files=sorted(set(files),key=lambda p:str(p.relative_to(root)))

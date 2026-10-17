@@ -3,6 +3,7 @@ import { settings, defaults, choose, hidden, validUrl } from './filters.js';
 import { groupJobs, visibleJobs, hiddenGroups, includesId, decorate } from './catalog.js';
 import { Store, positive } from './store.js';
 import { OWNER_ID, complaint, ownerRoute } from './owner.js';
+import { adRoute, adInput } from './ads.js';
 import { button, BACK, safe, menu, filtersPanel, choicePanel, emptyText, jobButtons, translatedCard, viewerButtons, browserUrl, cardActions } from './ui.js';
 const PROMPTS = { keywords: 'Введите слова или фразы через запятую. Достаточно совпадения одного. «-» — очистить.', exclusions: 'Введите исключения через запятую. «-» — очистить.', salary: 'Введите минимальную зарплату в месяц: 1000 EUR или 120000 RSD. «-» — снять фильтр.' };
 export class Bot {
@@ -17,7 +18,7 @@ export class Bot {
   }
   async patch(fields) { this.s = await this.store.patch(this.uid, fields); }
   async notifications() {
-    await this.panel('<b>🔔 Уведомления</b>\n\nНовая вакансия по вашим фильтрам придёт сразу после обнаружения. Проверка источников запускается примерно каждые 30 минут; запуск может задержаться. Старый каталог при включении не рассылается. Уже отправленные вакансии не повторяются.', [[button(this.s.notifications === 'off' ? '🔔 Включить' : '🔕 Выключить', this.s.notifications === 'off' ? 'notify:instant' : 'notify:off')], ...BACK]);
+    await this.panel('<b>🔔 Уведомления</b>\n\nНовая вакансия по вашим фильтрам придёт сразу после обнаружения. Проверка источников запускается примерно каждые 30 минут; запуск может задержаться. Старый каталог при включении не рассылается. Уже отправленные вакансии не повторяются.', [[button(this.s.notifications === 'off' ? '🔔 Включить' : '🔕 Выключить', this.s.notifications === 'off' ? 'notify:instant' : 'notify:off')], [button(this.s.ads_enabled===false?'📣 Включить рекламу':'🔕 Отключить рекламу',this.s.ads_enabled===false?'ads:on':'ads:off')], ...BACK]);
   }
   async input(text) {
     const field = this.s.pending_input; let patch;
@@ -108,6 +109,7 @@ export class Bot {
   }
   async route(action) {
     if (typeof action !== 'string') return this.home();
+    if(action==='ads'||action.startsWith('ads:')) return adRoute(this,action);
     action = action.replace(/^(choose|set):freshness:(today|yesterday)(?=:|$)/, '$1:freshness:7');
     if (action === 'menu' || action === 'start' || action === 'cancel') return this.home();
     if (action === 'filters') return this.panel(...filtersPanel(this.s));
@@ -158,9 +160,11 @@ export class Bot {
       claimed = await this.store.claimUpdate(key);
       if (!claimed) return;
       this.s = settings((await this.store.ensure(this.uid,this.chat)).settings);
+      if(this.s.bot_blocked) await this.patch({bot_blocked:false});
       let action;
       if (callback) { action = callback.data || ''; if (this.s.pending_input) await this.patch({ pending_input: null }); }
       else {
+        if(await adInput(this,message)) {await this.store.finishUpdate(key);return;}
         const text = message.text;
         if (typeof text !== 'string' || !text.trim()) { await this.store.finishUpdate(key); return; }
         if ([...text].length > 1000) { await this.panel('Пожалуйста, сократите сообщение до 1000 символов.'); await this.store.finishUpdate(key); return; }
