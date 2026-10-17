@@ -3,7 +3,7 @@ import { selected, hidden, validUrl } from './filters.js';
 import { catalogDiagnostics } from './catalog.js';
 import { translateVacancy } from './translation.js';
 export const button = (text, callback_data) => ({ text, callback_data });
-export const BACK = [[button('Меню', 'menu')]];
+export const BACK = [[button('🏠 Меню', 'menu')]];
 const label = value => String(value).replace(/^[^\p{L}\p{N}]+/u, '');
 export const escape = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
 export function clip(value, limit, lines = false) {
@@ -31,19 +31,19 @@ export function summary(s, compact = false) {
 export function menu(s, hiddenCount = hidden(s).size) {
   const on = s.notifications !== 'off';
   return ['<b>Работа в Сербии</b>\n\n<b>Условия поиска</b>\n<blockquote>' + summary(s, true) + '</blockquote>\n\n<b>Ваши настройки</b>\nУведомления: ' + (on ? 'включены' : 'выключены') + `\nСкрытые вакансии: ${hiddenCount}\n\n<i>Откройте вакансии или измените условия поиска.</i>`,
-    [[button('Найти вакансии', 'search:0')], [button('Фильтры', 'filters'), button(on ? 'Уведомления ✓' : 'Уведомления —', on ? 'notify:off' : 'notify:instant')], [button('Скрытые', 'hidden:0'), button('Помощь', 'help')]]];
+    [[button('🔎 Найти вакансии', 'search:0')], [button('⚙️ Фильтры', 'filters'), button(on ? '🔔 Уведомления ✓' : '🔕 Уведомления —', on ? 'notify:off' : 'notify:instant')], [button('🙈 Скрытые', 'hidden:0'), button('💬 Помощь', 'help')]]];
 }
 export function filtersPanel(s) {
   return ['<b>Фильтры поиска</b>\n\n<blockquote>' + summary(s) + '</blockquote>\n\n<i>Выберите параметр ниже. Изменения сохраняются сразу.</i>',
-    [[button('Ключевые слова', 'input:keywords'), button('Исключения', 'input:exclusions')], [button('Города', 'city'), button('Формат', 'remote')], [button('Языки', 'language'), button('Зарплата', 'input:salary')], [button('Свежесть', 'freshness'), button('ВНЖ', 'residence_permit')], [button('Без зарплаты: ' + (s.include_unknown_salary ? 'показывать' : 'скрывать'), 'toggle_salary')], [button('Найти вакансии', 'search:0'),button('Сбросить', 'reset')], ...BACK]];
+    [[button('🔎 Ключевые слова', 'input:keywords'), button('🚫 Исключения', 'input:exclusions')], [button('📍 Города', 'city'), button('💻 Формат', 'remote')], [button('🗣 Языки', 'language'), button('💶 Зарплата', 'input:salary')], [button('🕒 Свежесть', 'freshness'), button('🪪 ВНЖ', 'residence_permit')], [button('💶 Без зарплаты: ' + (s.include_unknown_salary ? 'показывать' : 'скрывать'), 'toggle_salary')], [button('🔎 Найти вакансии', 'search:0'),button('↩️ Сбросить', 'reset')], ...BACK]];
 }
 export function choicePanel(s, field) {
   const values = selected(s, field), single = field === 'residence_permit';
   let text = `<b>${label(TITLES[field])}</b>\n\n<blockquote>Выбрано: ${safe(values.map(x => label(OPTIONS[field][x] || x)).join(' · '), 250)}</blockquote>\n\n` + (single ? 'Выберите один вариант. ' : 'Можно отметить несколько вариантов. Подойдёт любой из выбранных. ') + 'Изменения сохраняются сразу.';
   text += ({ freshness: '\n«7 дней» включает сегодня и вчера. Объявления без даты доступны при выборе «Не важно».', language: '\nУчитываются явно указанные языковые требования, а не язык объявления.', remote: '\nЕсли формат не указан, выберите «Любой формат».', residence_permit: '\n\n<b>Да</b> — ВНЖ обязателен.\n<b>Нет</b> — явно указано, что ВНЖ не требуется.\n<b>Не важно</b> — все вакансии. Помощь с оформлением сама по себе не означает, что можно работать без ВНЖ.' })[field] || '';
-  const choices=Object.entries(OPTIONS[field]).map(([value, title]) => button((values.includes(value) ? '✓ ' : '') + label(title), `choose:${field}:${value}:${!single && values.includes(value) && value !== 'any' ? 0 : 1}`));
+  const choices=Object.entries(OPTIONS[field]).map(([value, title]) => button((values.includes(value) ? '✅ ' : '') + title, `choose:${field}:${value}:${!single && values.includes(value) && value !== 'any' ? 0 : 1}`));
   const rows=[]; for(let i=0;i<choices.length;i+=2) rows.push(choices.slice(i,i+2));
-  return [text, [...rows, [button('Готово', 'filters'),button('Меню','menu')]]];
+  return [text, [...rows, [button('✅ Готово', 'filters'),button('🏠 Меню','menu')]]];
 }
 export function emptyText(jobs, s) {
   const d = catalogDiagnostics(jobs, s);
@@ -79,17 +79,17 @@ export function card(j, expanded = false) {
   return lines.join('\n');
 }
 export function links(j, report = false) {
-  const rows = validUrl(j.url) ? [[{ text: 'Открыть объявление ↗', url: j.url }]] : [];
+  const rows = validUrl(j.url) ? [[{ text: '🔗 Открыть объявление', url: j.url }]] : [];
   if (report) rows.push([button('🚩 Пожаловаться',`report:${j.id}`)]);
   return rows;
 }
 export const browserUrl = j => 'https://translate.google.com/translate?sl=auto&tl=ru&u=' + encodeURIComponent(j.url);
 export function jobButtons(j, mode = 's') {
-  return [...links(j), [button(mode.endsWith('f') ? 'Свернуть' : 'Подробнее', `job:${j.id}:${mode.startsWith('r') ? 'ru_' : ''}${mode.endsWith('f') ? 'short' : 'full'}`), button('⋯ Ещё',`actions:${j.id}:-1:${mode}`)], [button('Вакансии', 'search:0'), button('Меню', 'menu')]];
+  return [...links(j), [button(mode.endsWith('f') ? '🔼 Свернуть' : '🔽 Подробнее', `job:${j.id}:${mode.startsWith('r') ? 'ru_' : ''}${mode.endsWith('f') ? 'short' : 'full'}`), button('☰ Ещё',`actions:${j.id}:-1:${mode}`)], [button('🔎 Вакансии', 'search:0'), button('🏠 Меню', 'menu')]];
 }
 export function viewerButtons(j, index, count, mode, failed) {
   const b = (label, action) => button(label, `view:${j.id}:${index}:${action}:${mode}`);
-  const rows = [...links(j), [b(mode.endsWith('f') ? 'Свернуть' : 'Подробнее', 'details'), button('⋯ Ещё',`actions:${j.id}:${index}:${mode}`)]];
+  const rows = [...links(j), [b(mode.endsWith('f') ? '🔼 Свернуть' : '🔽 Подробнее', 'details'), button('☰ Ещё',`actions:${j.id}:${index}:${mode}`)]];
   if (failed && validUrl(j.url)) rows.push([{ text: '🌐 Перевести в браузере', url: browserUrl(j) }]);
   const nav = [];
   if (index) nav.push(b('⬅️', 'prev'));
@@ -102,10 +102,10 @@ export function cardActions(j, index, mode) {
   const back=standalone ? `job:${j.id}:${mode.startsWith('r')?'ru_':''}${mode.endsWith('f')?'full':'short'}` : `view:${j.id}:${index}:show:${mode}`;
   const translate=standalone ? `job:${j.id}:${mode.startsWith('r')?'':'ru_'}${mode.endsWith('f')?'full':'short'}` : `view:${j.id}:${index}:translate:${mode}`;
   return ['<b>Действия с вакансией</b>\n\n'+safe(j.title,140),[
-    [button(mode.startsWith('r')?'Оригинал':'Перевести',translate),button('Скрыть',standalone?`hide:${j.id}`:`view:${j.id}:${index}:hide:${mode}`)],
-    [button('Пожаловаться',`report:${j.id}:choose:${index}:${mode}`)],
-    [button('Фильтры','filters'),button('Меню','menu')],
-    [button('↩ К вакансии',back)],
+    [button(mode.startsWith('r')?'🌐 Оригинал':'🇷🇺 Перевести',translate),button('🙈 Скрыть',standalone?`hide:${j.id}`:`view:${j.id}:${index}:hide:${mode}`)],
+    [button('🚩 Пожаловаться',`report:${j.id}:choose:${index}:${mode}`)],
+    [button('⚙️ Фильтры','filters'),button('🏠 Меню','menu')],
+    [button('↩️ К вакансии',back)],
   ]];
 }
 export async function translatedCard(j, mode, fetch, store) {

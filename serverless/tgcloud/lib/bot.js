@@ -40,7 +40,7 @@ export class Bot {
   async home() {
     const count = hidden(this.s).size ? hiddenGroups(groupJobs(await this.store.jobs()), this.s).length : 0;
     const [text,rows] = menu(this.s,count);
-    if (this.uid === OWNER_ID) rows.push([button('Отчёт владельца','admin')]);
+    if (this.uid === OWNER_ID) rows.push([button('📊 Отчёт владельца','admin')]);
     return this.panel(text,rows);
   }
   async hiddenPanel(page = 0) {
