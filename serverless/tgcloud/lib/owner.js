@@ -9,6 +9,29 @@ const OWNER_BACK = [[button('📊 Отчёт владельца', 'admin')], ...
 const date = value => Number.isFinite(Date.parse(value)) ? new Date(Date.parse(value)+belgradeOffset(Date.parse(value))).toISOString().replace('T',' ').slice(0,16) + ' (Белград)' : 'нет данных';
 const STATES = { ok:'работает', empty:'нет подходящих объявлений', partial:'частичный сбор', blocked:'доступ заблокирован', robots_disallowed:'автосбор запрещён', unsupported:'нет доступной ленты', requires_permission:'нужно разрешение', excluded:'не подходит название канала', error:'ошибка', unknown:'не проверен' };
 
+export async function notifyReports(store, api) {
+  const pending=(await store.records('report')).filter(r=>r.state==='open' && r.owner_notice==='pending' && !(r.notice_after>Date.now())).slice(0,5);
+  for (const report of pending) {
+    const key=`${report.user_id}:${report.group_id}`, claimed={...report,owner_notice:'sending'};
+    const update=async (before,after)=>store.db.run("UPDATE sjc_records SET payload=:next WHERE kind='report' AND record_key=:key AND payload=:old",{':next':JSON.stringify(after),':key':key,':old':JSON.stringify(before)});
+    if ((await update(report,claimed)).rowsAffected!==1) continue;
+    let next={...claimed,owner_notice:'sent'};
+    try {
+      const message=await api.sendMessage({chat_id:OWNER_ID,parse_mode:'HTML',link_preview_options:{is_disabled:true},
+        text:'<b>🚩 Новая жалоба на вакансию</b>\n\n'+safe(report.job_title || 'Вакансия',140)+'\n<b>Причина:</b> '+safe(REASONS[report.reason] || 'Другая причина',80),
+        reply_markup:{inline_keyboard:[[button('🔎 Рассмотреть',`admin:review:${report.job_id}`)]]}});
+      if (!Number.isSafeInteger(message?.message_id) || message.message_id<=0) throw new Error('Unconfirmed owner notice');
+    } catch (error) {
+      next.owner_notice=error.code===429?'pending':error.code===403?'blocked':'uncertain';
+      if(error.code===429) next.notice_after=Date.now()+Math.min(3600,Math.max(5,Number(error.parameters?.retry_after)||60))*1000;
+    }
+    // A concurrent moderation decision must not be overwritten. An ambiguous
+    // send is retained, never automatically repeated.
+    await update(claimed,next);
+    if(next.owner_notice==='pending') break;
+  }
+}
+
 export async function complaint(bot, id, reason, index=-1, mode='s') {
   const group = groupJobs(await bot.store.jobs()).find(g => includesId(g,id));
   if (!group) return bot.panel('Объявление больше не найдено.');
@@ -19,10 +42,11 @@ export async function complaint(bot, id, reason, index=-1, mode='s') {
   const exists = previous.some(r=>includesId(group,r.job_id)||includesId(group,r.group_id));
   if (!exists && previous.filter(r=>Date.now()-Date.parse(r.created_at)<86400000).length>=20) return bot.panel('Можно отправить до 20 жалоб за сутки. Попробуйте позже.',BACK);
   const key = `${bot.uid}:${group.id}`;
-  const record = { user_id: bot.uid, job_id: id, group_id: group.id, reason, state: 'open', created_at: new Date().toISOString() };
+  const record = { user_id: bot.uid, job_id: id, group_id: group.id, reason, state: 'open', created_at: new Date().toISOString(), owner_notice:'pending',job_title:group.members.find(j=>j.id===id)?.title || group.members[0].title };
   // One complaint per person and recognized vacancy, even on replay/another copy.
   if (!exists) await bot.store.db.run("INSERT INTO sjc_records(kind,record_key,payload) VALUES('report',:key,:payload) ON CONFLICT(kind,record_key) DO NOTHING", { ':key':key, ':payload':JSON.stringify(record) });
   await bot.patch({ hidden_jobs: [...new Set([...(bot.s.hidden_jobs || []),group.id])] });
+  await notifyReports(bot.store,bot.api);
   return bot.panel('Спасибо. Жалоба сохранена для проверки владельцем. Вакансия и распознанные копии скрыты из вашей подборки.', [[button('🔎 Продолжить поиск',index===-1?'search:0':`view:${id}:${index}:show:s`),button('↩️ Вернуть',`restore:${id}`)], ...BACK]);
 }
 
@@ -75,16 +99,17 @@ export async function ownerRoute(bot, action) {
     if((page+1)*6<data.issues.length) rows.push(button('➡️',`admin:sources:${page+1}`));
     return bot.panel(text,[...(rows.length?[rows]:[]),...OWNER_BACK]);
   }
-  if ((m=/^admin:(reports|blocked):(\d+)$/.exec(action))) {
+  if ((m=/^admin:(reports|blocked|review):(\d+)$/.exec(action))) {
     const blocked=m[1]==='blocked';
     const groups=data.groups.filter(g=>blocked ? g.members.some(j=>j._moderated) : data.reports.some(r=>r.state==='open' && (includesId(g,r.job_id)||includesId(g,r.group_id))));
-    const index=Math.min(Number(m[2]),Math.max(0,groups.length-1)), group=groups[index];
+    const index=m[1]==='review'?groups.findIndex(g=>includesId(g,Number(m[2]))):Math.min(Number(m[2]),Math.max(0,groups.length-1)), group=groups[index];
     if(!group) return bot.panel(blocked?'Снятых с выдачи вакансий нет.':'Новых жалоб нет.',OWNER_BACK);
     const reports=data.reports.filter(r=>r.state==='open' && (includesId(group,r.job_id)||includesId(group,r.group_id)));
     const reasons=[...new Set(reports.map(r=>REASONS[r.reason] || 'Другая причина'))].join('; ');
     const text=`<b>${blocked?'🙈 Снятые с выдачи':'🚩 Жалобы'} · ${index+1}/${groups.length}</b>\n${safe(reasons,180)}${reports.length ? ` · ${reports.length} жалоб` : ''}\n\n`+card(group.members[0],true);
     const rows=[...links(group.members[0],false), blocked ? [button('↩️ Вернуть в выдачу',`admin:restore:${group.id}`)] : [button('Убрать из выдачи',`admin:block:${group.id}`),button('Оставить',`admin:keep:${group.id}`)]];
-    const nav=[]; if(index) nav.push(button('← Назад',`admin:${m[1]}:${index-1}`)); if(index+1<groups.length) nav.push(button('Далее →',`admin:${m[1]}:${index+1}`));
+    const route=blocked?'blocked':'reports';
+    const nav=[]; if(index>0) nav.push(button('⬅️',`admin:${route}:${index-1}`)); if(index+1<groups.length) nav.push(button('➡️',`admin:${route}:${index+1}`));
     return bot.panel(text,[...rows,...(nav.length?[nav]:[]),...OWNER_BACK]);
   }
   if ((m=/^admin:(block|keep|restore):([1-9]\d*)$/.exec(action))) {

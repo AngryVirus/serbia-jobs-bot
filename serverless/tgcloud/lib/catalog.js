@@ -2,6 +2,7 @@
 // No Node/DOM globals: this also runs in Telegram's JavaScript isolate.
 import { CITIES, OPTIONS } from './config.js';
 import { normalize, hidden, contactable, matches, RESETS, selected } from './filters.js';
+import { sourceEnabled } from './source-policy.js';
 
 const decode = value => { try { return decodeURIComponent(value.replace(/\+/g, ' ')); } catch { return value; } };
 export function canonicalUrl(value) {
@@ -49,6 +50,18 @@ function applicationLinks(j) {
     .filter(url => /^(?:ovdejobs\.com\/(?:.*[?&]p=\d+|(?:job|jobs)\/[^?]+)|radim\.rs\/jobs\/[^?]+|(?:poslovi\.)?infostud\.com\/posao\/[^?]+|klikdoposla\.com\/oglasi\/\d+[^?]*|t\.me\/[^/]+\/\d+)(?:\?.*)?$/.test(url));
 }
 
+// Verified publisher templates link to one exact vacancy, even when the
+// Telegram teaser uses a shorter title, salary or city than the website.
+function publisherOriginal(j) {
+  const publishers = { tg_radim_serbia: ['t.me/radim_serbia/', /^radim\.rs\/jobs\/[^/?#]+(?:\?.*)?$/],
+    tg_rabotavserbii: ['t.me/rabotavserbii/', /^ovdejobs\.com\/(?:jobs\/[^/?#]+|\?p=\d+)$/] };
+  const rule = publishers[j.source];
+  if (!rule || !canonicalUrl(j.url).startsWith(rule[0])) return '';
+  const matches = [...String(j.description || '').matchAll(/Подробнее и откликнуться:\s*(https?:\/\/[^\s<>"']+)/g)]
+    .map(m => canonicalUrl(m[1])).filter(url => rule[1].test(url));
+  return matches.length === 1 ? matches[0] : '';
+}
+
 export function groupJobs(jobs) {
   const entries = jobs.map(facts), parent = entries.map((_, i) => i), members = entries.map((_, i) => [i]);
   const root = i => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
@@ -56,8 +69,9 @@ export function groupJobs(jobs) {
   const urls = new Map();
   entries.forEach((e, i) => {
     // Same original URL is authoritative even when a publisher edits its text.
-    const url = canonicalUrl(e.job.url);
-    if (url) { if (urls.has(url)) join(i, urls.get(url)); else urls.set(url, i); }
+    for (const url of [canonicalUrl(e.job.url), publisherOriginal(e.job)].filter(Boolean)) {
+      if (urls.has(url)) join(i, urls.get(url)); else urls.set(url, i);
+    }
   });
   const linked = new Map();
   entries.forEach((e, i) => {
@@ -86,7 +100,16 @@ export function groupJobs(jobs) {
   return [...groups.values()].map(members => ({ id: Math.min(...members.map(j => j.id)), members }));
 }
 export const includesId = (group, id) => group.members.some(j => j.id === id);
-export const decorate = (group, job) => ({ ...job, _duplicate_ids: group.members.map(j => j.id) });
+export const decorate = (group, job) => {
+  const sources = new Map();
+  for (const member of [job, ...group.members]) {
+    if (sourceEnabled(member.source) && !sources.has(member.source)) sources.set(member.source,{source:member.source,url:member.url});
+    const original = publisherOriginal(member);
+    const source = original.startsWith('radim.rs/') ? 'radim' : original.startsWith('ovdejobs.com/') ? 'ovdejobs' : null;
+    if (source && !sources.has(source)) sources.set(source,{source,url:'https://'+original});
+  }
+  return { ...job, _duplicate_ids: group.members.map(j => j.id), _sources:[...sources.values()] };
+};
 export function currentPublications(group) {
   const originals = new Map();
   for (const job of group.members) {

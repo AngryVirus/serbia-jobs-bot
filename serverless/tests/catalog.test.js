@@ -43,13 +43,30 @@ test('newer copy of the same original wins before filtering salary or expiry', (
   assert.equal(visibleJobs(groups,defaults()).length,0);
 });
 
-test('explicit application links join website and Telegram publication, never shared homepage or conflicting roles', () => {
+test('publisher originals survive title edits; generic links cannot merge conflicting roles', () => {
   const site = copy(1,{url:'https://ovdejobs.com/?p=180496'});
   const post = opening(2,{description:'Подробнее и откликнуться: https://ovdejobs.com/?p=180496&utm_source=tg'});
   assert.equal(groupJobs([site,post]).length, 1);
-  assert.equal(groupJobs([site,{...post,title:'Официант'}]).length, 2);
+  assert.equal(groupJobs([site,{...post,title:'Официант'}]).length, 1);
+  assert.equal(groupJobs([site,{...post,title:'Официант',description:'https://ovdejobs.com/?p=180496'}]).length, 2);
   assert.equal(groupJobs([site,{...post,description:'https://ovdejobs.com/?p=180497'}]).length, 2);
   assert.equal(groupJobs([opening(1,{description:'https://cafe.rs/jobs'}), copy(2,{description:'https://cafe.rs/jobs'})]).length, 2);
+});
+
+test('Radim teaser and website share one vacancy and both source links despite different metadata',async()=>{
+  const site=copy(1,{title:'Повар / Kuvar',url:'https://radim.rs/jobs/chef-42',location:'Beograd',salary_min:1300});
+  const post=opening(2,{source:'tg_radim_serbia',url:'https://t.me/radim_serbia/87',title:'👨‍🍳 Повар',location:'Белград | на месте',salary_min:1200,description:'Короткое описание. Подробнее и откликнуться: https://radim.rs/jobs/chef-42?utm_source=telegram'});
+  for(const jobs of [[site,post],[post,site]]) {
+    const groups=groupJobs(jobs); assert.equal(groups.length,1);
+    const visible=visibleJobs(groups,defaults()); assert.equal(visible.length,1);
+    const text=card(visible[0]); assert(text.includes('https://radim.rs/jobs/chef-42')); assert(text.includes('https://t.me/radim_serbia/87')); assert(text.includes('Источники:'));
+  }
+  assert.equal(groupJobs([site,{...post,description:post.description.replace('chef-42','chef-43')}]).length,2);
+  assert.equal(groupJobs([site,{...post,source:'telegram_youritjob',url:'https://t.me/youritjob/87'}]).length,2);
+  const f=await fixture(); await f.store.ensure(1,1); await f.store.patch(1,{notifications:'instant',notifications_after_id:0});
+  await f.store.putJob(site,true); assert.equal((await notifyOne(f.store,f.api,1)).sent,1);
+  await f.store.putJob(post,true); assert.equal((await notifyOne(f.store,f.api,1)).sent,0);
+  assert.equal((await f.store.jobs()).length,2);
 });
 
 test('partial metadata cannot transitively merge contradictory employers', () => {

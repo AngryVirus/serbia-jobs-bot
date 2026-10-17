@@ -3,7 +3,7 @@ import { settings, contains, belgradeDay } from './filters.js';
 import { groupJobs, visibleJobs, hiddenGroups } from './catalog.js';
 import { SOURCE_NAMES } from './config.js';
 import { sourceEnabled } from './source-policy.js';
-import { ownerReport, OWNER_ID } from './owner.js';
+import { ownerReport, OWNER_ID, notifyReports } from './owner.js';
 import { card, jobButtons, menu, translatedCard } from './ui.js';
 export async function notifyOne(store, api, uid) {
   assert(positive(uid), 'Invalid subscriber');
@@ -144,7 +144,9 @@ export async function administer(input, ctx, deps) {
       const now=new Date().toISOString();
       const blocked=(await store.db.get("SELECT COUNT(*) AS n FROM sjc_deliveries WHERE state='blocked'")).n;
       await store.setMeta('collection_run',{owner:input.owner,state:'running',started_at:now,baseline:await store.latest(),blocked_baseline:blocked});
-      await store.sourceStatus('_collection', { state: 'running', checked_at: now }); return { claimed: true };
+      await store.sourceStatus('_collection', { state: 'running', checked_at: now });
+      await notifyReports(store,deps.api);
+      return { claimed: true };
     }
     assert(Object.hasOwn(SOURCE_NAMES,input.source) && Array.isArray(input.jobs) && input.jobs.length <= 50 && input.jobs.every(j => j.source === input.source), 'Invalid source batch');
     let added = 0;

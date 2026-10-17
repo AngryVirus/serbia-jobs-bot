@@ -5,9 +5,9 @@ from pathlib import Path
 import sys
 from cloud import call, cli, invoke, routing_identity
 
-# Reviewed predecessor: d905edb (compact controls with emoji).
+# Reviewed predecessor: 0a29627 (source policy and compact owner dashboard).
 # A later release must explicitly review and update its predecessor digest.
-PREVIOUS_DIGEST = '04d140baae6b4deb9fd837c933d840619ca09a590c5d1aecd35338c0a6678c54'
+PREVIOUS_DIGEST = '96aa2732e509d2e281a0d7b9da48f8bb084ad6c8a981237b0bd659ffb599e3cb'
 
 
 def digest(modules):

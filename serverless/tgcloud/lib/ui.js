@@ -55,27 +55,31 @@ export function emptyText(jobs, s) {
   return text;
 }
 export function card(j, expanded = false) {
-  const f = j._cloud, lines = ['<b>' + safe(j.title || 'Вакансия', expanded ? 140 : 90) + '</b>'];
+  const f = j._cloud, lines = ['<b>💼 ' + safe(j.title || 'Вакансия', expanded ? 140 : 90) + '</b>'];
   let place = safe(j.location || (j.remote === true ? 'Удалённо' : 'Место не указано'), expanded ? 110 : 55);
   if (validUrl(f.location_url) && !validUrl(f.map_url)) place = `<a href="${escape(f.location_url)}">${j.location ? place : 'На карте'}</a>`;
-  if (j.company) lines.push(safe(j.company, expanded ? 80 : 40));
-  lines.push(place);
-  if (validUrl(f.map_url)) lines.push(`<a href="${escape(f.map_url)}">${safe(f.address || 'На карте', 180)}</a>`);
+  if (j.company) lines.push('🏢 ' + safe(j.company, expanded ? 80 : 40));
+  lines.push('📍 ' + place);
+  if (validUrl(f.map_url)) lines.push(`🗺 <a href="${escape(f.map_url)}">${safe(f.address || 'На карте', 180)}</a>`);
   const periods = { month: 'месяц', hour: 'час', year: 'год' };
   const salary = j.salary_display || (j.salary_min != null ? `от ${j.salary_min} ${j.salary_currency || ''} / ${periods[j.salary_period || 'month'] || 'период не указан'}` : 'Зарплата не указана');
-  lines.push('\n<b>' + safe(salary, expanded ? 120 : 80) + '</b>');
+  lines.push('\n<b>💶 ' + safe(salary, expanded ? 120 : 80) + '</b>');
   const names = { ru: 'Русский', sr: 'Сербский', en: 'Английский', de: 'Немецкий' };
-  lines.push('Языки: ' + safe(f.languages.map(x => (names[x] || x) + (f.required_languages.includes(x) ? ' (обяз.)' : '')).join(', ') || 'не указаны', expanded ? 140 : 80));
-  if (f.permit === true || f.permit === false) lines.push('ВНЖ: ' + (f.permit ? 'обязателен' : 'не требуется'));
-  if (f.experience === true || f.experience === false) lines.push('Опыт: ' + (f.experience ? 'требуется' : 'можно без опыта'));
-  if (f.paperwork_assistance === true || f.paperwork_assistance === false) lines.push('Помощь с документами: ' + (f.paperwork_assistance ? 'указана работодателем' : 'не предоставляется'));
+  lines.push('🗣 Языки: ' + safe(f.languages.map(x => (names[x] || x) + (f.required_languages.includes(x) ? ' (обяз.)' : '')).join(', ') || 'не указаны', expanded ? 140 : 80));
+  lines.push('🪪 ВНЖ: ' + (f.permit === true ? 'нужен' : f.permit === false ? 'не нужен' : 'не указано'));
+  if (f.experience === true || f.experience === false) lines.push('🛠 Опыт: ' + (f.experience ? 'требуется' : 'можно без опыта'));
+  if (f.paperwork_assistance === true || f.paperwork_assistance === false) lines.push('📄 Помощь с документами: ' + (f.paperwork_assistance ? 'указана работодателем' : 'не предоставляется'));
   if (j.description) lines.push('\n<blockquote>' + safe(j.description, expanded ? 1800 : 150, expanded) + '</blockquote>');
-  if (j.contacts?.length) lines.push('Контакты: ' + safe(j.contacts.join(' · '), expanded ? 200 : 90));
-  const source = safe(SOURCE_NAMES[j.source] || j.source || 'Источник', 55);
+  if (j.contacts?.length) lines.push('📞 Контакты: ' + safe(j.contacts.join(' · '), expanded ? 200 : 90));
+  const sources = (j._sources || [{source:j.source,url:j.url}]).slice(0,4).map(s => {
+    const name=safe(SOURCE_NAMES[s.source] || s.source || 'Источник',55);
+    return validUrl(s.url) ? `<a href="${escape(s.url)}">${name}</a>` : name;
+  });
   if (f.expires_ms != null && f.expires_ms <= Date.now()) lines.push('<b>⌛ Срок публикации истёк</b>');
   if (f.quality?.reason === 'closed') lines.push('<b>⌛ Работодатель сообщил о закрытии набора</b>');
   else if (f.quality?.reason) lines.push('<i>Объявление исключено из поиска проверкой качества.</i>');
-  lines.push('\n<i>' + safe(f.date_label || 'Дата не указана',30) + ' · ' + source + '</i>');
+  lines.push('\n📅 <i>' + safe(f.date_label || 'Дата не указана',30) + '</i>');
+  lines.push('🔗 ' + (sources.length>1?'Источники: ':'Источник: ') + sources.join(' · '));
   return lines.join('\n');
 }
 export function links(j, report = false) {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture,job,handle,message,callback } from './fixtures.js';
-import { OWNER_ID,ownerReport } from '../tgcloud/lib/owner.js';
+import { OWNER_ID,ownerReport,notifyReports } from '../tgcloud/lib/owner.js';
 import { groupJobs,visibleJobs } from '../tgcloud/lib/catalog.js';
 import { defaults } from '../tgcloud/lib/filters.js';
 import { administer,notifyOne } from '../tgcloud/lib/admin.js';
@@ -83,10 +83,37 @@ test('withdrawn source posts exclude the vacancy and copies; new original can re
 
 test('requirements are explicit and survive translation; missing facts are not invented',async()=>{
   const j=job(1); j._cloud={...j._cloud,permit:false,experience:true,paperwork_assistance:true};
-  const text=card(j); assert(text.includes('ВНЖ: не требуется')); assert(text.includes('Опыт: требуется')); assert(text.includes('Помощь с документами: указана'));
+  const text=card(j); assert(text.includes('ВНЖ: не нужен')); assert(text.includes('Опыт: требуется')); assert(text.includes('Помощь с документами: указана'));
   const translated=await translatedCard(j,'rf',async()=>({ok:true,json:async()=>[[['Перевод']]]}));
-  assert(translated.text.includes('ВНЖ: не требуется')); assert(translated.text.includes('Опыт: требуется'));
-  const unknown=card(job(2)); assert(!unknown.includes('ВНЖ:')); assert(!unknown.includes('Опыт:')); assert(!unknown.includes('Помощь с документами:'));
+  assert(translated.text.includes('ВНЖ: не нужен')); assert(translated.text.includes('Опыт: требуется'));
+  const unknown=card(job(2)); assert(unknown.includes('🪪 ВНЖ: не указано')); assert(!unknown.includes('Опыт:')); assert(!unknown.includes('Помощь с документами:'));
+  assert(card({...j,_cloud:{...j._cloud,permit:true}}).includes('🪪 ВНЖ: нужен'));
+});
+
+test('a new complaint notifies only the owner once and opens that exact vacancy',async()=>{
+  const f=await fixture(); await f.store.putJob(job(1,{title:'Первое <&>'}),true); await f.store.putJob(job(2,{title:'Второе'}),true);
+  await handle(f,callback(1,'report:1:not_job')); await handle(f,callback(1,'report:1:not_job'));
+  const notices=f.api.sent.filter(m=>m.chat_id===OWNER_ID);
+  assert.equal(notices.length,1); assert(notices[0].text.includes('Первое &lt;&amp;&gt;'));
+  assert.equal(notices[0].reply_markup.inline_keyboard[0][0].callback_data,'admin:review:1');
+  await handle(f,callback(2,'report:2:outdated'));
+  await handle(f,callback(OWNER_ID,'admin:review:1')); assert(f.api.edited.at(-1).text.includes('Первое &lt;&amp;&gt;'));
+  await handle(f,callback(2,'admin:review:1')); assert(f.api.edited.at(-1).text.includes('только владельцу'));
+  assert.equal((await f.store.records('report'))[0].owner_notice,'sent');
+});
+
+test('owner notification failure preserves the complaint; 429 retries but ambiguous delivery never repeats',async()=>{
+  for(const code of [429,403,500]) {
+    const f=await fixture(); await f.store.putJob(job(1),true);
+    f.api.sendMessage=async()=>{throw {code,parameters:{retry_after:5}};};
+    await handle(f,callback(1,'report:1:outdated'));
+    let [report]=await f.store.records('report'); assert.equal(report.state,'open');
+    assert.equal(report.owner_notice,code===429?'pending':code===403?'blocked':'uncertain');
+    assert(f.api.edited.at(-1).text.includes('Жалоба сохранена'));
+    let sent=0; f.api.sendMessage=async()=>{sent++;return {message_id:1};};
+    await notifyReports(f.store,f.api); assert.equal(sent,0);
+    if(code===429) {await f.store.record('report','1:1',{...report,notice_after:0}); await Promise.all([notifyReports(f.store,f.api),notifyReports(f.store,f.api)]);assert.equal(sent,1);}
+  }
 });
 
 test('fact refresh preserves IDs, source fields and concurrent edits',async()=>{
