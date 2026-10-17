@@ -5,9 +5,9 @@ from pathlib import Path
 import sys
 from cloud import call, cli, invoke, routing_identity
 
-# Reviewed predecessor: 0a29627 (source policy and compact owner dashboard).
+# Reviewed predecessor: 0ffa0c5 (vacancy cards, owner alerts, publisher copies).
 # A later release must explicitly review and update its predecessor digest.
-PREVIOUS_DIGEST = '96aa2732e509d2e281a0d7b9da48f8bb084ad6c8a981237b0bd659ffb599e3cb'
+PREVIOUS_DIGEST = '45f6242c866565b5e919544dae2455e801b65fcd00c30b26be46e8f32b04a024'
 
 
 def digest(modules):

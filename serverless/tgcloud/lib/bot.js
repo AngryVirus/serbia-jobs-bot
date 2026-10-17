@@ -108,6 +108,7 @@ export class Bot {
   }
   async route(action) {
     if (typeof action !== 'string') return this.home();
+    action = action.replace(/^(choose|set):freshness:(today|yesterday)(?=:|$)/, '$1:freshness:7');
     if (action === 'menu' || action === 'start' || action === 'cancel') return this.home();
     if (action === 'filters') return this.panel(...filtersPanel(this.s));
     if (action === 'help') return this.panel('<b>💬 Помощь</b>\n\nЕсли нужна помощь с настройками или вы нашли ошибку, напишите владельцу. Кратко опишите, что произошло.', [[{ text: '✉️ Написать владельцу', url: 'https://t.me/AngryVirus' }], ...BACK]);

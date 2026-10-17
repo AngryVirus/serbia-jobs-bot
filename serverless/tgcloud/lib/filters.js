@@ -5,15 +5,24 @@ export function settings(raw = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) raw = {};
   const s = { ...defaults(), ...raw };
   if (!Object.hasOwn(raw, 'notifications_after_id') && s.notifications !== 'off') s.notifications_after_id = null;
+  s.freshness = selected(s, 'freshness');
   return s;
 }
 export function selected(s, field) {
   const raw = s[field], values = [...new Set((typeof raw === 'string' ? [raw] : Array.isArray(raw) ? raw : []).filter(x => typeof x === 'string' && x))];
+  if (field === 'freshness') {
+    if (!values.length || values.includes('any')) return ['any'];
+    if (values.includes('30')) return ['30'];
+    if (values.some(x => ['7','today','yesterday'].includes(x))) return ['7'];
+    return ['any'];
+  }
   return !values.length || values.includes('any') ? ['any'] : values;
 }
 export function choose(s, field, value, enabled) {
+  if (field === 'freshness' && ['today','yesterday'].includes(value)) value = '7';
   if (!OPTIONS[field] || !Object.hasOwn(OPTIONS[field], value)) throw new Error('Invalid filter');
   if (field === 'residence_permit') return enabled ? [value] : ['any'];
+  if (field === 'freshness') return [value];
   if (value === 'any') return ['any'];
   const values = new Set(selected(s, field));
   if (enabled) values.add(value); else values.delete(value);
