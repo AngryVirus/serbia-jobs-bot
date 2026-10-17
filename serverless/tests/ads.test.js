@@ -31,7 +31,8 @@ test('advertising drafts, previews, owner-only confirmation, photo entities and 
   await handle(f,callback(1,'ads:start:'+next));assert.equal(await f.store.meta('ad_current'),null);
   await handle(f,callback(OWNER_ID,'ads:start:'+next));assert.equal(await f.store.meta('ad_current'),null);
   await ready(f,next);assert.equal((await campaign(f)).state,'done');
-  assert(f.api.sent.some(p=>p.photo==='large'&&p.reply_markup.inline_keyboard[0][0].url==='https://example.com/offer'));
+  assert(f.api.sent.some(p=>p.photo==='large'&&p.reply_markup?.inline_keyboard[0][0].url==='https://example.com/offer'));
+  assert(f.api.sent.filter(p=>p.photo).every(p=>!JSON.stringify(p.reply_markup||{}).includes('ads:off')));
   const count=f.api.sent.length;await handle(f,callback(OWNER_ID,'ads:start:'+next));await tick(f);assert.equal(f.api.sent.length,count);
 });
 

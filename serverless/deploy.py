@@ -5,9 +5,9 @@ from pathlib import Path
 import sys
 from cloud import call, cli, invoke, routing_identity
 
-# Reviewed predecessor: e630cdf (single vacancy age filter).
+# Reviewed predecessor: 192b1f0 (owner advertising broadcasts).
 # A later release must explicitly review and update its predecessor digest.
-PREVIOUS_DIGEST = '608364d33df7097f36c1f87af825f62b6018e28625eb11d3d81c04757972d41b'
+PREVIOUS_DIGEST = '4f89ae5f09a4b25f144babb2c76552445ec8d624422d031f91e007d52e1a192a'
 
 
 def digest(modules):

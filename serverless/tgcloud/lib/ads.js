@@ -11,9 +11,8 @@ const audienceSQL="FROM sjc_users WHERE COALESCE(json_extract(payload,'$.setting
 export async function sendAd(api,chat,post) {
   const rows=[];
   if(post.link) rows.push([{text:post.link.text,url:post.link.url}]);
-  rows.push([button('🔕 Не получать рекламу','ads:off')]);
   const entities=(post.entities||[]).map(e=>({...e,offset:e.offset+prefix.length}));
-  const common={chat_id:chat,reply_markup:{inline_keyboard:rows}};
+  const common={chat_id:chat,...(rows.length?{reply_markup:{inline_keyboard:rows}}:{})};
   return post.photo ? api.sendPhoto({...common,photo:post.photo,caption:prefix+post.text,caption_entities:entities})
     : api.sendMessage({...common,text:prefix+post.text,entities,link_preview_options:{is_disabled:true}});
 }
@@ -65,7 +64,7 @@ export async function adStatus(bot) {
 export async function adRoute(bot,action) {
   if(action==='ads:off'||action==='ads:on') {
     await bot.patch({ads_enabled:action==='ads:on'});
-    return bot.panel(action==='ads:off'?'Реклама отключена. Настройка уведомлений о вакансиях не изменилась.':'Рекламные сообщения включены.',[[button(action==='ads:off'?'📣 Включить рекламу':'🔕 Отключить рекламу',action==='ads:off'?'ads:on':'ads:off')],[button('🏠 Меню','menu')]]);
+    return bot.panel(action==='ads:off'?'Реклама отключена. Настройка уведомлений о вакансиях не изменилась.':'Рекламные сообщения включены.',[[button('🏠 Меню','menu')]]);
   }
   if(bot.uid!==OWNER_ID||bot.chat!==OWNER_ID) return bot.panel('Этот раздел доступен только владельцу бота.');
   if(action==='ads') return adStatus(bot);

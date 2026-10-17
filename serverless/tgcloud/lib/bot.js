@@ -18,7 +18,7 @@ export class Bot {
   }
   async patch(fields) { this.s = await this.store.patch(this.uid, fields); }
   async notifications() {
-    await this.panel('<b>🔔 Уведомления</b>\n\nНовая вакансия по вашим фильтрам придёт сразу после обнаружения. Проверка источников запускается примерно каждые 30 минут; запуск может задержаться. Старый каталог при включении не рассылается. Уже отправленные вакансии не повторяются.', [[button(this.s.notifications === 'off' ? '🔔 Включить' : '🔕 Выключить', this.s.notifications === 'off' ? 'notify:instant' : 'notify:off')], [button(this.s.ads_enabled===false?'📣 Включить рекламу':'🔕 Отключить рекламу',this.s.ads_enabled===false?'ads:on':'ads:off')], ...BACK]);
+    await this.panel('<b>🔔 Уведомления</b>\n\nНовая вакансия по вашим фильтрам придёт сразу после обнаружения. Проверка источников запускается примерно каждые 30 минут; запуск может задержаться. Старый каталог при включении не рассылается. Уже отправленные вакансии не повторяются.', [[button(this.s.notifications === 'off' ? '🔔 Включить' : '🔕 Выключить', this.s.notifications === 'off' ? 'notify:instant' : 'notify:off')], ...BACK]);
   }
   async input(text) {
     const field = this.s.pending_input; let patch;
