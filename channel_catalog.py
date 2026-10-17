@@ -1,4 +1,4 @@
-"""Public job-channel references; every channel is searched for Serbian hiring.
+"""Historical public job-channel registry; source_policy selects active channels.
 
 Reference: https://github.com/QaIliapro/Job- (README, Telegram job directories).
 These are discovery references, not a guarantee of current public readability.

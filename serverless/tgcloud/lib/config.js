@@ -1,4 +1,4 @@
-// Generated from the Python catalog and filter definitions. All sources are enabled.
+// Historical registry and filter definitions. Active sources are defined in source-policy.js.
 export const OPTIONS = {"city": {"any": "Вся Сербия", "belgrade": "Белград", "novi_sad": "Нови-Сад", "nis": "Ниш", "subotica": "Суботица", "kragujevac": "Крагуевац"}, "remote": {"any": "Любой формат", "only": "Удалённо", "office": "На месте / гибрид"}, "language": {"russian": "🇷🇺 Русский", "serbian": "🇷🇸 Сербский", "english": "🇬🇧 Английский", "any": "🌍 Не важно"}, "freshness": {"today": "📅 Сегодня", "yesterday": "⏮ Вчера", "7": "🗓 За 7 дней", "30": "📆 За 30 дней", "any": "🌍 Не важно"}, "residence_permit": {"yes": "Да", "no": "Нет", "any": "Не важно"}};
 export const CITIES = {"belgrade": ["beograd", "belgrade", "белград", "београд"], "novi_sad": ["novi sad", "novi-sad", "нови сад", "нови-сад"], "nis": ["nis", "ниш"], "subotica": ["subotica", "суботица"], "kragujevac": ["kragujevac", "крагуевац", "крагујевац"]};
 export const TITLES = {"city": "📍 Города", "remote": "💻 Формат работы", "language": "🗣 Языки", "freshness": "🕒 Свежесть", "residence_permit": "🪪 Наличие ВНЖ"};

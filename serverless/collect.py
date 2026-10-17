@@ -66,7 +66,7 @@ def main():
             if added:
                 sent, uncertain = notify(min(deadline,time.monotonic()+30))
                 totals['sent'] += sent; totals['uncertain'] += uncertain
-        collect_all(on_source=on_source)  # None selects every source; no per-user source filter.
+        collect_all(on_source=on_source)  # Reviewed active sources; no per-user source filter.
         sent, uncertain = notify(deadline)
         totals['sent'] += sent; totals['uncertain'] += uncertain
         failed = False
