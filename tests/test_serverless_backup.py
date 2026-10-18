@@ -67,6 +67,19 @@ process.stdout.write(JSON.stringify(rows));
         self.assertEqual(restored.execute("SELECT COUNT(*) FROM sjc_records WHERE kind='user_ban'").fetchone()[0],1)
         self.assertEqual(restored.execute('SELECT COUNT(*) FROM sjc_users').fetchone()[0],1)
 
+    def test_current_moderation_reason_actor_and_delivery_receipt_survive_recovery(self):
+        rows=json.loads(json.dumps(self.rows))
+        payload={'uid':1,'active':False,'version':'urevision','reason':'Спам','by':340780041,
+                 'actor':{'id':340780041,'username':'ActualAdmin'},'notice':{'state':'pending'}}
+        rows['sjc_records'].append({'kind':'user_ban','record_key':'1','payload':json.dumps(payload,ensure_ascii=False)})
+        db=backup.build_database(rows)
+        encrypted=backup.crypt(gzip.compress(db.serialize()),'encrypt',self.env)
+        report=backup.restore_drill(encrypted,backup.digest(rows),self.env)
+        self.assertTrue(report['offline_bot'])
+        restored=sqlite3.connect(':memory:');restored.deserialize(gzip.decompress(backup.crypt(encrypted,'decrypt',self.env)))
+        saved=restored.execute("SELECT payload FROM sjc_records WHERE kind='user_ban'").fetchone()[0]
+        self.assertEqual(json.loads(saved),payload)
+
     def test_wrong_key_and_modified_header_tag_or_ciphertext_are_rejected(self):
         encrypted = backup.crypt(b'private test payload', 'encrypt', self.env)
         other = dict(self.env, TGCLOUD_TOKEN='app8802394224:'+'other_synthetic_key_'*3)

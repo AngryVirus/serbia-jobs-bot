@@ -82,7 +82,7 @@ export function qualitySummary(jobs,groups=groupJobs(jobs),now=Date.now()) {
 }
 export async function analyticsPanel(bot,action,data) {
  if(action==='admin:stats') {
-  const banned=(await bot.store.db.get("SELECT COUNT(*) AS n FROM sjc_records WHERE kind='user_ban'")).n;
+  const banned=(await bot.store.db.get("SELECT COUNT(*) AS n FROM sjc_records WHERE kind='user_ban' AND COALESCE(json_extract(payload,'$.active'),1)!=0")).n;
   const s=await userStatistics(bot.store),started=await bot.store.meta('analytics_started');
   return bot.panel(`<b>👥 Пользователи бота</b>\n\n<b>Всего в базе:</b> ${s.total}\nВоспользовались за время учёта: ${s.observed}\n\n<b>Активные пользователи · UTC</b>\nСегодня: ${s.active_today}\nЗа 7 дней: ${s.active_week}\nЗа 30 дней: ${s.active_month}\n\n<b>Новые пользователи · UTC</b>\nСегодня: ${s.new_today}\nЗа 7 дней: ${s.new_week}\nЗа 30 дней: ${s.new_month}\n\n<b>Уведомления включены:</b> ${s.subscribed}\n<b>Не принимают сообщения (403):</b> ${s.unavailable}\nПодтверждённо заблокировали бота: ${s.blocked}\nЗабанены владельцем: ${banned}\n\n<i>Активность учитывается с ${safe(started||'первого обращения',30)}. Данные об удалённых профилях сюда не входят; возвращение после удаления считается новой регистрацией.</i>`,[[button('🚫 Блокировки и доставка','admin:stats:delivery')],[button('📈 Поиски и переводы','admin:stats:usage')],[button('🔄 Обновить','admin:stats')],...BACK]);
  }

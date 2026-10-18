@@ -5,9 +5,9 @@ from pathlib import Path
 import sys
 from cloud import call, cli, invoke, routing_identity
 
-# Reviewed predecessor: de0d76b (category icons and owner user statistics).
+# Reviewed predecessor: 12cc787 (persistent owner-managed user bans).
 # A later release must explicitly review and update its predecessor digest.
-PREVIOUS_DIGEST = 'f7fdab8b20127aea6d3132a06d66b33d03b7bc5b091d357c7c41c42d34d91871'  # pragma: allowlist secret
+PREVIOUS_DIGEST = 'b7c8f441c0cdcc318cd16adbfda9db94d71b1feca4ecfd53efcd74b9abc7a3f1'  # pragma: allowlist secret
 
 
 def digest(modules):

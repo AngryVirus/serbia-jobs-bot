@@ -1,4 +1,4 @@
-import { banInput } from './bans.js';
+import { banInput, inboundBanNotice, deliverBanNotice, moderatorSnapshot } from './bans.js';
 import { imagePanel, textPanel } from './image-panel.js';
 import { activity, usage, freshness } from './analytics.js';
 import { OPTIONS } from './config.js';
@@ -161,9 +161,10 @@ export class Bot {
   async handle(update) {
     const callback = update.callback_query, message = callback?.message || update.message || {}, user = callback?.from || message.from || {};
     const valid = message.chat?.type === 'private' && positive(user.id) && positive(message.chat.id) && !user.is_bot;
-    if(positive(user.id) && user.id!==OWNER_ID && await this.store.isBanned(user.id))return;
+    if(positive(user.id) && user.id!==OWNER_ID && await inboundBanNotice(this,user.id,message.chat?.id,valid))return;
     if (callback && !valid) { try { await this.api.answerCallbackQuery({ callback_query_id: callback.id, ...(!valid ? { text: 'Откройте личный чат с ботом.' } : {}) }); } catch { /* expired acknowledgements do not cancel the action */ } }
     if (!valid) return;
+    this.actor=moderatorSnapshot(user);
     this.uid = user.id; this.chat = message.chat.id; this.mid = callback ? message.message_id : null; this.isPhoto=Boolean(message.photo?.length);
     // Emergency stop must remain available while the owner's start request sends a batch.
     if(callback?.data==='ads:emergency' && this.uid===OWNER_ID && this.chat===OWNER_ID && await this.store.meta('active')) {
@@ -181,15 +182,16 @@ export class Bot {
     try {
       claimed = await this.store.claimUpdate(key);
       if (!claimed) return;
-      if(this.uid!==OWNER_ID && await this.store.isBanned(this.uid)){await this.store.finishUpdate(key);return;}
+      if(this.uid!==OWNER_ID && await this.store.isBanned(this.uid)){if(this.uid===this.chat)await deliverBanNotice(this.store,this.api,this.InputFile,this.uid,{contact:true});await this.store.finishUpdate(key);return;}
       if(callback){try{await this.api.answerCallbackQuery({callback_query_id:callback.id});}catch{}}
       if(!await this.store.meta('active')){await this.panel('⏳ Бот обновляется. Попробуйте через несколько минут.');await this.store.finishUpdate(key);return;}
       this.s = settings((await this.store.ensure(this.uid,this.chat)).settings);
-      if(!callback && ['keywords','exclusions','salary','hour','owner_ban'].includes(this.s.pending_input) && !message.text?.startsWith('/') && positive(this.s.ui_panel_id)) {this.mid=this.s.ui_panel_id;this.isPhoto=this.s.ui_panel_kind==='photo';}
+      if(!callback && ['keywords','exclusions','salary','hour','owner_ban','owner_ban_reason'].includes(this.s.pending_input) && !message.text?.startsWith('/') && positive(this.s.ui_panel_id)) {this.mid=this.s.ui_panel_id;this.isPhoto=this.s.ui_panel_kind==='photo';}
+      await this.store.captureUsername(this.uid,user.username);
       await activity(this.store,this.uid);
       if(this.s.bot_blocked) await this.patch({bot_blocked:false});
       let action;
-      if (callback) { action = callback.data || ''; if (this.s.pending_input) await this.patch({ pending_input: null }); }
+      if (callback) { action = callback.data || ''; if (this.s.pending_input || (this.s.ban_draft && !action.startsWith('admin:bans:confirm:'))) await this.patch({ pending_input: null, ...(!action.startsWith('admin:bans:confirm:')?{ban_draft:null,ban_target:null}:{}) }); }
       else {
         if(await banInput(this,message)){await this.store.finishUpdate(key);return;}
         if(await adInput(this,message)) {await this.store.finishUpdate(key);return;}
@@ -197,7 +199,7 @@ export class Bot {
         if (typeof text !== 'string' || !text.trim()) { await this.store.finishUpdate(key); return; }
         if ([...text].length > 1000) { await this.panel('Пожалуйста, сократите сообщение до 1000 символов.'); await this.store.finishUpdate(key); return; }
         if (this.s.pending_input && !text.startsWith('/')) { await this.input(text); await this.store.finishUpdate(key); return; }
-        if (this.s.pending_input) await this.patch({ pending_input: null });
+        if (this.s.pending_input || this.s.ban_draft) await this.patch({ pending_input: null,ban_draft:null,ban_target:null });
         action = ({ '/start': 'start', '/menu': 'menu', '/cancel': 'menu', '/delete_me': 'delete', '/admin': 'admin' })[text.split(/\s+/)[0].split('@')[0]] || 'menu';
       }
       await this.route(action);

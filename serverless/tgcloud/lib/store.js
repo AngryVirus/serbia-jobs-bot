@@ -39,11 +39,16 @@ export class Store {
     if (user.chat_id !== chat) { user.chat_id = chat; await this.saveUser(user); }
     return user;
   }
-  async isBanned(uid) { return Boolean(await this.db.get("SELECT 1 AS banned FROM sjc_records WHERE kind='user_ban' AND record_key=:uid",{':uid':String(uid)})); }
+  async captureUsername(uid,username) {
+    const value=typeof username==='string' && /^[A-Za-z0-9_]{1,32}$/.test(username)?username:null;
+    await this.db.run("UPDATE sjc_users SET payload=json_set(payload,'$.telegram_username',:username,'$.username_seen_day',:day) WHERE id=:uid AND COALESCE(json_extract(payload,'$.telegram_username'),'')!=COALESCE(:username,'')",{':uid':uid,':username':value,':day':new Date().toISOString().slice(0,10)});
+  }
+  async isBanned(uid) { return Boolean(await this.db.get("SELECT 1 AS banned FROM sjc_records WHERE kind='user_ban' AND record_key=:uid AND COALESCE(json_extract(payload,'$.active'),1)!=0",{':uid':String(uid)})); }
   async user(uid) { const row = await this.db.get('SELECT payload FROM sjc_users WHERE id=:id', { ':id': uid }); return row ? JSON.parse(row.payload) : null; }
   async saveUser(user) { await this.db.run('UPDATE sjc_users SET payload=:payload WHERE id=:id', { ':id': user.user_id, ':payload': JSON.stringify(user) }); }
   async patch(uid, fields) { const user = await this.user(uid); assert(user, 'Missing user'); user.settings = { ...settings(user.settings), ...fields }; user.updated_at = new Date().toISOString(); await this.saveUser(user); return user.settings; }
   async deleteUser(uid) {
+    await this.db.run("DELETE FROM sjc_records WHERE kind='user_ban' AND record_key=:uid AND json_extract(payload,'$.active')=0",{':uid':String(uid)});
     await this.db.run("DELETE FROM sjc_records WHERE kind='menu_image' AND record_key LIKE :prefix",{':prefix':uid+':%'});
     await this.db.run("DELETE FROM sjc_records WHERE kind='rate' AND record_key LIKE :prefix",{':prefix':uid+':%'});
     await this.db.run("DELETE FROM sjc_records WHERE kind='ad_delivery' AND record_key LIKE :suffix",{':suffix': '%:'+uid});
