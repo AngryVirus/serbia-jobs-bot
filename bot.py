@@ -584,6 +584,10 @@ def main():
     parser.add_argument("--webhook", action="store_true", help="Web server for free cloud hosting")
     args = parser.parse_args()
     load_env(Path(__file__).with_name(".env"))
+    if not args.collect and not args.status and os.environ.get('SERBIA_JOBS_ALLOW_LEGACY_RUNTIME') != '1':
+        parser.error('Legacy polling/webhook is disabled. Production uses Telegram Serverless. '
+                     'Only an isolated legacy test bot may opt in with SERBIA_JOBS_ALLOW_LEGACY_RUNTIME=1; '
+                     'never resume Render for @SerbiaJobsBot.')
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_SERVICE_ROLE_KEY"):
         from cloud_store import SupabaseStore

@@ -4,6 +4,8 @@ export const defaults = () => JSON.parse(JSON.stringify(DEFAULTS));
 export function settings(raw = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) raw = {};
   const s = { ...defaults(), ...raw };
+  // Historical Python-only preferences do not affect the centralized runtime.
+  for (const field of ['sources','daily_hour','webhook_update_ids']) delete s[field];
   if (!Object.hasOwn(raw, 'notifications_after_id') && s.notifications !== 'off') s.notifications_after_id = null;
   s.freshness = selected(s, 'freshness');
   return s;

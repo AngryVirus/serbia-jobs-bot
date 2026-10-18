@@ -8,35 +8,22 @@ from enrich_jobs import enrich_job
 from sources import collect_all
 
 
-def subscribers():
-    result, offset = [], 0
-    while True:
-        page = invoke('subscribers', offset=offset)
-        result.extend(page['ids'])
-        if page['next'] is None:
-            return result
-        offset = page['next']
-
-
 def notify(deadline):
-    pending = subscribers()
     sent, uncertain = 0, 0
-    while pending and time.monotonic() < deadline:
-        more = []
-        for uid in pending:
-            if time.monotonic() >= deadline:
-                break
-            result = invoke('notify', user_id=uid)
-            sent += result.get('sent', 0)
-            uncertain += bool(result.get('uncertain'))
-            if result.get('retry_after'):
-                # Persisted claim was released only for an explicit 429 response.
-                # Finish this cycle; the next scheduled cycle retries the backlog.
-                return sent, uncertain
-            if not result.get('done'):
-                more.append(uid)
-            time.sleep(1.1)  # Pacing belongs in the worker, not the cloud isolate.
-        pending = more
+    while time.monotonic() < deadline:
+        # The database owns the cursor, so another cycle resumes after the last
+        # processed subscriber rather than starting again at the smallest ID.
+        result = invoke('notify_batch', limit=10)
+        sent += result.get('sent', 0)
+        uncertain += result.get('uncertain', 0)
+        if result.get('retry_after') or result.get('busy') or result.get('done'):
+            # An explicit 429 retains the retryable delivery in cloud. Never
+            # wait out a cooldown inside this collection's limited budget.
+            break
+        # At most ten sends per batch; pacing stays outside the cloud isolate.
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(1.1, remaining))
     return sent, uncertain
 
 
@@ -68,7 +55,9 @@ def main():
             if added:
                 sent, uncertain = notify(min(deadline,time.monotonic()+30))
                 totals['sent'] += sent; totals['uncertain'] += uncertain
-        collect_all(on_source=on_source)  # Reviewed active sources; no per-user source filter.
+        # Expiry corrections reach cloud too. Cloud only updates already-known
+        # expired URLs, so this cannot import an archive of old vacancies.
+        collect_all(on_source=on_source, include_expired=True)
         sent, uncertain = notify(deadline)
         totals['sent'] += sent; totals['uncertain'] += uncertain
         failed = False

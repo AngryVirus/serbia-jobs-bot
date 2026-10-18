@@ -1,4 +1,5 @@
-# Optional Linux polling development example; iPhone/Render instructions are in START_WITH_IPHONE.md.
+# ARCHIVED polling example, disabled by bot.py's explicit legacy startup guard.
+# Never install or enable this service for the production @SerbiaJobsBot.
 [Unit]
 Description=Serbia Jobs Telegram Bot
 After=network-online.target

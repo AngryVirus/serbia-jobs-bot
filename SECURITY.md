@@ -1,7 +1,11 @@
 # Security operations
 
-The only Telegram administrator is numeric user ID **340780041**, in private chat
-**340780041**. Usernames are never authorization credentials. Advertising controls
+The immutable Telegram owner is numeric user ID **340780041**, in private chat
+**340780041**. Moderators may ban ordinary users; administrators may ban/unban lower
+roles and manage moderators. Only the owner manages administrators and accesses
+advertising, statistics and team audit. Each route, text-input step and callback
+checks the current numeric identity, private chat and role hierarchy. Usernames
+are never authorization credentials. Advertising controls
 and audit history are in `/admin` → advertising. Emergency stop bypasses the owner's
 ordinary operation lease so it remains available during a sending batch. A request
 already in flight may finish; subsequent recipients are stopped. Stopped campaigns
@@ -20,7 +24,12 @@ queues, cooldowns and health metrics.
 Per-user SQLite quotas: search/navigation **40/minute**, translation **10/minute**,
 complaints **5/minute** and new complaints **20/24 hours**. Windows start with the
 first request. Atomic SQL enforces quotas across isolates and restarts. Replies
-include a wait time. These records contain only numeric IDs, counters and expiry.
+include a wait time. These records contain only numeric IDs, counters and expiry. Profile deletion
+does not reset an active window; counters expire at their original deadline.
+Expired counters, update receipts and minimal input receipts are removed in
+indexed batches of at most 100 rows per type. Input receipts contain no input
+text and expire after 48 hours; they prevent a failed panel refresh from applying
+a completed state change again.
 
 The independent `Independent bot watchdog` workflow runs twice hourly, separately
 from collection and its concurrency group. It calls only `health_tick`, never
@@ -34,11 +43,12 @@ scheduled runs may be delayed; a total Telegram Cloud or GitHub outage can also
 prevent this infrastructure from delivering an alert. Workflow failures remain
 visible in GitHub Actions.
 
-## Enable main protection after the checks succeed
+## Required main protection
 
-The connected GitHub App does not have Administration permission (branch-protection
-API returns 403). No personal token is needed: the repository owner can configure
-this in the GitHub UI:
+The required checks are `tests` and `security` from the `Test bot` workflow.
+If the connected GitHub App cannot read or update branch protection (403), the
+repository owner can inspect/configure the rule in the GitHub UI without sharing
+a personal token:
 
 1. Open https://github.com/AngryVirus/serbia-jobs-bot/settings/branches → Add branch
    protection rule, branch name pattern `main`.
@@ -55,7 +65,8 @@ this in the GitHub UI:
    only a successful push run for the current main commit; PR runs cannot deploy.
    The existing manual operation workflow remains available and runs tests before
    accessing cloud credentials. Render must remain suspended; do not enable the
-   legacy `Check Serbia jobs` workflow.
+   archived `deploy/legacy-collect.yml.disabled` collector. Its former workflow
+   file is no longer under `.github/workflows`.
 
 `security` runs detect-secrets without external verification or printing values,
 `pip-audit` and npm audit for both lockfiles. Inline scanner allowlists cover only
@@ -63,3 +74,41 @@ reviewed synthetic test credentials, an environment-variable lookup, scanner pac
 predecessor code digest. Dependabot checks Actions, npm and Python weekly. All
 third-party Actions are pinned to complete upstream commit SHAs. Secret values
 and routing are unchanged by this release.
+
+
+## Data, retention and recovery
+
+The profile stores Telegram user/chat IDs, the last verified username and its
+observation day, settings/input state, activity days and delivery state. Moderation
+and role decisions store the real executor's numeric ID, name and username from
+Telegram updates. Bans, role versions and minimal safety receipts can outlive
+profile deletion; the bot does not retain arbitrary conversation as a chat log.
+The team audit expires after **10 days**. Active bans and current role decisions
+remain until superseded; `/delete_me` does not bypass moderation. The user-facing
+policy is documented in [README.md](README.md) and
+[OPERATIONS.md](serverless/OPERATIONS.md).
+
+Encrypted backup artifacts expire after **7 days**. Deleted data can remain in
+older encrypted snapshots until expiration. Temporary snapshot staging expires
+after 24 hours. A backup is successful only after an artifact was uploaded and
+offline restoration was verified. The old Supabase snapshot is historical and
+cannot restore changes made after migration. Never enable Render or an old
+Python webhook as a recovery shortcut.
+
+Legacy polling/webhook CLI startup is blocked by default before initializing
+storage or Telegram. `SERBIA_JOBS_ALLOW_LEGACY_RUNTIME=1` is an explicit opt-in for
+an isolated legacy test bot only; do not configure it on the production service.
+Importing legacy modules for regression tests does not require opt-in. The
+archived Render and systemd examples do not provision any new infrastructure.
+
+Source release ZIPs are generated from a verified commit into `dist/` or an
+explicit `--output` path; no generated ZIP is kept in main. The allowlist includes
+current workers, all runtime modules, tests, security/operations instructions and
+third-party licenses. Private/runtime directories, databases, `.env`, caches and
+node_modules are excluded, and source symlinks are rejected. Release tests unpack
+into a clean directory and use local API stubs, never the real bot.
+
+Heavy Cloud operations coordinate through the built-in read-only Actions token;
+the independent watchdog has priority. No personal token, paid service, secret
+rotation or new secret is required for this coordination. Scheduled execution
+and management API availability remain best effort.

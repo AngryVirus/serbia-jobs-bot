@@ -6,6 +6,7 @@ const BACK=[[button('📣 Реклама','ads')],[button('📊 Админка',
 const prefix='📣 Реклама\n\n';
 const token=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
 const read=async(store,kind,key)=>{const r=await store.db.get('SELECT payload FROM sjc_records WHERE kind=:kind AND record_key=:key',{':kind':kind,':key':key});return r?JSON.parse(r.payload):null;};
+const currentId=async store=>(await read(store,'ad_control','current'))?.id || await store.meta('ad_current');
 async function audit(store,action,id=null) { await store.record('ad_audit',token(),{owner:OWNER_ID,action,id,at:new Date().toISOString()}); }
 const eligible=u=>u && u.settings?.ads_enabled!==false && !u.settings?.bot_blocked;
 const audienceSQL="FROM sjc_users WHERE COALESCE(json_extract(payload,'$.settings.ads_enabled'),1) != 0 AND COALESCE(json_extract(payload,'$.settings.bot_blocked'),0) = 0 AND NOT EXISTS(SELECT 1 FROM sjc_records AS bans WHERE bans.kind='user_ban' AND bans.record_key=CAST(sjc_users.id AS TEXT) AND COALESCE(json_extract(bans.payload,'$.active'),1)!=0)";
@@ -48,7 +49,7 @@ async function preview(bot,draft) {
 }
 
 export async function adStatus(bot) {
-  const id=await bot.store.meta('ad_current'),campaign=id&&await read(bot.store,'ad_campaign',id);
+  const id=await currentId(bot.store),campaign=id&&await read(bot.store,'ad_campaign',id);
   let text='<b>📣 Реклама</b>\n\nТекст или фото с подписью → предпросмотр → подтверждение.\nРассылка всем пользователям, кроме отказавшихся от рекламы и заблокировавших бота.';
   const rows=[];
   if(campaign) {
@@ -80,7 +81,7 @@ export async function adRoute(bot,action) {
   }
   if(action==='ads:emergency') {
     await bot.store.setMeta('ad_emergency',Date.now());
-    const current=await bot.store.meta('ad_current');
+    const current=await currentId(bot.store);
     if(current) await bot.store.setMeta('ad_stop:'+current,true);
     await audit(bot.store,'emergency_stop');return adStatus(bot);
   }
@@ -103,19 +104,36 @@ export async function adRoute(bot,action) {
   if(operation==='start'&&draft.confirmed&&draft.previewed) {
     const lock=token(); if(!await bot.store.lock('ad_worker',lock,180)) return bot.panel('Рассылка обрабатывается. Попробуйте через несколько секунд.',BACK);
     try {
-      const oldId=await bot.store.meta('ad_current'),old=oldId&&await read(bot.store,'ad_campaign',oldId);
+      const oldId=await currentId(bot.store),old=oldId&&await read(bot.store,'ad_campaign',oldId);
       if(await read(bot.store,'ad_campaign',id)) {
-        if(oldId!==id && (!old || old.state!=='running' || await bot.store.meta('ad_stop:'+oldId))) await bot.store.setMeta('ad_current',id);
+        if(oldId!==id && (!old || old.state!=='running' || await bot.store.meta('ad_stop:'+oldId))) {await bot.store.record('ad_control','current',{id});await bot.store.setMeta('ad_current',id);}
         return adStatus(bot);
       }
       if(old?.state==='running'&&!await bot.store.meta('ad_stop:'+oldId)) return bot.panel('Сначала дождитесь завершения текущей рассылки или остановите её.',BACK);
       const day=new Date().toISOString().slice(0,10);
-      const reserved=await bot.store.db.run("INSERT INTO sjc_records(kind,record_key,payload) SELECT 'ad_launch',:id,:payload WHERE (SELECT COUNT(*) FROM sjc_records WHERE kind='ad_launch' AND json_extract(payload,'$.day')=:day)<:limit ON CONFLICT(kind,record_key) DO NOTHING",{':id':id,':payload':JSON.stringify({day}),':day':day,':limit':await bot.store.meta('ad_daily_limit') || 3});
-      if(reserved.rowsAffected!==1) return bot.panel('Суточный лимит запусков исчерпан или запуск уже принят. Новый лимит — после 00:00 UTC.',BACK);
-      await audit(bot.store,'start',id);
-      await bot.store.db.run("INSERT OR IGNORE INTO sjc_records(kind,record_key,payload) SELECT 'ad_target',:prefix || printf('%020d',id),json_object('uid',id,'created_at',json_extract(payload,'$.created_at')) "+audienceSQL,{':prefix':id+':'});
-      const snapshot=await bot.store.db.get("SELECT COUNT(*) AS n,MAX(json_extract(payload,'$.uid')) AS max_id FROM sjc_records WHERE kind='ad_target' AND record_key LIKE :prefix",{':prefix':id+':%'});
-      await bot.store.record('ad_campaign',id,{id,post:draft,state:'running',cursor:0,max_id:snapshot.max_id||0,total:snapshot.n,created_at:requestedAt});
+      // One SQLite statement commits the quota reservation, audience, audit, campaign
+      // and current pointer. ad_current in metadata is only a compatibility cache.
+      // An interrupted older release may have reserved this ID already; finish that
+      // initialization using its existing snapshot rather than consume another launch.
+      const launched=await bot.store.db.run(`WITH existing AS (
+        SELECT json_extract(payload,'$.uid') AS id,json_extract(payload,'$.created_at') AS created_at
+        FROM sjc_records WHERE kind='ad_target' AND record_key LIKE :prefix
+      ), audience AS (
+        SELECT id,created_at FROM existing UNION ALL
+        SELECT id,json_extract(payload,'$.created_at') AS created_at ${audienceSQL} AND NOT EXISTS(SELECT 1 FROM existing)
+      ), permitted AS (
+        SELECT 1 WHERE EXISTS(SELECT 1 FROM sjc_records WHERE kind='ad_launch' AND record_key=:id)
+        OR (SELECT COUNT(*) FROM sjc_records WHERE kind='ad_launch' AND json_extract(payload,'$.day')=:day)<:limit
+      ), entries(kind,record_key,payload) AS (
+        SELECT 'ad_launch',:id,json_object('day',:day) UNION ALL
+        SELECT 'ad_audit',:audit_key,:audit UNION ALL
+        SELECT 'ad_control','current',json_object('id',:id) UNION ALL
+        SELECT 'ad_target',:id || ':' || printf('%020d',id),json_object('uid',id,'created_at',created_at) FROM audience UNION ALL
+        SELECT 'ad_campaign',:id,json_object('id',:id,'post',json(:post),'state','running','cursor',0,'max_id',COALESCE((SELECT MAX(id) FROM audience),0),'total',(SELECT COUNT(*) FROM audience),'created_at',:created)
+      ) INSERT INTO sjc_records(kind,record_key,payload)
+      SELECT kind,record_key,payload FROM entries WHERE EXISTS(SELECT 1 FROM permitted)
+      ON CONFLICT(kind,record_key) DO UPDATE SET payload=excluded.payload WHERE excluded.kind='ad_control'`,{':id':id,':prefix':id+':%',':day':day,':limit':await bot.store.meta('ad_daily_limit') || 3,':audit_key':id+':start',':audit':JSON.stringify({owner:OWNER_ID,action:'start',id,at:requestedAt}),':post':JSON.stringify(draft),':created':requestedAt});
+      if(launched.rowsAffected===0) return bot.panel('Суточный лимит запусков исчерпан. Новый лимит — после 00:00 UTC.',BACK);
       await bot.store.setMeta('ad_current',id);
     } finally {await bot.store.unlock('ad_worker',lock);}
     await adTick(bot.store,bot.api,bot.uid);return adStatus(bot);
@@ -127,7 +145,8 @@ export async function adTick(store,api,heldUser=null) {
   if(!await store.meta('active')) return {done:true};
   const lock=token(); if(!await store.lock('ad_worker',lock,180)) return {busy:true};
   try {
-    const id=await store.meta('ad_current'),c=id&&await read(store,'ad_campaign',id);
+    const id=await currentId(store),c=id&&await read(store,'ad_campaign',id);
+    if(id && await store.meta('ad_current')!==id)await store.setMeta('ad_current',id);
     if(!c||c.state!=='running') return {done:true};
     if((await store.meta('ad_emergency') || 0)>=Date.parse(c.created_at) || await store.meta('ad_stop:'+id)) {c.state='stopped';await store.record('ad_campaign',id,c);return {done:true};}
     if(c.retry_at>Date.now()) return {retry_after:Math.ceil((c.retry_at-Date.now())/1000)};

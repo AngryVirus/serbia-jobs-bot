@@ -29,6 +29,26 @@ class EnglishFactsTests(unittest.TestCase):
         self.assertEqual(language_facts('Знание английского обязательно\nСербский не требуется'),
                          (['en'], ['en']))
 
+    def test_independent_requirements_in_one_sentence_keep_their_own_language(self):
+        for text in ('English required, Serbian not required.',
+                     'English required and Serbian not required.',
+                     'Знание английского обязательно, сербский не требуется.',
+                     'Английский обязателен, а сербский не требуется.',
+                     'Obavezno znanje engleskog, srpski nije obavezan.'):
+            with self.subTest(text=text):
+                self.assertEqual(language_facts(text), (['en'], ['en']))
+        for text in ('Russian optional, English required.',
+                     'Russian preferred and English required.'):
+            with self.subTest(text=text):
+                self.assertEqual(language_facts(text), (['ru', 'en'], ['en']))
+
+    def test_shared_language_lists_keep_shared_requirement_without_company_inference(self):
+        for text in ('Russian and English required.', 'Russian, English required.'):
+            with self.subTest(text=text):
+                self.assertEqual(language_facts(text), (['ru', 'en'], ['ru', 'en']))
+        self.assertEqual(language_facts('Russian company, English required.'), (['en'], ['en']))
+        self.assertEqual(language_facts('English required and no experience required.'), (['en'], ['en']))
+
     def test_english_is_not_inferred_from_page_language_or_negated_requirements(self):
         for description in ('We are hiring a developer. Experience required.',
                             'English is not required', 'Знание английского не требуется',

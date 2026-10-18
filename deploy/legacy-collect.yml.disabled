@@ -1,4 +1,6 @@
-name: Check Serbia jobs
+# ARCHIVED Render collector. Kept outside .github/workflows so it cannot run.
+# Production uses Serbia Jobs Serverless; do not re-enable the old collector.
+name: Check Serbia jobs (archived)
 on:
   workflow_dispatch:
   schedule:

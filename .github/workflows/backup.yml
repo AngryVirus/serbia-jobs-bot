@@ -9,6 +9,7 @@ on:
     branches: [main]
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: serbia-jobs-backup
   cancel-in-progress: false
@@ -16,7 +17,11 @@ jobs:
   backup:
     if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'workflow_run' && github.event.workflow_run.head_sha == github.sha)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
+    env:
+      CLOUD_MANAGEMENT_GATE: '1'
+      CLOUD_REQUEST_INTERVAL: '2'
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -34,8 +39,14 @@ jobs:
       - name: Create encrypted snapshot and verify offline recovery
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_PROBE_TOKEN }}
-        run: python3 serverless/backup.py create work/backup/runtime.sjcbk
+        run: python3 serverless/backup.py create work/backup/runtime.sjcbk --attempts 3
+      - name: Verify encrypted artifact and report belong together
+        id: verified
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_PROBE_TOKEN }}
+        run: python3 serverless/backup.py verify-pair work/backup/runtime.sjcbk
       - name: Save encrypted backup only
+        if: steps.verified.conclusion == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: encrypted-sqlite-${{ github.run_id }}

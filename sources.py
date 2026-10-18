@@ -650,26 +650,26 @@ def _status(source: Source, state: str, count: int = 0, detail: str = "", **extr
             "observed_links": source.observed_links, **extra}
 
 
-def collect_source(source: Source, *, detail_limit: int = DEFAULT_DETAIL_LIMIT, fetcher: Fetcher | None = None) -> tuple[list[Job], dict]:
+def collect_source(source: Source, *, detail_limit: int = DEFAULT_DETAIL_LIMIT, fetcher: Fetcher | None = None, include_expired: bool = False) -> tuple[list[Job], dict]:
     if source.requires_permission:
         return [], _status(source, "requires_permission", detail=source.note)
     fetcher = fetcher or Fetcher(source)
     if source.rss_feed:
         from rss_sources import collect_rss
-        return collect_rss(source, fetcher)
+        return collect_rss(source, fetcher, include_expired=include_expired)
     if source.id in {'tg_rabotavserbii', 'tg_radim_serbia'}:
         from telegram_templates import collect_telegram
-        return collect_telegram(source, fetcher)
+        return collect_telegram(source, fetcher, include_expired=include_expired)
     if source.telegram_channel:
         from telegram_sources import collect_channel
-        return collect_channel(source, fetcher)
+        return collect_channel(source, fetcher, include_expired=include_expired)
     if source.id == 'serbiahub':
-        return _collect_serbiahub(source, fetcher)
+        return _collect_serbiahub(source, fetcher, include_expired=include_expired)
     if source.id == 'lakodoposla':
         from source_adapters import collect_lako
-        return collect_lako(source, fetcher, detail_limit)
+        return collect_lako(source, fetcher, detail_limit, include_expired=include_expired)
     if source.feed_url:
-        return _collect_feed(source, fetcher)
+        return _collect_feed(source, fetcher, include_expired=include_expired)
     jobs: dict[str, Job] = {}
     errors: list[str] = []
     error_states: list[str] = []
@@ -726,13 +726,13 @@ def collect_source(source: Source, *, detail_limit: int = DEFAULT_DETAIL_LIMIT, 
         detail = "Объявления не извлечены. Это может быть изменение разметки, JavaScript или отсутствие вакансий; адаптер требует проверки."
     from filters import active, serbia_eligible
     parsed_count = len(jobs)
-    jobs = {url: job for url,job in jobs.items() if active(job.__dict__) and serbia_eligible(job.__dict__)}
+    jobs = {url: job for url,job in jobs.items() if (include_expired or active(job.__dict__)) and serbia_eligible(job.__dict__)}
     if parsed_count > len(jobs):
         detail += f' Отсеяно {parsed_count-len(jobs)} истёкших или явно не подходящих по стране объявлений.'
     return list(jobs.values()), _status(source, state if jobs or state not in {'ok','partial'} else 'empty', len(jobs), detail, discovered=len(links), inspected=inspected, listing_pages=listing_pages, parsed_count=parsed_count)
 
 
-def _collect_feed(source: Source, fetcher: Fetcher) -> tuple[list[Job], dict]:
+def _collect_feed(source: Source, fetcher: Fetcher, *, include_expired: bool = False) -> tuple[list[Job], dict]:
     jobs: dict[str, Job] = {}
     seen: set[str] = set()
     url = source.feed_url
@@ -742,7 +742,7 @@ def _collect_feed(source: Source, fetcher: Fetcher) -> tuple[list[Job], dict]:
             body, _ = fetcher.get(url)
             page_jobs, url = parse_feed_jobs(source, body)
             from filters import active, serbia_eligible
-            jobs.update((job.url, job) for job in page_jobs if active(job.__dict__) and serbia_eligible(job.__dict__))
+            jobs.update((job.url, job) for job in page_jobs if (include_expired or active(job.__dict__)) and serbia_eligible(job.__dict__))
     except FetchError as exc:
         return list(jobs.values()), _status(source, "partial" if jobs else exc.state, len(jobs), exc.detail,
                                            feed=True, inspected=len(seen))
@@ -754,12 +754,14 @@ def _collect_feed(source: Source, fetcher: Fetcher) -> tuple[list[Job], dict]:
     return list(jobs.values()), _status(source, state, len(jobs), detail, feed=True, inspected=len(seen))
 
 
-def collect_all(enabled: Iterable[str] | None = None, *, on_source=None) -> tuple[list[Job], dict[str, dict]]:
+def collect_all(enabled: Iterable[str] | None = None, *, on_source=None, include_expired: bool = False) -> tuple[list[Job], dict[str, dict]]:
     """Collect selected source IDs synchronously; use asyncio.to_thread in a bot.
 
     HTML crawl visits one listing and at most eight detail pages per source. The
     official KlikDoPosla feed is limited to four pages. Selection is explicit:
     an empty iterable means collect nothing, not every source.
+    Cloud callers may include expiry corrections for their existing-only upsert
+    path; ordinary callers continue to receive active vacancies only.
     """
     ids = list(SOURCES) if enabled is None else list(dict.fromkeys(enabled))
     statuses: dict[str, dict] = {}
@@ -769,7 +771,8 @@ def collect_all(enabled: Iterable[str] | None = None, *, on_source=None) -> tupl
         if source_id not in SOURCES:
             statuses[source_id] = {"state": "error", "count": 0, "detail": "Неизвестный источник.", "experimental": True}
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {executor.submit(collect_source, source): source for source in selected}
+        options = {'include_expired': True} if include_expired else {}
+        futures = {executor.submit(collect_source, source, **options): source for source in selected}
         for future in concurrent.futures.as_completed(futures):
             source = futures[future]
             try:
@@ -789,7 +792,7 @@ def collect_all(enabled: Iterable[str] | None = None, *, on_source=None) -> tupl
     return list(jobs.values()), statuses
 
 
-def _collect_serbiahub(source, fetcher):
+def _collect_serbiahub(source, fetcher, *, include_expired=False):
     """Public anonymous API used by the site's frontend (not a private API)."""
     from job_metadata import enrich, text_salary, valid_job_url
     from filters import active, serbia_eligible
@@ -831,7 +834,7 @@ def _collect_serbiahub(source, fetcher):
                     job.salary_currency=currency if currency in ('RSD','EUR','USD') else None
                     job.salary_period='month'
                 if node.get('salaryText'): job.salary_display=clean_text(node['salaryText'])[:150]
-                if active(job.__dict__) and serbia_eligible(job.__dict__) and valid_job_url(url): jobs[url]=job
+                if (include_expired or active(job.__dict__)) and serbia_eligible(job.__dict__) and valid_job_url(url): jobs[url]=job
             total=data.get('total')
             if len(data['items'])<50 or isinstance(total,int) and offset+50>=total: break
     except (FetchError,ValueError) as error:

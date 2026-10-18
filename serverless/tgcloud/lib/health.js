@@ -1,4 +1,5 @@
 import { OWNER_ID } from './owner.js';
+import { successfulCollection } from './analytics.js';
 // Persistent transitions claimed before delivery: ambiguous sends are never replayed.
 export async function healthTick(store,api,now=Date.now()) {
   await store.pruneStaffAudit(now);
@@ -6,8 +7,7 @@ export async function healthTick(store,api,now=Date.now()) {
   const lock=`${now}:${Math.random()}`;
   if(!await store.lock('health',lock,120)) return {busy:true};
   try {
-    const previousRun=await store.meta('last_collection');
-    const last=await store.meta('last_successful_collection') || (!previousRun?.failed && previousRun?.totals?.sources>0 ? previousRun.finished_at : null);
+    const last=await successfulCollection(store);
     const rows=await store.db.all("SELECT state,COUNT(*) AS n FROM sjc_deliveries WHERE json_extract(payload,'$.delivered_at')>=:since GROUP BY state",{':since':new Date(now-7200000).toISOString()});
     const ads=await store.db.all("SELECT json_extract(payload,'$.state') AS state,COUNT(*) AS n FROM sjc_records WHERE kind='ad_delivery' AND json_extract(payload,'$.at')>=:since GROUP BY state",{':since':new Date(now-7200000).toISOString()});
     let backupSince=await store.meta('backup_monitor_since');

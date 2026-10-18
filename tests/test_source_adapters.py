@@ -150,6 +150,44 @@ class LakoAdapterTests(unittest.TestCase):
         self.assertEqual(status['state'], 'partial')
         self.assertNotIn(API + '/postings/3', fetcher.calls)
 
+    def test_serverless_forwards_an_expiry_correction_for_an_existing_api_job(self):
+        expired = lako_node(expiryDate='01.01.2020')
+        routes = {API + '/postings?page=1': json.dumps({'data': [lako_node()]}),
+                  API + '/postings/1': json.dumps({'data': expired})}
+        jobs, _ = collect_source(SOURCES['lakodoposla'], fetcher=FakeFetcher(routes), include_expired=True)
+        self.assertEqual([job.expires_at for job in jobs], ['2020-01-01'])
+
+    def test_serverless_list_closure_without_date_updates_known_url_without_fetching_details(self):
+        closed = lako_node(hasExpired=True, expiryDate=None)
+        fetcher = FakeFetcher({API + '/postings?page=1': json.dumps({'data': [closed, closed]})})
+        jobs, status = collect_source(SOURCES['lakodoposla'], fetcher=fetcher, include_expired=True)
+        self.assertEqual(jobs, [])
+        self.assertEqual(status['withdrawn_urls'], ['https://www.lakodoposla.com/oglasi/support-1'])
+        self.assertEqual(fetcher.calls, [API + '/postings?page=1'])
+        _, legacy = collect_source(SOURCES['lakodoposla'], fetcher=fetcher)
+        self.assertNotIn('withdrawn_urls', legacy)
+
+    def test_serverless_detail_closure_without_date_requires_matching_id_and_public_slug(self):
+        for changes, urls in (
+                ({'hasExpired': True, 'expiryDate': None}, ['https://www.lakodoposla.com/oglasi/support-1']),
+                ({'hasExpired': True, 'id': 2}, []),
+                ({'hasExpired': True, 'slug': '../unsafe-1'}, [])):
+            with self.subTest(changes=changes):
+                routes = {API + '/postings?page=1': json.dumps({'data': [lako_node()]}),
+                          API + '/postings/1': json.dumps({'data': lako_node(**changes)})}
+                jobs, status = collect_source(SOURCES['lakodoposla'], fetcher=FakeFetcher(routes), include_expired=True)
+                self.assertEqual(jobs, [])
+                self.assertEqual(status['withdrawn_urls'], urls)
+
+    def test_serverless_list_closure_ignores_unverified_slug_and_bounds_withdrawals(self):
+        items = [lako_node(1, hasExpired=True, slug='../unsafe-1')]
+        items += [lako_node(i, hasExpired=True, expiryDate=None) for i in range(2, 105)]
+        fetcher = FakeFetcher({API + '/postings?page=1': json.dumps({'data': items})})
+        _, status = collect_source(SOURCES['lakodoposla'], fetcher=fetcher, include_expired=True)
+        self.assertEqual(len(status['withdrawn_urls']), 100)
+        self.assertEqual(fetcher.calls, [API + '/postings?page=1'])
+        self.assertNotIn('unsafe', '\n'.join(status['withdrawn_urls']))
+
     def test_invalid_private_or_expired_api_data_is_never_a_vacancy(self):
         for changes in ({'id': 2}, {'slug': '../other-1'}, {'hasExpired': True}, {'expiryDate': '01.01.2020'},
                         {'jobDescription': '', 'conditionsDescription': ''}):

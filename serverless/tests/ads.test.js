@@ -85,3 +85,45 @@ test('unconfirmed sending claims are never resent after a worker interruption; A
   await tick(f);assert(!f.api.sent.some(p=>p.chat_id===6));
   await assert.rejects(administer({operation:'ads_tick'},{initData:'fake'},f),/Owner CLI/);
 });
+
+test('campaign creation rolls quota, audience and audit back together and retries the same update safely',async()=>{
+ for(const fail of ['ad_audit','ad_control','ad_target','ad_campaign']){
+  const f=await fixture();await f.store.ensure(77,77);const id=await draft(f);
+  await handle(f,callback(OWNER_ID,'ads:confirm:'+id));
+  await f.db.run(`CREATE TRIGGER fail_launch BEFORE INSERT ON sjc_records WHEN NEW.kind='${fail}' ${fail==='ad_audit'?"AND json_extract(NEW.payload,'$.action')='start'":''} BEGIN SELECT RAISE(ABORT,'simulated launch failure'); END`);
+  const start=callback(OWNER_ID,'ads:start:'+id);
+  await assert.rejects(handle(f,start),/simulated launch failure/);
+  for(const kind of ['ad_launch','ad_target','ad_campaign','ad_control'])assert.equal((await f.store.records(kind)).length,0);
+  assert.equal((await f.store.records('ad_audit')).filter(r=>r.action==='start').length,0);
+  assert(!f.api.sent.some(p=>p.chat_id===77));
+  await f.db.run('DROP TRIGGER fail_launch');await handle(f,start);
+  assert.equal((await f.store.records('ad_launch')).length,1);assert.equal((await f.store.records('ad_campaign')).length,1);
+  assert.equal((await f.store.records('ad_audit')).filter(r=>r.action==='start').length,1);
+  await handle(f,callback(OWNER_ID,'ads:start:'+id));await adTick(f.store,f.api);
+  assert.equal(f.api.sent.filter(p=>p.chat_id===77).length,1);
+ }
+});
+
+test('launch resumes an older orphan reservation and snapshot without another quota charge',async()=>{
+ const f=await fixture();await f.store.ensure(77,77);const id=await draft(f);
+ await handle(f,callback(OWNER_ID,'ads:confirm:'+id));await f.store.setMeta('ad_daily_limit',1);
+ await f.store.record('ad_launch',id,{day:'2000-01-01'});
+ await f.store.record('ad_target',id+':'+String(77).padStart(20,'0'),{uid:77,created_at:(await f.store.user(77)).created_at});
+ await f.store.record('ad_launch','another',{day:new Date().toISOString().slice(0,10)});
+ await f.store.ensure(88,88);await handle(f,callback(OWNER_ID,'ads:start:'+id));
+ assert.equal((await campaign(f)).total,1);assert.equal((await f.store.records('ad_launch')).length,2);
+ assert.equal(f.api.sent.filter(p=>p.chat_id===77).length,1);assert.equal(f.api.sent.filter(p=>p.chat_id===88).length,0);
+});
+
+test('a crash before the compatibility pointer cache leaves a campaign that the background worker resumes once',async()=>{
+ const f=await fixture();await f.store.ensure(77,77);const id=await draft(f);
+ await handle(f,callback(OWNER_ID,'ads:confirm:'+id));
+ const run=f.db.run;let fail=true;
+ f.db.run=async(sql,params)=>{if(fail&&sql.includes('INSERT INTO sjc_meta')&&params?.[':key']==='ad_current'){fail=false;throw Error('lost before current pointer');}return run(sql,params);};
+ await assert.rejects(handle(f,callback(OWNER_ID,'ads:start:'+id)),/lost before current pointer/);
+ assert.equal((await f.store.records('ad_campaign')).length,1);assert.equal(await f.store.meta('ad_current'),null);
+ assert(!f.api.sent.some(p=>p.chat_id===77));
+ await adTick(f.store,f.api);await handle(f,callback(OWNER_ID,'ads:start:'+id));await adTick(f.store,f.api);
+ assert.equal(await f.store.meta('ad_current'),id);assert.equal((await f.store.records('ad_launch')).length,1);
+ assert.equal(f.api.sent.filter(p=>p.chat_id===77).length,1);
+});

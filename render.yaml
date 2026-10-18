@@ -1,3 +1,5 @@
+# ARCHIVED deployment example. Do not resume this service for @SerbiaJobsBot.
+# bot.py blocks startup unless an isolated legacy test explicitly opts in.
 services:
   - type: web
     name: serbia-jobs-bot

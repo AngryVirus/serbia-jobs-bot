@@ -149,3 +149,31 @@ test('collection report records completion, counts, sources and uncertain delive
   assert(!report.text.includes(String(OWNER_ID)));
   await assert.rejects(administer({operation:'collection_end',owner:'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'},{ownerRun:true},f),/owner mismatch/);
 });
+
+test('large reviewed report history is not loaded; active review pages stay bounded and preserve concurrent new complaints',async()=>{
+ const f=await fixture();await f.store.putJob(job(1,{url:'https://example.rs/one'}),true);await f.store.putJob(job(2,{url:'http://www.example.rs/one'}),true);
+ for(let uid=1000;uid<1250;uid++)await f.store.record('report',uid+':1',{user_id:uid,job_id:1,group_id:1,reason:'outdated',state:'reviewed',owner_notice:'pending',job_title:'old'.repeat(4000)});
+ for(let uid=2000;uid<2230;uid++)await f.store.record('report',uid+':1',{user_id:uid,job_id:2,group_id:1,reason:uid%2?'duplicate':'outdated',state:'open',owner_notice:uid<2005?'pending':'sent',job_title:'Open report'});
+ const all=f.db.all,reads=[];
+ f.db.all=async(sql,params)=>{const rows=await all(sql,params);if(sql.includes("kind='report'")){assert(rows.length<=100,'unbounded report response');for(const row of rows)if(row.payload)assert.equal(JSON.parse(row.payload).state,'open','reviewed history was fetched');reads.push(rows.length);}return rows;};
+ const report=await ownerReport(f.store);assert.equal(report.pending_reports,230);assert(!('reports' in report));
+ await notifyReports(f.store,f.api);assert.equal(f.api.sent.filter(p=>p.chat_id===OWNER_ID).length,5);
+ await handle(f,callback(5000,'report:1:outdated'));await handle(f,callback(5000,'report:2:duplicate'));
+ assert.equal((await f.db.get("SELECT COUNT(*) AS n FROM sjc_records WHERE kind='report' AND json_extract(payload,'$.user_id')=5000")).n,1);
+ await handle(f,callback(OWNER_ID,'admin:reports:0'));assert.match(f.api.edited.at(-1).text,/231 жалоб/);assert.match(f.api.edited.at(-1).text,/Повтор объявления/);
+ const run=f.db.run;let inserted=false;
+ f.db.run=async(sql,params)=>{if(!inserted&&sql.startsWith('UPDATE sjc_records SET payload=:next')&&sql.includes("kind='report'")){inserted=true;await f.store.record('report','9999:1',{user_id:9999,job_id:2,group_id:1,reason:'not_job',state:'open',owner_notice:'pending'});}return run(sql,params);};
+ await handle(f,callback(OWNER_ID,'admin:keep:2'));assert(inserted);assert(reads.includes(100));
+ assert.equal((await f.db.get("SELECT COUNT(*) AS n FROM sjc_records WHERE kind='report' AND json_extract(payload,'$.state')='open'")).n,1);
+ assert.equal(JSON.parse((await f.db.get("SELECT payload FROM sjc_records WHERE kind='report' AND record_key='9999:1'")).payload).state,'open');
+ assert.equal((await f.db.get("SELECT COUNT(*) AS n FROM sjc_records WHERE kind='report' AND json_extract(payload,'$.state')='reviewed'")).n,481);
+});
+
+test('reported vacancy IDs page across sparse catalog IDs without losing the last review card',async()=>{
+ const f=await fixture();
+ for(let i=1;i<=115;i++){const id=i*3;await f.store.putJob(job(id,{title:'Вакансия '+id}),true);await f.store.record('report',i+':'+id,{user_id:i,job_id:id,group_id:id,reason:'outdated',state:'open',owner_notice:'sent'});}
+ const all=f.db.all,sizes=[];
+ f.db.all=async(sql,params)=>{const rows=await all(sql,params);if(sql.startsWith('SELECT id FROM ('))sizes.push(rows.length);return rows;};
+ await handle(f,callback(OWNER_ID,'admin:reports:114'));
+ assert.match(f.api.edited.at(-1).text,/115\/115/);assert.match(f.api.edited.at(-1).text,/Вакансия 3/);assert.deepEqual(sizes,[100,15]);
+});

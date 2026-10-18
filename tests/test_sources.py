@@ -225,6 +225,28 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual(status["inspected"], 2)
         self.assertTrue(status["experimental"])
 
+    def test_serverless_can_forward_expiry_corrections_without_changing_default_collection(self):
+        source = SOURCES['radim']
+        url = 'https://radim.rs/jobs/support-123'
+        routes = {source.listing_url: '<a href="/jobs/support-123">Support</a>',
+                  url: structured(validThrough='2020-01-01')}
+        self.assertEqual(collect_source(source, fetcher=FakeFetcher(routes))[0], [])
+        fetcher = FakeFetcher(routes)
+        jobs, _ = collect_source(source, fetcher=fetcher, include_expired=True)
+        self.assertEqual([job.expires_at for job in jobs], ['2020-01-01'])
+        self.assertEqual(fetcher.calls, [source.listing_url, url])
+
+    def test_serverless_feed_forwards_expired_corrections_with_the_same_page_budget(self):
+        source = SOURCES['klikdoposla']
+        body = json.dumps({'has_more': False, 'jobs': [
+            {'title': 'Support', 'url': 'https://www.klikdoposla.com/oglasi/1-support',
+             'expires_on': '2020-01-01'}]})
+        self.assertEqual(collect_source(source, fetcher=FakeFetcher({source.feed_url: body}))[0], [])
+        fetcher = FakeFetcher({source.feed_url: body})
+        jobs, _ = collect_source(source, fetcher=fetcher, include_expired=True)
+        self.assertEqual([job.expires_at for job in jobs], ['2020-01-01'])
+        self.assertEqual(fetcher.calls, [source.feed_url])
+
     def test_failure_and_permission_states_are_not_empty_success(self):
         source = SOURCES["radim"]
         jobs, status = collect_source(source, fetcher=FakeFetcher({source.listing_url: FetchError("blocked", "Verification")}))

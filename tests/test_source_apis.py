@@ -30,6 +30,13 @@ class PublicAPITests(unittest.TestCase):
         self.assertEqual(jobs,[])
         self.assertEqual(status['state'],'empty')
 
+    def test_serverless_forwards_expired_api_corrections_but_still_excludes_foreign_jobs(self):
+        body={'total':2,'items':[{'id':1,'title':'Support','city':'Berlin, Germany'},
+                                 {'id':2,'title':'Support','city':'Beograd','expirationDate':'2001-01-01'}]}
+        fetcher=FakeFetcher({'https://serbiahub.com/api/jobs?limit=50&offset=0':json.dumps(body)})
+        jobs,_=collect_source(SOURCES['serbiahub'],fetcher=fetcher,include_expired=True)
+        self.assertEqual([job.expires_at for job in jobs],['2001-01-01'])
+
     def test_maximum_salary_does_not_become_guaranteed_minimum(self):
         source=SOURCES['klikdoposla']
         body=json.dumps({'jobs':[{'title':'Support','url':'https://www.klikdoposla.com/oglasi/123-test',

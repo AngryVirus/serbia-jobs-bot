@@ -8,6 +8,9 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS sjc_records (kind TEXT NOT NULL, record_key TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(kind,record_key))`,
   `CREATE TABLE IF NOT EXISTS sjc_locks (key TEXT PRIMARY KEY, owner TEXT NOT NULL, expires INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS sjc_updates (key TEXT PRIMARY KEY, state TEXT NOT NULL, expires INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS sjc_updates_expires ON sjc_updates(expires)`,
+  `CREATE INDEX IF NOT EXISTS sjc_rate_expires ON sjc_records(json_extract(payload,'$.end')) WHERE kind='rate'`,
+  `CREATE INDEX IF NOT EXISTS sjc_input_effect_expires ON sjc_records(json_extract(payload,'$.expires')) WHERE kind='input_effect'`,
 ];
 export function assert(value, message) { if (!value) throw new Error(message); }
 export const positive = x => Number.isSafeInteger(x) && x > 0;
@@ -26,6 +29,7 @@ export class Store {
       WHERE json_extract(payload,'$.end')<=:now OR json_extract(payload,'$.n')<:limit`, {':key':key,':end':end,':now':now,':limit':limit});
     if(result.rowsAffected===1) return 0;
     const row=await this.db.get("SELECT json_extract(payload,'$.end') AS until FROM sjc_records WHERE kind='rate' AND record_key=:key",{':key':key});
+    if(!row)return this.rate(key,limit,seconds,Math.max(now,Date.now()));
     return Math.max(1,Math.ceil((row.until-now)/1000));
   }
   async lock(key, owner, seconds = 120) {
@@ -36,6 +40,7 @@ export class Store {
   }
   async unlock(key, owner) { await this.db.run('DELETE FROM sjc_locks WHERE key=:key AND owner=:owner', { ':key': key, ':owner': owner }); }
   async ensure(uid, chat) {
+    assert(positive(uid) && chat===uid, 'Private chat must match its user');
     const now = new Date().toISOString();
     await this.db.run('INSERT INTO sjc_users(id,payload) VALUES(:id,:payload) ON CONFLICT(id) DO NOTHING', { ':id': uid, ':payload': JSON.stringify({ user_id: uid, chat_id: chat, settings: defaults(), created_at: now, updated_at: now, last_notified_at: null }) });
     const user = await this.user(uid);
@@ -50,10 +55,53 @@ export class Store {
   async user(uid) { const row = await this.db.get('SELECT payload FROM sjc_users WHERE id=:id', { ':id': uid }); return row ? JSON.parse(row.payload) : null; }
   async saveUser(user) { await this.db.run('UPDATE sjc_users SET payload=:payload WHERE id=:id', { ':id': user.user_id, ':payload': JSON.stringify(user) }); }
   async patch(uid, fields) { const user = await this.user(uid); assert(user, 'Missing user'); user.settings = { ...settings(user.settings), ...fields }; user.updated_at = new Date().toISOString(); await this.saveUser(user); return user.settings; }
-  async deleteUser(uid) {
+  // A receipt contains no input text. The user-row revision makes the state
+  // change atomic without relying on transactions spanning SDK calls.
+  async inputEffect(uid,key,screen='menu') {
+    const recordKey=`${uid}:${key}`;
+    const read=async()=>{const r=await this.db.get("SELECT payload FROM sjc_records WHERE kind='input_effect' AND record_key=:key",{':key':recordKey});return r?JSON.parse(r.payload):null;};
+    const previous=await read();if(previous)return previous;
+    const generation=Date.now().toString(36)+Math.random().toString(36).slice(2);
+    const allocated=await this.db.run("UPDATE sjc_users SET payload=json_set(payload,'$.input_generation',COALESCE(json_extract(payload,'$.input_generation'),:generation),'$.input_clock',MAX(COALESCE(json_extract(payload,'$.input_clock'),0),COALESCE(json_extract(payload,'$.input_applied'),0))+1) WHERE id=:uid",{':uid':uid,':generation':generation});
+    assert(allocated.rowsAffected===1,'Missing user');
+    const user=await this.user(uid),effect={uid,generation:user.input_generation,revision:user.input_clock,screen,expires:Date.now()+172800000};
+    await this.db.run("INSERT INTO sjc_records(kind,record_key,payload) VALUES('input_effect',:key,:payload) ON CONFLICT(kind,record_key) DO NOTHING",{':key':recordKey,':payload':JSON.stringify(effect)});
+    return read();
+  }
+  async inputEffectStatus(uid,key) {
+    const row=await this.db.get("SELECT payload FROM sjc_records WHERE kind='input_effect' AND record_key=:key",{':key':`${uid}:${key}`});
+    if(!row)return null;
+    const effect=JSON.parse(row.payload),user=await this.user(uid);
+    if(!user)return {effect,user,status:effect.screen==='deleted'?'applied':'superseded'};
+    if(user.input_generation!==effect.generation || (user.input_applied||0)>effect.revision)return {effect,user,status:'superseded'};
+    return {effect,user,status:user.input_applied===effect.revision?'applied':'planned'};
+  }
+  async patchInput(uid,fields,key,screen='menu') {
+    if(!key)return this.patch(uid,fields);
+    const effect=await this.inputEffect(uid,key,screen),user=await this.user(uid);
+    assert(user,'Missing user');
+    if(user.input_generation===effect.generation && (user.input_applied||0)<effect.revision) {
+      user.settings=settings({...settings(user.settings),...fields});user.updated_at=new Date().toISOString();user.input_applied=effect.revision;
+      await this.db.run("UPDATE sjc_users SET payload=:payload WHERE id=:uid AND json_extract(payload,'$.input_generation')=:generation AND COALESCE(json_extract(payload,'$.input_applied'),0)<:revision",{':uid':uid,':payload':JSON.stringify(user),':generation':effect.generation,':revision':effect.revision});
+    }
+    return settings((await this.user(uid)).settings);
+  }
+  async pruneTransient(now=Date.now()) {
+    // Each indexed deletion has a fixed upper bound, including after long downtime.
+    await this.db.run('DELETE FROM sjc_updates WHERE key IN (SELECT key FROM sjc_updates WHERE expires<=:now ORDER BY expires LIMIT 100)',{':now':now});
+    await this.db.run("DELETE FROM sjc_records WHERE kind='rate' AND record_key IN (SELECT record_key FROM sjc_records WHERE kind='rate' AND json_extract(payload,'$.end')<=:now ORDER BY json_extract(payload,'$.end') LIMIT 100)",{':now':now});
+    await this.db.run("DELETE FROM sjc_records WHERE kind='input_effect' AND record_key IN (SELECT record_key FROM sjc_records WHERE kind='input_effect' AND json_extract(payload,'$.expires')<=:now ORDER BY json_extract(payload,'$.expires') LIMIT 100)",{':now':now});
+  }
+  async deleteUser(uid,key=null) {
+    let effect;
+    if(key){
+      effect=await this.inputEffect(uid,key,'deleted');const user=await this.user(uid);
+      if(!user || user.input_generation!==effect.generation || (user.input_applied||0)>=effect.revision)return false;
+    }
     await this.db.run("DELETE FROM sjc_records WHERE kind='user_ban' AND record_key=:uid AND json_extract(payload,'$.active')=0",{':uid':String(uid)});
     await this.db.run("DELETE FROM sjc_records WHERE kind='menu_image' AND record_key LIKE :prefix",{':prefix':uid+':%'});
-    await this.db.run("DELETE FROM sjc_records WHERE kind='rate' AND record_key LIKE :prefix",{':prefix':uid+':%'});
+    // Active abuse counters and minimal replay receipts outlive profile deletion.
+    await this.db.run("DELETE FROM sjc_records WHERE kind='rate' AND record_key LIKE :prefix AND json_extract(payload,'$.end')<=:now",{':prefix':uid+':%',':now':Date.now()});
     await this.db.run("DELETE FROM sjc_records WHERE kind='ad_delivery' AND record_key LIKE :suffix",{':suffix': '%:'+uid});
     await this.db.run("DELETE FROM sjc_records WHERE kind='ad_target' AND record_key LIKE :suffix",{':suffix': '%:'+String(uid).padStart(20,'0')});
     // Callers hold the same user lease as notification delivery.
@@ -61,6 +109,7 @@ export class Store {
     await this.db.run("DELETE FROM sjc_records WHERE kind='favorites' AND record_key LIKE :prefix", { ':prefix': uid + ':' + '%' });
     await this.db.run("DELETE FROM sjc_records WHERE kind='report' AND record_key LIKE :prefix", { ':prefix': uid + ':' + '%' });
     await this.db.run('DELETE FROM sjc_users WHERE id=:id', { ':id': uid });
+    return true;
   }
   async jobs() {
     const blocked = new Set((await this.records('moderation')).filter(r => r.blocked).flatMap(r => r.ids));
@@ -92,7 +141,8 @@ export class Store {
     if (!saved) return false;
     const job = JSON.parse(saved.payload);
     if (['title','description','updated_at','_withdrawn_at'].some(k => (job[k] ?? null) !== (row[k] ?? null))) return false;
-    for (const key of ['quality','experience','paperwork_assistance']) job._cloud[key] = row._cloud[key];
+    assert(row._cloud?.version===1,'Invalid derived facts');
+    job._cloud={...row._cloud};
     return (await this.db.run('UPDATE sjc_jobs SET payload=:payload WHERE id=:id AND payload=:old', { ':id': row.id, ':old': saved.payload, ':payload': JSON.stringify(job) })).rowsAffected === 1;
   }
   async job(id) { const row = await this.db.get('SELECT id,payload FROM sjc_jobs WHERE id=:id', { ':id': id }); return row ? { ...JSON.parse(row.payload), id: row.id } : null; }
@@ -153,7 +203,7 @@ export class Store {
   }
   async sourceStatus(source, payload) { await this.db.run("INSERT INTO sjc_records(kind,record_key,payload) VALUES('source_status',:source,:payload) ON CONFLICT(kind,record_key) DO UPDATE SET payload=excluded.payload", { ':source': source, ':payload': JSON.stringify({ source, payload }) }); }
   async claimUpdate(key) {
-    await this.db.run('DELETE FROM sjc_updates WHERE expires<:now', { ':now': Date.now() });
+    await this.pruneTransient();
     return (await this.db.run("INSERT INTO sjc_updates(key,state,expires) VALUES(:key,'processing',:expires) ON CONFLICT(key) DO NOTHING", { ':key': key, ':expires': Date.now() + 180000 })).rowsAffected === 1;
   }
   async releaseUpdate(key) { await this.db.run("DELETE FROM sjc_updates WHERE key=:key AND state='processing'", { ':key': key }); }
