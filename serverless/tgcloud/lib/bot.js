@@ -1,3 +1,4 @@
+import { activity, usage, freshness } from './analytics.js';
 import { OPTIONS } from './config.js';
 import { settings, defaults, choose, hidden, validUrl } from './filters.js';
 import { groupJobs, visibleJobs, hiddenGroups, includesId, decorate } from './catalog.js';
@@ -72,6 +73,8 @@ export class Bot {
       notice = '<i>🙈 Вакансия скрыта</i>\n\n';
     }
     const jobs = eligible();
+    notice+=await freshness(this.store);
+    if(jobId===null && action==='show') {await usage(this.store,'searches');if(!jobs.length)await usage(this.store,'empty');}
     if (!jobs.length) return this.panel(notice + (all.length ? emptyText(groups, this.s) : '⏳ База ещё наполняется. Попробуйте поиск через несколько минут.'), [[button('⚙️ Фильтры', 'filters'), button('🙈 Скрытые', 'hidden:0')], ...BACK]);
     const current = jobs.findIndex(isAnchor);
     if (jobId !== null && current < 0 && ['show','details','translate'].includes(action)) { notice = '<i>Подборка изменилась — показана актуальная вакансия.</i>\n\n'; action = 'show'; mode = 's'; }
@@ -114,6 +117,7 @@ export class Bot {
       const [limit,seconds]={search:[40,60],translate:[10,60],report:[5,60]}[kind];
       const wait=await this.store.rate(`${this.uid}:${kind}`,limit,seconds);
       if(wait) return this.panel(`Слишком много запросов. Повторите через ${wait} сек.`);
+      if(kind==='translate')await usage(this.store,'translations');
     }
     if(action==='ads'||action.startsWith('ads:')) return adRoute(this,action);
     action = action.replace(/^(choose|set):freshness:(today|yesterday)(?=:|$)/, '$1:freshness:7');
@@ -174,6 +178,7 @@ export class Bot {
       claimed = await this.store.claimUpdate(key);
       if (!claimed) return;
       this.s = settings((await this.store.ensure(this.uid,this.chat)).settings);
+      await activity(this.store,this.uid);
       if(this.s.bot_blocked) await this.patch({bot_blocked:false});
       let action;
       if (callback) { action = callback.data || ''; if (this.s.pending_input) await this.patch({ pending_input: null }); }

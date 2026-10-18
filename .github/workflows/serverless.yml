@@ -43,14 +43,29 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: serverless
       - name: Verify runtime and migration tests
+        if: github.event_name != 'schedule'
         run: |
           node --test serverless/tests/*.test.js
           python3 -m unittest discover -s tests -q
-      - name: Run operation
+      - name: Legacy staging operation
+        if: inputs.action == 'stage' || inputs.action == 'cutover'
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_PROBE_TOKEN }}
           SUPABASE_URL: https://iajwyuldjwptkbafpmgl.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CLOUD_ACTION: ${{ inputs.action }}
+          LEGACY_STOPPED: ${{ inputs.legacy_stopped }}
+        run: |
+          if [ "$CLOUD_ACTION" = 'cutover' ]; then
+            test "$LEGACY_STOPPED" = 'true'
+            python3 serverless/migrate.py cutover --legacy-stopped
+          else
+            python3 serverless/migrate.py stage
+          fi
+      - name: Run operation
+        if: inputs.action != 'stage' && inputs.action != 'cutover'
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_PROBE_TOKEN }}
           CLOUD_ACTION: ${{ (github.event_name == 'workflow_run' && 'deploy') || inputs.action || (github.event.schedule == '7,37 * * * *' && 'collect' || 'ads') }}
           LEGACY_STOPPED: ${{ inputs.legacy_stopped }}
         run: |
@@ -60,13 +75,14 @@ jobs:
               python3 serverless/deploy.py
               python3 serverless/refresh_facts.py
               python3 serverless/health_check.py
+              python3 serverless/operations_check.py
               ;;
             collect)
               python3 serverless/collect.py
               python3 serverless/ads_worker.py
               ;;
             ads) python3 serverless/ads_worker.py ;;
-            cutover|resume)
+            resume)
               if [ "$LEGACY_STOPPED" != 'true' ]; then
                 echo 'Suspend Render and disable its old collector before final migration.'
                 exit 1
@@ -74,6 +90,6 @@ jobs:
               python3 serverless/migrate.py "$CLOUD_ACTION" --legacy-stopped
               python3 serverless/collect.py
               ;;
-            check|stage|preview|pause) python3 serverless/migrate.py "$CLOUD_ACTION" ;;
+            check|preview|pause) python3 serverless/migrate.py "$CLOUD_ACTION" ;;
             *) exit 1 ;;
           esac
