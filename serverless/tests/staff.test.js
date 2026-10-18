@@ -7,7 +7,7 @@ import { Store } from '../tgcloud/lib/store.js';
 async function seed(f,uid,role){await f.store.ensure(uid,uid);await f.store.record('staff_role',String(uid),{uid,role,version:'seed'+uid});}
 async function grantDraft(f,actor,target,role){await handle(f,callback(actor,'admin:team:add:'+role));await handle(f,message(actor,String(target)));return 'admin:team:confirm:'+(await f.store.user(actor)).settings.staff_draft.token;}
 async function grant(f,actor,target,role){const action=await grantDraft(f,actor,target,role);await handle(f,callback(actor,action));return action;}
-async function revoke(f,actor,target){const row=await roleRecord(f.store,target);const action=`admin:team:remove:${target}:${row.version}`;await handle(f,callback(actor,action));return action;}
+async function revoke(f,actor,target){const row=await roleRecord(f.store,target);const action=`admin:team:remove:${target}:${row.version}`;await handle(f,callback(actor,action));const draft=(await f.store.user(actor)).settings.staff_draft;if(!draft)return action;const confirm="admin:team:confirm:"+draft.token;await handle(f,callback(actor,confirm));return confirm;}
 async function banDraft(f,actor,target){await handle(f,callback(actor,'admin:bans:new'));await handle(f,message(actor,String(target)));await handle(f,message(actor,'Спам'));return 'admin:bans:confirm:'+(await f.store.user(actor)).settings.ban_draft.token;}
 async function ban(f,actor,target){const action=await banDraft(f,actor,target);await handle(f,callback(actor,action));return action;}
 const last=f=>f.api.edited.at(-1)||f.api.sent.at(-1);
@@ -60,7 +60,7 @@ test('stale revoke cannot remove a newly reassigned role and staff lists do not 
  const f=await fixture();await seed(f,2,'administrator');await seed(f,3,'administrator');await seed(f,1,'moderator');const stale=`admin:team:remove:1:${(await roleRecord(f.store,1)).version}`;
  await grant(f,OWNER_ID,1,'administrator');await handle(f,callback(2,stale));assert.equal(await rawRole(f.store,1),'administrator');
  await handle(f,callback(2,'admin:team:0'));assert(!last(f).text.includes('3 · Администратор'));assert(!callbacks(last(f)).some(x=>x.startsWith('admin:team:remove:3:')));
- await handle(f,callback(2,'admin:audit:0'));assert(!last(f).text.includes('grant_'));await handle(f,callback(OWNER_ID,'admin:audit:0'));assert.match(last(f).text,/Назначен администратор/);
+ await handle(f,callback(2,'admin:audit:0'));assert(!last(f).text.includes('grant_'));await handle(f,callback(OWNER_ID,'admin:audit:0'));assert.match(last(f).text,/Повышен до администратора/);
 });
 test('failed audit insert rolls back the moderation decision and does not silently grant privilege',async()=>{
  const f=await fixture();await seed(f,1,'moderator');const action=await banDraft(f,1,77);
@@ -85,7 +85,7 @@ test('role changes notify the target once, explain both roles on promotion, and 
  const notices=()=>f.api.sent.filter(p=>p.chat_id===77);
  const first=await grant(f,OWNER_ID,77,'moderator');assert.equal(notices().length,1);assert.match(notices()[0].text,/назначены модератором/);assert.equal(callbacks(notices()[0])[0],'admin');
  await handle(f,callback(OWNER_ID,first));assert.equal(notices().length,1);
- await grant(f,OWNER_ID,77,'administrator');assert.equal(notices().length,2);assert.match(notices()[1].text,/сняты полномочия модератора/);assert.match(notices()[1].text,/назначены администратором/);
+ await grant(f,OWNER_ID,77,'administrator');assert.equal(notices().length,2);assert.match(notices()[1].text,/повышены с модератора до администратора/);
  const remove=await revoke(f,OWNER_ID,77);assert.equal(notices().length,3);assert.match(notices()[2].text,/сняты полномочия администратора/);assert.equal(callbacks(notices()[2])[0],'menu');
  await handle(f,callback(OWNER_ID,remove));assert.equal(notices().length,3);
  await grant(f,OWNER_ID,77,'moderator');await revoke(f,OWNER_ID,77);assert.match(notices().at(-1).text,/сняты полномочия модератора/);
@@ -95,4 +95,33 @@ test('ambiguous role notification failure cannot undo or repeat the decision or 
  f.api.sendMessage=async p=>{if(p.chat_id===77){attempts++;assert.equal(await rawRole(f.store,77),'moderator');assert.equal((await roleRecord(f.store,77)).notice.state,'sending');throw Error('private transport details');}return send(p);};
  const action=await grant(f,OWNER_ID,77,'moderator');assert.equal(attempts,1);assert.equal(await rawRole(f.store,77),'moderator');assert.equal((await roleRecord(f.store,77)).notice.state,'unconfirmed');assert.match(last(f).text,/Доставка уведомления не подтверждена/);assert(!JSON.stringify(await roleRecord(f.store,77)).includes('private transport'));
  await handle(f,callback(OWNER_ID,action));assert.equal(attempts,1);assert.equal((await f.store.records('staff_audit')).filter(e=>e.target===77).length,1);
+});
+
+test('employee cards promote, demote and revoke with confirmation, actual actor and fresh version checks',async()=>{
+ const f=await fixture();await seed(f,77,'moderator');await f.store.captureUsername(77,'KnownMember');
+ await handle(f,callback(OWNER_ID,'admin:team:0'));assert(callbacks(last(f)).includes('admin:team:view:77'));assert.match(last(f).text,/@KnownMember/);
+ await handle(f,callback(OWNER_ID,'admin:team:view:77'));let change=callbacks(last(f)).find(x=>x.endsWith(':administrator'));assert(change);assert(callbacks(last(f)).some(x=>x.endsWith(':user')));
+ await handle(f,callback(OWNER_ID,change));assert.equal(await rawRole(f.store,77),'moderator');let confirm=callbacks(last(f))[0];
+ let u=callback(OWNER_ID,confirm);u.callback_query.from={id:OWNER_ID,first_name:'Владелец',username:'ActualOwner'};await handle(f,u);
+ assert.equal(await rawRole(f.store,77),'administrator');let notice=f.api.sent.filter(p=>p.chat_id===77).at(-1);assert.match(notice.text,/повышены/);assert.match(notice.text,/@ActualOwner/);assert.match(notice.text,/Владелец/);assert.match(notice.text,/340780041/);
+ await handle(f,callback(OWNER_ID,change));assert.equal((await f.store.user(OWNER_ID)).settings.staff_draft,null);
+ await handle(f,callback(OWNER_ID,'admin:team:view:77'));change=callbacks(last(f)).find(x=>x.endsWith(':moderator'));await handle(f,callback(OWNER_ID,change));confirm=callbacks(last(f))[0];assert.equal(await rawRole(f.store,77),'administrator');await handle(f,callback(OWNER_ID,confirm));assert.equal(await rawRole(f.store,77),'moderator');assert.match(f.api.sent.filter(p=>p.chat_id===77).at(-1).text,/понижены с администратора до модератора/);
+ await handle(f,callback(OWNER_ID,'admin:team:view:77'));change=callbacks(last(f)).find(x=>x.endsWith(':user'));await handle(f,callback(OWNER_ID,change));assert.equal(await rawRole(f.store,77),'moderator');await handle(f,callback(OWNER_ID,callbacks(last(f))[0]));assert.equal(await rawRole(f.store,77),'user');
+ const notices=f.api.sent.filter(p=>p.chat_id===77);assert.equal(notices.length,3);await handle(f,callback(OWNER_ID,confirm));assert.equal(f.api.sent.filter(p=>p.chat_id===77).length,3);
+ assert.deepEqual((await f.store.records('staff_audit')).map(e=>e.action).sort(),['promote','demote','revoke_moderator'].sort());
+});
+test('administrator employee cards expose only moderator removal; forged promotions and protected targets are denied',async()=>{
+ const f=await fixture();await seed(f,1,'moderator');await seed(f,2,'administrator');await seed(f,3,'administrator');
+ await handle(f,callback(2,'admin:team:view:1'));assert(!callbacks(last(f)).some(x=>x.endsWith(':administrator')||x.endsWith(':moderator')));assert(callbacks(last(f)).some(x=>x.endsWith(':user')));
+ for(const [uid,action] of [[2,'admin:team:set:1:seed1:administrator'],[2,'admin:team:view:3'],[1,'admin:team:view:2'],[OWNER_ID,'admin:team:view:'+OWNER_ID]]){await handle(f,callback(uid,action));assert(!callbacks(last(f)).some(x=>x.startsWith('admin:team:confirm:')));}
+ const forged=callback(OWNER_ID,'admin:team:set:1:seed1:administrator');forged.callback_query.message.chat.id=2;await handle(f,forged);assert.equal(await rawRole(f.store,1),'moderator');
+});
+test('team audit expires after ten days, including scheduled health cleanup, without deleting decisions or other audit records',async()=>{
+ const f=await fixture(),now=Date.now(),cutoff=now-10*86400000;
+ for(const [key,at] of [['old',cutoff-1],['boundary',cutoff],['recent',now]])await f.store.record('staff_audit',key,{at:new Date(at).toISOString(),actor:{id:OWNER_ID},actor_role:'owner',action:'ban',target:77});
+ await seed(f,77,'moderator');await f.store.record('ad_audit','old',{at:new Date(cutoff-1).toISOString()});
+ const {healthTick}=await import('../tgcloud/lib/health.js');await f.store.setMeta('active',false);await healthTick(f.store,f.api,now);
+ assert.equal((await f.store.records('staff_audit')).length,2);assert.equal(await rawRole(f.store,77),'moderator');assert.equal((await f.store.records('ad_audit')).length,1);
+ await f.store.record('staff_audit','expired',{at:new Date(cutoff-10000).toISOString()});await f.store.setMeta('active',true);await handle(f,callback(OWNER_ID,'admin:audit:0'));assert.equal((await f.store.records('staff_audit')).length,1);assert.match(last(f).text,/последние 10 дней/);
+ await f.store.record('staff_audit','expired',{at:new Date(cutoff-10000).toISOString()});await grant(f,OWNER_ID,88,'moderator');assert(!(await f.db.get("SELECT payload FROM sjc_records WHERE kind='staff_audit' AND record_key='expired'")));
 });
