@@ -6,7 +6,8 @@
     "test": "node --test tests/*.test.js"
   },
   "devDependencies": {
-    "@tgcloud/cli": "0.2.0"
+    "@tgcloud/cli": "0.2.0",
+    "pako": "2.1.0"
   },
   "engines": {
     "node": ">=22.13"

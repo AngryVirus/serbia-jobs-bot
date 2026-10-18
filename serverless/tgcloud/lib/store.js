@@ -43,6 +43,7 @@ export class Store {
   async saveUser(user) { await this.db.run('UPDATE sjc_users SET payload=:payload WHERE id=:id', { ':id': user.user_id, ':payload': JSON.stringify(user) }); }
   async patch(uid, fields) { const user = await this.user(uid); assert(user, 'Missing user'); user.settings = { ...settings(user.settings), ...fields }; user.updated_at = new Date().toISOString(); await this.saveUser(user); return user.settings; }
   async deleteUser(uid) {
+    await this.db.run("DELETE FROM sjc_records WHERE kind='menu_image' AND record_key LIKE :prefix",{':prefix':uid+':%'});
     await this.db.run("DELETE FROM sjc_records WHERE kind='rate' AND record_key LIKE :prefix",{':prefix':uid+':%'});
     await this.db.run("DELETE FROM sjc_records WHERE kind='ad_delivery' AND record_key LIKE :suffix",{':suffix': '%:'+uid});
     await this.db.run("DELETE FROM sjc_records WHERE kind='ad_target' AND record_key LIKE :suffix",{':suffix': '%:'+String(uid).padStart(20,'0')});
