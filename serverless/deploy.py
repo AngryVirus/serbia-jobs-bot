@@ -5,9 +5,9 @@ from pathlib import Path
 import sys
 from cloud import call, cli, invoke, routing_identity
 
-# Reviewed predecessor: 48f5ae7 (staff cards and ten-day audit retention).
+# Reviewed predecessor: 94116cd (verified release hardening).
 # A later release must explicitly review and update its predecessor digest.
-PREVIOUS_DIGEST = 'b6c3b1f42a04a1bdbcfdaf2971b56ae09f28940cc7e8e6634abd6c7e0e05d37c'  # pragma: allowlist secret
+PREVIOUS_DIGEST = '110c8f88e0b9d966933bcf5abaa5e3d0dcc50ded72e4669905406ac6325af828'  # pragma: allowlist secret
 
 
 def digest(modules):
