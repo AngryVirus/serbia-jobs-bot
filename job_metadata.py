@@ -5,18 +5,49 @@ from filters import normalize
 
 LANGUAGE_NAMES = {'ru': ('russian', 'ruski', 'русск'), 'sr': ('serbian', 'srpsk', 'сербск'),
                   'en': ('english', 'englesk', 'английск'), 'de': ('german', 'nemack', 'немецк')}
+_LANGUAGE_WORD = re.compile(r'\b(?:' + '|'.join(re.escape(normalize(root)) for roots in LANGUAGE_NAMES.values() for root in roots) + r')\w*')
+_LANGUAGE_POSITIVE = re.compile(r'requir|mandatory|must|fluency|fluent|knowledge|proficien|welcome|speak|work(?:ing)? (?:in|language)|znanje|poznavanje|obavez|знани|владени|треб|обязател|говорящ|приветств|работ.{0,20} на')
+_LANGUAGE_NEGATIVE = re.compile(r'not (?:required|mandatory|necessary)|no .{0,25} required|не (?:нужен|нужно|требуется|обязател)|необязател|bez znanja|nije (?:potreb|obavez)')
+_LANGUAGE_OPTIONAL = re.compile(r'optional|preferred|nice to have|желател|преимуществ|pozeljn|prednost')
+_LANGUAGE_REQUIRED = re.compile(r'requir|mandatory|must|obavez|треб|обязател')
+
+
+def _language_clauses(text):
+    """Keep shared language lists, but separate independent requirements."""
+    for raw in re.split(r'[\n.!?;]|\b(?:but|however|whereas|но|однако|а|ali|dok)\b', text, flags=re.I):
+        pending = ''
+        for item in raw.split(','):
+            item = normalize(item)
+            # "Russian, English required" is one list; "Russian company,
+            # English required" must not invent Russian as a job language.
+            remainder = _LANGUAGE_WORD.sub('', item)
+            remainder = re.sub(r'\b(?:languages?|язык\w*|jezik\w*|and|or|и|или|i)\b|[\s:/&-]', '', remainder)
+            if _LANGUAGE_WORD.search(item) and not remainder:
+                pending += item + ' '
+                continue
+            item = pending + item
+            pending = ''
+            start = 0
+            for conjunction in re.finditer(r'\b(?:and|и|i)\b', item):
+                left, right = item[start:conjunction.start()], item[conjunction.end():]
+                def has_cue(value):
+                    return _LANGUAGE_POSITIVE.search(value) or _LANGUAGE_NEGATIVE.search(value) or _LANGUAGE_OPTIONAL.search(value)
+                if has_cue(left) and has_cue(right):
+                    yield left
+                    start = conjunction.end()
+            yield item[start:]
 
 
 def language_facts(text):
     accepted, required = [], []
-    sentences = [normalize(part) for part in re.split(r'[\n.!?;]', text)]
+    clauses = list(_language_clauses(text))
     for code, roots in LANGUAGE_NAMES.items():
-        for sentence in sentences:
-            if not any(re.search(r'\b' + re.escape(normalize(root)) + r'\w*', sentence) for root in roots): continue
-            if re.search(r'not required|no .{0,25} required|не (?:нужен|требуется|обязател)|bez znanja', sentence): continue
-            if re.search(r'requir|mandatory|fluency|fluent|knowledge|proficien|welcome|speak|work(?:ing)? (?:in|language)|znanje|poznavanje|obavez|знани|владени|треб|говорящ|приветств|работ.{0,20} на', sentence) and not re.search(r'datasets?|corpora|training data|учебн.{0,15}данн|обучающ.{0,15}данн',sentence):
+        for clause in clauses:
+            if not any(re.search(r'\b' + re.escape(normalize(root)) + r'\w*', clause) for root in roots): continue
+            if _LANGUAGE_NEGATIVE.search(clause): continue
+            if (_LANGUAGE_POSITIVE.search(clause) or _LANGUAGE_OPTIONAL.search(clause)) and not re.search(r'datasets?|corpora|training data|учебн.{0,15}данн|обучающ.{0,15}данн',clause):
                 if code not in accepted: accepted.append(code)
-                if re.search(r'requir|mandatory|must|obavez|треб|обязател', sentence) and code not in required: required.append(code)
+                if _LANGUAGE_REQUIRED.search(clause) and not _LANGUAGE_OPTIONAL.search(clause) and code not in required: required.append(code)
     return accepted, required
 
 

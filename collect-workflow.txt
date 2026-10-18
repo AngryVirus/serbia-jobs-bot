@@ -1,4 +1,6 @@
-name: Check Serbia jobs
+# ARCHIVED Render collector. Do not install under .github/workflows/.
+# Production uses the Serbia Jobs Serverless workflow.
+name: Check Serbia jobs (archived)
 on:
   workflow_dispatch:
   schedule:

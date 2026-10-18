@@ -142,6 +142,55 @@ process.stdout.write(JSON.stringify(rows));
             self.assertEqual(local.execute("SELECT payload FROM sjc_meta WHERE key='active'").fetchone()[0], 'false')
             self.assertGreater(json.loads(local.execute("SELECT payload FROM sjc_meta WHERE key='ad_emergency'").fetchone()[0]), 10**15)
 
+    def test_cleanup_failure_preserves_verified_pair_and_does_not_mask_export_error(self):
+        def invoke(op,**fields):
+            if op=='backup_create':return {'version':1,'counts':{t:len(v) for t,v in self.rows.items()}}
+            if op=='backup_page':return {'rows':self.rows[fields['table']][fields['offset']:fields['offset']+20]}
+            raise RuntimeError('Synthetic cleanup outage; details must stay private')
+        with tempfile.TemporaryDirectory() as directory,patch.object(backup,'invoke',side_effect=invoke),patch.object(backup,'environment',return_value=self.env),contextlib.redirect_stdout(io.StringIO()),contextlib.redirect_stderr(io.StringIO()):
+            path=Path(directory)/'ready.sjcbk';backup.create_backup(path)
+            self.assertTrue(backup.verify_pair(path)['integrity'])
+            self.assertFalse(path.with_suffix('.resume.sjcbk').exists())
+            with patch.object(backup,'build_database',side_effect=ValueError('Original export failure')):
+                with self.assertRaisesRegex(ValueError,'Original export failure'):backup.create_backup(Path(directory)/'failed.sjcbk')
+            self.assertFalse((Path(directory)/'failed.report.json').exists())
+
+    def test_interrupted_export_resumes_encrypted_checkpoint_without_rereading_saved_pages(self):
+        calls=[];interrupt=True
+        manifest={'version':1,'pagination':'keyset-v1','counts':{t:len(v) for t,v in self.rows.items()}}
+        def invoke(op,**fields):
+            calls.append((op,fields.copy()))
+            if op=='backup_create':return manifest
+            if op=='backup_release':return {'released':True}
+            self.assertEqual(op,'backup_page')
+            offset=int(fields['after'] or 0)
+            if interrupt and fields['table']=='sjc_records' and offset==1:
+                raise backup.CloudRequestError('Synthetic read timeout',transient=True)
+            return {'rows':self.rows[fields['table']][offset:offset+1],'next':str(offset+1)}
+        with tempfile.TemporaryDirectory() as directory,patch.object(backup,'invoke',side_effect=invoke),patch.object(backup,'environment',return_value=self.env),contextlib.redirect_stdout(io.StringIO()):
+            path=Path(directory)/'runtime.sjcbk'
+            with self.assertRaises(backup.CloudRequestError):backup.create_backup(path)
+            checkpoint=path.with_suffix('.resume.sjcbk')
+            self.assertTrue(checkpoint.exists());self.assertNotIn(b'sjc_records',checkpoint.read_bytes())
+            self.assertNotIn('backup_release',[op for op,_ in calls])
+            first_identifier=calls[0][1]['id'];calls.clear();interrupt=False
+            backup.create_backup(path)
+            self.assertEqual(calls[0][1]['id'],first_identifier);self.assertTrue(calls[0][1]['resume'])
+            record_pages=[f for op,f in calls if op=='backup_page' and f['table']=='sjc_records']
+            self.assertEqual(record_pages[0]['after'],'1')
+            self.assertTrue(backup.verify_pair(path)['offline_bot']);self.assertFalse(checkpoint.exists())
+
+    def test_pair_validation_rejects_report_from_a_different_artifact(self):
+        def invoke(op,**fields):
+            if op=='backup_create':return {'version':1,'counts':{t:len(v) for t,v in self.rows.items()}}
+            if op=='backup_page':return {'rows':self.rows[fields['table']][fields['offset']:fields['offset']+20]}
+            return {'released':True}
+        with tempfile.TemporaryDirectory() as directory,patch.object(backup,'invoke',side_effect=invoke),patch.object(backup,'environment',return_value=self.env),contextlib.redirect_stdout(io.StringIO()):
+            path=Path(directory)/'runtime.sjcbk';backup.create_backup(path)
+            report=json.loads(path.with_suffix('.report.json').read_text());report['artifact_sha256']='0'*64
+            path.with_suffix('.report.json').write_text(json.dumps(report))
+            with self.assertRaisesRegex(ValueError,'pair required'):backup.verify_pair(path)
+
 
 if __name__ == '__main__':
     unittest.main()

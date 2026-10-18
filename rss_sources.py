@@ -9,7 +9,7 @@ from job_metadata import enrich, remote_fact, text_salary
 from sources import FetchError, Job, _status, canonical_url, clean_text, is_detail_url, parse_page
 
 
-def collect_rss(source, fetcher):
+def collect_rss(source, fetcher, *, include_expired=False):
     jobs = {}
     try:
         body, _ = fetcher.get(source.listing_url)
@@ -41,7 +41,7 @@ def collect_rss(source, fetcher):
                       published_at=published, remote=remote_fact(description))
             job.salary_min, job.salary_currency, job.salary_period = text_salary(description)
             job = enrich(job)
-            if active(job.__dict__) and serbia_eligible(job.__dict__):
+            if (include_expired or active(job.__dict__)) and serbia_eligible(job.__dict__):
                 jobs[url] = job
     except FetchError as error:
         return [], _status(source, error.state, detail=error.detail)

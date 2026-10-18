@@ -1,4 +1,5 @@
 import { teamPanel,auditPanel,staffHomeDocument } from './staff.js';
+import { roleNoticeTick } from './staff.js';
 import { banPanel, banNoticeTick, banNoticeText } from './bans.js';
 import { Bot } from './bot.js';
 import { renderImage } from './image-renderer.js';
@@ -6,14 +7,14 @@ import { sourceHistory, analyticsPanel, freshness, deliveryForbidden } from './a
 import { backupOperation } from './backup.js';
 import { healthTick } from './health.js';
 import { Store, TABLES, assert, positive } from './store.js';
-import { settings, contains, belgradeDay } from './filters.js';
+import { settings, contains, belgradeDay, validUrl } from './filters.js';
 import { groupJobs, visibleJobs, hiddenGroups } from './catalog.js';
 import { SOURCE_NAMES } from './config.js';
 import { sourceEnabled } from './source-policy.js';
 import { adTick } from './ads.js';
 import { ownerReport, OWNER_ID, notifyReports } from './owner.js';
 import { card, jobButtons, menu, filtersPanel, choicePanel, translatedCard } from './ui.js';
-export async function notifyOne(store, api, uid) {
+export async function notifyOne(store, api, uid, catalog) {
   assert(positive(uid), 'Invalid subscriber');
   const cooldown = await store.meta('notification_cooldown');
   if (cooldown > Date.now()) return { sent: 0, retry_after: Math.ceil((cooldown-Date.now())/1000) };
@@ -27,9 +28,12 @@ export async function notifyOne(store, api, uid) {
     if (s.notifications === 'off') return { sent: 0, done: true };
     if (s.notifications_after_id == null) { await store.patch(uid,{ notifications_after_id: await store.latest() }); return { sent: 0, done: true }; }
     const delivered = new Set((await store.db.all('SELECT job_id FROM sjc_deliveries WHERE user_id=:uid', { ':uid': uid })).map(r => r.job_id));
-    const groups = groupJobs(await store.jobs());
+    const groups = catalog ? await catalog() : groupJobs(await store.jobs());
     const j = visibleJobs(groups, s).reverse().find(j => j._duplicate_ids.every(id => id > s.notifications_after_id && !delivered.has(id)));
     if (!j) return { sent: 0, done: true };
+    // A catalog is shared only within one bounded batch. Moderation remains fresh.
+    const moderated=await store.db.get("SELECT 1 AS blocked FROM sjc_records,json_each(sjc_records.payload,'$.ids') AS ids WHERE kind='moderation' AND json_extract(sjc_records.payload,'$.blocked')=1 AND ids.value IN (SELECT value FROM json_each(:ids)) LIMIT 1",{':ids':JSON.stringify(j._duplicate_ids)});
+    if(moderated)return {sent:0,done:false};
     const params = { ':uid': uid, ':jid': j.id }, payload = { user_id: uid, job_id: j.id, delivered_at: new Date().toISOString() };
     const result = await store.db.run("INSERT INTO sjc_deliveries(user_id,job_id,state,payload) VALUES(:uid,:jid,'sending',:payload) ON CONFLICT(user_id,job_id) DO NOTHING", { ...params, ':payload': JSON.stringify(payload) });
     if (result.rowsAffected !== 1) return { sent: 0 };
@@ -58,6 +62,30 @@ export async function notifyOne(store, api, uid) {
     }
   } finally { await store.unlock(key,owner); }
 }
+export async function notifyBatch(store,api,limit=10) {
+  assert(Number.isSafeInteger(limit)&&limit>=1&&limit<=10,'Invalid notification batch');
+  const lease=`${Date.now()}:${Math.random()}`;
+  if(!await store.lock('notification_batch',lease,180))return {sent:0,uncertain:0,busy:true,done:false};
+  try{
+    let cursor=await store.meta('notification_cursor')||0,pending=Boolean(await store.meta('notification_round_pending')),groups;
+    const catalog=async()=>groups||(groups=groupJobs(await store.jobs()));
+    const ids=await store.db.all("SELECT id FROM sjc_users WHERE id>:cursor AND COALESCE(json_extract(payload,'$.settings.notifications'),'off')!='off' ORDER BY id LIMIT :limit",{':cursor':cursor,':limit':limit});
+    let sent=0,uncertain=0;
+    for(const {id} of ids){
+      if(!await store.meta('active'))return {sent,uncertain,done:true,paused:true};
+      const result=await notifyOne(store,api,id,catalog);
+      sent+=result.sent||0;uncertain+=Number(Boolean(result.uncertain));
+      if(result.retry_after)return {sent,uncertain,done:false,retry_after:result.retry_after};
+      pending=pending||!result.done;
+      // Progress follows each completed UID, so a restarted worker starts at the tail.
+      await store.setMeta('notification_round_pending',pending);
+      await store.setMeta('notification_cursor',id);cursor=id;
+    }
+    const more=await store.db.get("SELECT 1 AS n FROM sjc_users WHERE id>:cursor AND COALESCE(json_extract(payload,'$.settings.notifications'),'off')!='off' LIMIT 1",{':cursor':cursor});
+    if(!more){await store.setMeta('notification_cursor',0);await store.setMeta('notification_round_pending',false);return {sent,uncertain,done:!pending};}
+    return {sent,uncertain,done:false};
+  }finally{await store.unlock('notification_batch',lease);}
+}
 export async function administer(input, ctx, deps) {
   assert(ctx?.ownerRun === true && !ctx.initData && !ctx.update, 'Owner CLI context required');
   const me = await deps.api.getMe();
@@ -80,7 +108,7 @@ export async function administer(input, ctx, deps) {
     return {sent:1,edited_in_place:3,owner_only:true};
   }
   if(op==='health_tick') return healthTick(store,deps.api);
-  if(op==='ads_tick') {const notices=await banNoticeTick(store,deps.api,deps.InputFile);return {...await adTick(store,deps.api),ban_notices:notices};}
+  if(op==='ads_tick') {const notices=await banNoticeTick(store,deps.api,deps.InputFile),roles=await roleNoticeTick(store,deps.api);return {...await adTick(store,deps.api),ban_notices:notices,role_notices:roles};}
   if (op === 'init') {
     await store.init();
     if(!await store.meta('analytics_started'))await store.setMeta('analytics_started',new Date().toISOString().slice(0,10));
@@ -111,6 +139,8 @@ export async function administer(input, ctx, deps) {
     assert(typeof deps.api.sendPhoto==='function','Photo sending is unavailable in this runtime');
     const sql=await store.db.get("SELECT json_extract(json_object('enabled',1),'$.enabled') AS enabled,printf('%020d',42) AS key");
     assert(sql.enabled===1 && sql.key==='00000000000000000042','Advertising queue SQL unsupported');
+    const window=await store.db.get('SELECT SUM(n) OVER (ORDER BY n) AS total FROM (SELECT 1 AS n UNION ALL SELECT 2 AS n) ORDER BY n DESC LIMIT 1');
+    assert(window.total===3,'Bounded maintenance pagination SQL unsupported');
     const start = Date.now(), jobs = await store.jobs(), groups = groupJobs(jobs);
     const visible = visibleJobs(groups, settings());
     for (const job of jobs) {
@@ -176,6 +206,33 @@ export async function administer(input, ctx, deps) {
   }
   // Cron and delivery are inert until cutover; no baseline import can send mail.
   assert(await store.meta('active'), 'Cloud bot not active');
+  if(op==='facts_status')return {version:await store.meta('facts_version'),progress:await store.meta('facts_progress')};
+  if(['facts_begin','facts_page','facts_apply','facts_finish','facts_release'].includes(op)){
+    assert(typeof input.version==='string'&&/^[a-f0-9]{64}$/.test(input.version)&&typeof input.owner==='string'&&/^[a-f0-9-]{36}$/.test(input.owner),'Invalid facts migration');
+    if(op==='facts_release'){await store.unlock('facts_refresh',input.owner);return {released:true};}
+    assert(await store.lock('facts_refresh',input.owner,600),'Facts migration busy');
+    let progress=await store.meta('facts_progress');
+    if(op==='facts_begin'){
+      if(!progress||progress.version!==input.version||input.force===true){progress={version:input.version,after:0,upper:await store.latest(),started_at:new Date().toISOString()};await store.setMeta('facts_progress',progress);}
+      return progress;
+    }
+    assert(progress?.version===input.version,'Facts migration version changed');
+    if(op==='facts_page'){
+      const params={':after':progress.after,':upper':progress.upper,':bytes':100*1024};
+      const rows=await store.db.all('SELECT id,payload FROM (SELECT id,payload,SUM(length(CAST(payload AS BLOB))+64) OVER (ORDER BY id) AS bytes FROM (SELECT id,payload FROM sjc_jobs WHERE id>:after AND id<=:upper ORDER BY id LIMIT 100)) WHERE bytes<=:bytes ORDER BY id',params);
+      if(!rows.length)assert(!await store.db.get('SELECT 1 AS n FROM sjc_jobs WHERE id>:after AND id<=:upper LIMIT 1',{':after':progress.after,':upper':progress.upper}),'Job exceeds safe facts page size');
+      return {rows:rows.map(r=>({...JSON.parse(r.payload),id:r.id})),after:progress.after,upper:progress.upper};
+    }
+    if(op==='facts_apply'){
+      assert(Number.isSafeInteger(input.after)&&input.after>=progress.after&&input.after<=progress.upper&&Array.isArray(input.rows)&&input.rows.length<=100&&input.rows.every(r=>positive(r.id)&&r.id>progress.after&&r.id<=input.after&&r._cloud?.version===1),'Invalid facts batch');
+      let updated=0;
+      for(const row of input.rows)if(await store.refreshFacts(row))updated++;
+      await store.setMeta('facts_progress',{...progress,after:input.after});
+      return {updated,skipped:input.rows.length-updated};
+    }
+    assert(!await store.db.get('SELECT 1 AS n FROM sjc_jobs WHERE id>:after AND id<=:upper LIMIT 1',{':after':progress.after,':upper':progress.upper}),'Facts migration incomplete');
+    await store.setMeta('facts_version',input.version);await store.setMeta('facts_progress',null);await store.unlock('facts_refresh',input.owner);return {complete:true};
+  }
   if (op === 'collection_begin' || op === 'collect' || op === 'collection_end') {
     assert(typeof input.owner === 'string' && /^[a-f0-9-]{36}$/.test(input.owner), 'Collection owner required');
     if (op === 'collection_end') {
@@ -202,9 +259,13 @@ export async function administer(input, ctx, deps) {
     }
     assert(Object.hasOwn(SOURCE_NAMES,input.source) && Array.isArray(input.jobs) && input.jobs.length <= 50 && input.jobs.every(j => j.source === input.source), 'Invalid source batch');
     let added = 0;
-    for (const j of input.jobs) if (await store.putJob(j)) added++;
+    for (const j of input.jobs) {
+      // Closed/expired updates invalidate known records without importing source archives.
+      if(j._cloud?.expires_ms!=null && j._cloud.expires_ms<=Date.now() && !await store.db.get('SELECT 1 AS n FROM sjc_jobs WHERE source_key=:key',{':key':JSON.stringify([j.source,j.url])}))continue;
+      if(await store.putJob(j))added++;
+    }
     const withdrawn=input.status?.withdrawn_urls || [];
-    assert(Array.isArray(withdrawn) && withdrawn.length<=120 && withdrawn.every(url=>typeof url==='string' && /^https:\/\/t\.me\/[A-Za-z0-9_]+\/\d+$/.test(url)), 'Invalid withdrawn links');
+    assert(Array.isArray(withdrawn) && withdrawn.length<=120 && withdrawn.every(url=>/^(tg_|telegram_)/.test(input.source)?typeof url==='string' && /^https:\/\/t\.me\/[A-Za-z0-9_]+\/\d+$/.test(url):validUrl(url)&&url.startsWith('https://')), 'Invalid withdrawn links');
     await store.withdraw(input.source,withdrawn);
     if (input.status) await store.sourceStatus(input.source,input.status);
     return { added };
@@ -214,5 +275,6 @@ export async function administer(input, ctx, deps) {
     return { ids: rows.filter(u => settings(u.settings).notifications !== 'off').map(u => u.user_id), next: rows.length === 50 ? (input.offset || 0)+50 : null };
   }
   if (op === 'notify') return notifyOne(store,deps.api,input.user_id);
+  if (op === 'notify_batch') return notifyBatch(store,deps.api,input.limit??10);
   throw new Error('Unknown owner operation');
 }

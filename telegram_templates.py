@@ -184,7 +184,7 @@ def _preview_url(source, value):
         return ''
 
 
-def collect_telegram(source, fetcher):
+def collect_telegram(source, fetcher, *, include_expired=False):
     jobs, seen_posts, seen_pages = {}, set(), set()
     withdrawn = []
     url = source.listing_url
@@ -210,7 +210,7 @@ def collect_telegram(source, fetcher):
                 if post.get('body') and quality_reason('\n'.join(post['body'].lines)) == 'closed':
                     withdrawn.append('https://t.me/' + post_id)
                 job = _job(source, post)
-                if job and active(job.__dict__) and serbia_eligible(job.__dict__):
+                if job and (include_expired or active(job.__dict__)) and serbia_eligible(job.__dict__):
                     jobs[job.url] = job
             oldest = min(int(post.split('/')[1]) for post in page.posts)
             url = next((candidate for href in page.older

@@ -6,6 +6,7 @@ import { Store } from '../tgcloud/lib/store.js';
 import { healthTick } from '../tgcloud/lib/health.js';
 import { adTick } from '../tgcloud/lib/ads.js';
 import { OWNER_ID } from '../tgcloud/lib/owner.js';
+import { freshness,successfulCollection } from '../tgcloud/lib/analytics.js';
 
 test('atomic persistent quotas under parallel calls and a new Store instance',async()=>{
  const f=await fixture(),now=Date.now();
@@ -92,7 +93,7 @@ test('emergency during campaign creation also cancels the launch before its firs
  const run=f.db.run;let stopped=false;
  f.db.run=async(sql,params)=>{
   const result=await run(sql,params);
-  if(!stopped && sql.startsWith('INSERT OR IGNORE') && sql.includes('ad_target')) {
+  if(!stopped && sql.includes('entries(kind,record_key,payload)') && sql.includes("'ad_campaign'")) {
    stopped=true;await handle(f,callback(OWNER_ID,'ads:emergency'));
   }
   return result;
@@ -128,4 +129,17 @@ test('parallel live advertising workers claim each recipient once',async()=>{
  }
  const messages=f.api.sent.filter(p=>p.text?.startsWith('📣') && p.chat_id!==OWNER_ID);
  assert.equal(messages.length,15);assert.equal(new Set(messages.map(p=>p.chat_id)).size,15);
+});
+
+test('health and user freshness reject an explicit zero healthy-source count but accept legacy success records',async()=>{
+ const now=Date.now();
+ for(const [healthy,failed,expected] of [[0,false,false],[1,false,true],[undefined,false,true],[1,true,false]]){
+  const f=await fixture(),totals={sources:14};if(healthy!==undefined)totals.healthy_sources=healthy;
+  await f.store.setMeta('last_collection',{finished_at:new Date(now).toISOString(),failed,totals});
+  assert.equal(Boolean(await successfulCollection(f.store)),expected);
+  assert.equal((await freshness(f.store,now))==='',expected);
+  await healthTick(f.store,f.api,now);assert.equal(f.api.sent.some(p=>p.text.includes('Нет успешного сбора')),!expected);
+  await f.store.setMeta('last_successful_collection',new Date(now-3*3600000).toISOString());
+  assert.match(await freshness(f.store,now),/3 ч назад/);
+ }
 });

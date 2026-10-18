@@ -62,8 +62,9 @@ test('quality counts expired and undated records, and flags candidates without m
 test('new panels reject forged owner identity and contain no individual usage details',async()=>{
  const f=await fixture();await f.store.putJob(job(1),true);
  for(const action of ['admin:stats','admin:stats:delivery','admin:stats:usage','admin:quality','admin:quality:sources:0','admin:quality:duplicates:0']) {
+  const sent=f.api.sent.length,edited=f.api.edited.length;
   const u=callback(1,action);u.callback_query.message.chat.id=OWNER_ID;await handle(f,u);
-  assert.match(f.api.edited.at(-1).text,/только владельцу/);
+  assert.equal(f.api.sent.length,sent);assert.equal(f.api.edited.length,edited);assert.equal(await f.store.user(1),null);
   await handle(f,callback(OWNER_ID,action));assert(!f.api.edited.at(-1).text.includes('только владельцу'));
  }
  await f.store.record('staff_audit','expired',{at:new Date(Date.now()-11*86400000).toISOString(),actor:{id:OWNER_ID},actor_role:'owner',action:'ban',target:77});

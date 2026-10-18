@@ -4,6 +4,7 @@ import { fixture,handle,message,callback } from './fixtures.js';
 import { OWNER_ID,rawRole,roleRecord } from '../tgcloud/lib/permissions.js';
 import { banRecord,banVersion } from '../tgcloud/lib/bans.js';
 import { Store } from '../tgcloud/lib/store.js';
+import { deliverRoleNotice,roleNoticeTick } from '../tgcloud/lib/staff.js';
 async function seed(f,uid,role){await f.store.ensure(uid,uid);await f.store.record('staff_role',String(uid),{uid,role,version:'seed'+uid});}
 async function grantDraft(f,actor,target,role){await handle(f,callback(actor,'admin:team:add:'+role));await handle(f,message(actor,String(target)));return 'admin:team:confirm:'+(await f.store.user(actor)).settings.staff_draft.token;}
 async function grant(f,actor,target,role){const action=await grantDraft(f,actor,target,role);await handle(f,callback(actor,action));return action;}
@@ -117,11 +118,45 @@ test('administrator employee cards expose only moderator removal; forged promoti
  const forged=callback(OWNER_ID,'admin:team:set:1:seed1:administrator');forged.callback_query.message.chat.id=2;await handle(f,forged);assert.equal(await rawRole(f.store,1),'moderator');
 });
 test('team audit expires after ten days, including scheduled health cleanup, without deleting decisions or other audit records',async()=>{
- const f=await fixture(),now=Date.now(),cutoff=now-10*86400000;
+ const f=await fixture(),now=Date.now()-1000,cutoff=now-10*86400000;
  for(const [key,at] of [['old',cutoff-1],['boundary',cutoff],['recent',now]])await f.store.record('staff_audit',key,{at:new Date(at).toISOString(),actor:{id:OWNER_ID},actor_role:'owner',action:'ban',target:77});
  await seed(f,77,'moderator');await f.store.record('ad_audit','old',{at:new Date(cutoff-1).toISOString()});
  const {healthTick}=await import('../tgcloud/lib/health.js');await f.store.setMeta('active',false);await healthTick(f.store,f.api,now);
  assert.equal((await f.store.records('staff_audit')).length,2);assert.equal(await rawRole(f.store,77),'moderator');assert.equal((await f.store.records('ad_audit')).length,1);
  await f.store.record('staff_audit','expired',{at:new Date(cutoff-10000).toISOString()});await f.store.setMeta('active',true);await handle(f,callback(OWNER_ID,'admin:audit:0'));assert.equal((await f.store.records('staff_audit')).length,1);assert.match(last(f).text,/последние 10 дней/);
  await f.store.record('staff_audit','expired',{at:new Date(cutoff-10000).toISOString()});await grant(f,OWNER_ID,88,'moderator');assert(!(await f.db.get("SELECT payload FROM sjc_records WHERE kind='staff_audit' AND record_key='expired'")));
+});
+
+test('explicit 429 role notices retry durably after retry_after and concurrent workers send once',async()=>{
+ const f=await fixture();await f.store.ensure(77,77);const send=f.api.sendMessage;let attempts=0;
+ f.api.sendMessage=async p=>{if(p.chat_id===77){attempts++;if(attempts===1)throw {code:429,parameters:{retry_after:10}};}return send(p);};
+ await grant(f,OWNER_ID,77,'moderator');let row=await roleRecord(f.store,77);
+ assert.equal(row.notice.state,'pending');assert.equal(row.notice.before,'user');assert.match(last(f).text,/будет отправлено позже/);
+ await roleNoticeTick(new Store(f.db),f.api,row.notice.retry_at-1);assert.equal(attempts,1);
+ await Promise.all([roleNoticeTick(new Store(f.db),f.api,row.notice.retry_at),roleNoticeTick(new Store(f.db),f.api,row.notice.retry_at)]);
+ row=await roleRecord(f.store,77);assert.equal(attempts,2);assert.equal(row.notice.state,'sent');assert.equal(await rawRole(f.store,77),'moderator');
+ assert.equal(f.api.sent.filter(p=>p.chat_id===77).length,1);assert.equal((await f.store.records('staff_audit')).length,1);
+ await roleNoticeTick(f.store,f.api,row.notice.retry_at||Date.now());assert.equal(attempts,2);
+});
+
+test('a role committed before a process interruption keeps a resumable unattempted notice',async()=>{
+ const f=await fixture();await f.store.ensure(77,77);const action=await grantDraft(f,OWNER_ID,77,'moderator');
+ await f.db.run("CREATE TRIGGER fail_input_cleanup BEFORE UPDATE ON sjc_users WHEN OLD.id=77 BEGIN SELECT RAISE(ABORT,'interrupted after role commit'); END");
+ await assert.rejects(handle(f,callback(OWNER_ID,action)),/interrupted after role commit/);
+ assert.equal(await rawRole(f.store,77),'moderator');assert.equal((await roleRecord(f.store,77)).notice.state,'pending');assert.equal(f.api.sent.filter(p=>p.chat_id===77).length,0);
+ await f.db.run('DROP TRIGGER fail_input_cleanup');await roleNoticeTick(new Store(f.db),f.api);
+ assert.equal(f.api.sent.filter(p=>p.chat_id===77).length,1);assert.equal((await roleRecord(f.store,77)).notice.state,'sent');
+ await handle(f,callback(OWNER_ID,action));assert.equal((await f.store.records('staff_audit')).length,1);assert.equal(f.api.sent.filter(p=>p.chat_id===77).length,1);
+});
+
+test('unconfirmed role responses and interrupted sending claims never repeat; receipts cannot overwrite a newer role',async()=>{
+ const f=await fixture();await f.store.ensure(77,77);const send=f.api.sendMessage;let attempts=0;
+ f.api.sendMessage=async p=>{if(p.chat_id===77){attempts++;return {};}return send(p);};
+ await grant(f,OWNER_ID,77,'moderator');assert.equal((await roleRecord(f.store,77)).notice.state,'unconfirmed');
+ await roleNoticeTick(f.store,f.api);assert.equal(attempts,1);
+ await f.store.record('staff_role','77',{uid:77,role:'administrator',version:'interrupted',actor:{id:OWNER_ID},notice:{state:'sending',before:'moderator'}});
+ await roleNoticeTick(f.store,f.api);assert.equal(attempts,1);
+ await f.store.record('staff_role','77',{uid:77,role:'moderator',version:'old',actor:{id:OWNER_ID},notice:{state:'pending',before:'user'}});
+ f.api.sendMessage=async p=>{if(p.chat_id===77){await f.store.record('staff_role','77',{uid:77,role:'administrator',version:'new',notice:{state:'pending',before:'moderator'}});return {message_id:999};}return send(p);};
+ await deliverRoleNotice(f.store,f.api,77);const newer=await roleRecord(f.store,77);assert.equal(newer.role,'administrator');assert.equal(newer.version,'new');assert.equal(newer.notice.state,'pending');
 });

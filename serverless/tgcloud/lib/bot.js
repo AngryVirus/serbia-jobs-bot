@@ -10,6 +10,9 @@ import { Store, positive } from './store.js';
 import { OWNER_ID, complaint } from './owner.js';
 import { adRoute, adInput } from './ads.js';
 import { button, BACK, safe, menu, filtersPanel, choicePanel, emptyText, jobButtons, translatedCard, viewerButtons, browserUrl, cardActions } from './ui.js';
+const DELETED_TEXT='Ваши данные удалены. Уведомления выключены. /start — начать заново.';
+const inputMutation=action=>typeof action==='string' && (/^(notify:(off|instant|daily)|toggle_salary|reset|delete_confirm)$/.test(action) || /^(choose:|set:|hide:|restore:)/.test(action) || /^view:[^:]+:[^:]+:hide:/.test(action) || action.startsWith('input:') && Object.hasOwn(PROMPTS,action.slice(6)));
+const inputScreen=action=>typeof action!=='string'?'menu':/^(choose|set):/.test(action)?'filters':action==='toggle_salary'||action==='reset'?'filters':action==='delete_confirm'?'deleted':action?.startsWith('input:')?action:'menu';
 const PROMPTS = { keywords: 'Введите слова или фразы через запятую. Достаточно совпадения одного. «-» — очистить.', exclusions: 'Введите исключения через запятую. «-» — очистить.', salary: 'Введите минимальную зарплату в месяц: 1000 EUR или 120000 RSD. «-» — снять фильтр.' };
 export class Bot {
   constructor(deps) { this.api = deps.api; this.fetch = deps.fetch; this.store = new Store(deps.db); this.InputFile=deps.InputFile; }
@@ -23,12 +26,19 @@ export class Bot {
     await this.api.sendMessage(params);
   }
   async patch(fields) { this.s = await this.store.patch(this.uid, fields); }
+  async patchInput(fields,screen='menu') { this.s=await this.store.patchInput(this.uid,fields,this.updateKey,screen); }
+  async replayInput(screen) {
+    if(screen==='deleted')return this.panel(DELETED_TEXT,[],null);
+    if(screen==='filters')return this.panel(...filtersPanel(this.s));
+    if(screen?.startsWith('input:') && Object.hasOwn(PROMPTS,screen.slice(6)) && this.s.pending_input===screen.slice(6))return this.panel(PROMPTS[screen.slice(6)]+'\n/cancel — отмена.',[[button('✖ Отменить ввод','cancel')],...BACK]);
+    return this.home();
+  }
   async notifications() {
     await this.panel('<b>🔔 Уведомления</b>\n\nНовая вакансия по вашим фильтрам придёт сразу после обнаружения. Проверка источников запускается примерно каждые 30 минут; запуск может задержаться. Старый каталог при включении не рассылается. Уже отправленные вакансии не повторяются.', [[button(this.s.notifications === 'off' ? '🔔 Включить' : '🔕 Выключить', this.s.notifications === 'off' ? 'notify:instant' : 'notify:off')], ...BACK]);
   }
   async input(text) {
     const field = this.s.pending_input; let patch;
-    if (field === 'hour') { await this.patch({ pending_input: null }); return this.notifications(); }
+    if (field === 'hour') { await this.patchInput({ pending_input: null }); return this.notifications(); }
     if (field === 'keywords' || field === 'exclusions') {
       const values = text.trim() === '-' ? [] : [...new Set(text.split(',').map(x => x.trim()).filter(Boolean))];
       if (values.length > 15 || values.some(x => [...x].length > 60)) return this.panel('Максимум 15 слов или фраз, до 60 символов каждое.');
@@ -41,7 +51,7 @@ export class Bot {
         patch = { min_salary: Number(m[1].replace(',', '.')), currency: m[2] };
       }
     } else return this.panel('Неизвестная настройка. Используйте /cancel.');
-    await this.patch({ ...patch, pending_input: null });
+    await this.patchInput({ ...patch, pending_input: null },'filters');
     await this.panel(...filtersPanel(this.s));
   }
   async home() {
@@ -75,7 +85,7 @@ export class Bot {
     if (action === 'hide' && all.some(j => j.id === jobId)) {
       const oldIndex = eligible().findIndex(isAnchor);
       if (oldIndex >= 0) index = oldIndex;
-      await this.patch({ hidden_jobs: [...new Set([...hidden(this.s), jobId])].sort((a,b) => a-b) });
+      await this.patchInput({ hidden_jobs: [...new Set([...hidden(this.s), jobId])].sort((a,b) => a-b) });
       notice = '<i>🙈 Вакансия скрыта</i>\n\n';
     }
     const jobs = eligible();
@@ -101,7 +111,7 @@ export class Bot {
     const group = groupJobs(await this.store.jobs()).find(g => includesId(g, id));
     if (kind === 'restore') {
       if (arg !== undefined && !/^\d+$/.test(arg)) return this.home();
-      for (const member of group?.members || [{ id }]) ids.delete(member.id); await this.patch({ hidden_jobs: [...ids] });
+      for (const member of group?.members || [{ id }]) ids.delete(member.id); await this.patchInput({ hidden_jobs: [...ids] });
       if (arg !== undefined) return this.hiddenPanel(Number(arg));
       return this.panel('<b>↩️ Вакансия возвращена</b>\nОна снова доступна при совпадении с вашими фильтрами. История уведомлений сохранена.', [[button('🔎 Найти вакансии', 'search:0'), button('🙈 Скрытые', 'hidden:0')], ...BACK]);
     }
@@ -109,7 +119,7 @@ export class Bot {
     const original = group?.members.find(j => j.id === id), j = original && decorate(group, original);
     if (!j) return this.panel('Вакансия больше не доступна.');
     if (group.members.some(j=>j._moderated) && this.uid !== OWNER_ID) return this.panel('Объявление снято с выдачи после проверки.',[[button('🔎 Найти вакансии','search:0')],...BACK]);
-    if (kind === 'hide') { ids.add(id); await this.patch({ hidden_jobs: [...ids] }); }
+    if (kind === 'hide') { ids.add(id); await this.patchInput({ hidden_jobs: [...ids] }); }
     if (group.members.some(j => ids.has(j.id))) return this.panel('<b>🙈 Вакансия скрыта</b>\n' + safe(j.title,100), [[button('↩️ Вернуть', `restore:${id}`), button('🙈 Скрытые', 'hidden:0')], ...BACK]);
     const mode = (arg?.startsWith('ru_') ? 'r' : '') + (arg?.endsWith('full') ? 'f' : 's');
     const result = await translatedCard(j, mode, this.fetch, this.store), rows = jobButtons(j,result.mode);
@@ -134,7 +144,7 @@ export class Bot {
     if (/^notify:(off|instant|daily)$/.test(action)) {
       const mode = action === 'notify:off' ? 'off' : 'instant', patch = { notifications: mode };
       if (mode !== 'off' && this.s.notifications === 'off') patch.notifications_after_id = await this.store.latest();
-      await this.patch(patch); return this.home();
+      await this.patchInput(patch); return this.home();
     }
     let m;
     if (action === 'admin' || action.startsWith('admin:')) return staffRoute(this,action);
@@ -149,16 +159,16 @@ export class Bot {
     if ((m = /^hidden:(\d+)$/.exec(action))) return this.hiddenPanel(Number(m[1]));
     if (/^(job|hide|restore):/.test(action)) return this.vacancy(action);
     if (/^(sources$|source:|favorite:|favorites:)/.test(action)) return this.home();
-    if (action.startsWith('input:') && Object.hasOwn(PROMPTS,action.slice(6))) { const field = action.slice(6); await this.patch({ pending_input: field }); return this.panel(PROMPTS[field] + '\n/cancel — отмена.', [[button('✖ Отменить ввод','cancel')], ...BACK]); }
+    if (action.startsWith('input:') && Object.hasOwn(PROMPTS,action.slice(6))) { const field = action.slice(6); await this.patchInput({ pending_input: field },`input:${field}`); return this.panel(PROMPTS[field] + '\n/cancel — отмена.', [[button('✖ Отменить ввод','cancel')], ...BACK]); }
     if (Object.hasOwn(OPTIONS,action)) return this.panel(...choicePanel(this.s,action));
     if ((m = /^(choose|set):([^:]+):([^:]+)(?::([01]))?$/.exec(action)) && OPTIONS[m[2]] && Object.hasOwn(OPTIONS[m[2]],m[3])) {
-      if (m[1] === 'choose' && m[4] !== undefined) { await this.patch({ [m[2]]: choose(this.s,m[2],m[3],m[4] === '1') }); return this.panel(...choicePanel(this.s,m[2])); }
-      if (m[1] === 'set' && m[4] === undefined) { await this.patch({ [m[2]]: m[3] }); return this.panel(...filtersPanel(this.s)); }
+      if (m[1] === 'choose' && m[4] !== undefined) { await this.patchInput({ [m[2]]: choose(this.s,m[2],m[3],m[4] === '1') },'filters'); return this.panel(...choicePanel(this.s,m[2])); }
+      if (m[1] === 'set' && m[4] === undefined) { await this.patchInput({ [m[2]]: m[3] },'filters'); return this.panel(...filtersPanel(this.s)); }
     }
-    if (action === 'toggle_salary') { await this.patch({ include_unknown_salary: !this.s.include_unknown_salary }); return this.panel(...filtersPanel(this.s)); }
-    if (action === 'reset') { const d = defaults(); await this.patch(Object.fromEntries(['keywords','exclusions','city','remote','language','min_salary','currency','include_unknown_salary','freshness','residence_permit'].map(k => [k,d[k]]))); return this.panel(...filtersPanel(this.s)); }
+    if (action === 'toggle_salary') { await this.patchInput({ include_unknown_salary: !this.s.include_unknown_salary },'filters'); return this.panel(...filtersPanel(this.s)); }
+    if (action === 'reset') { const d = defaults(); await this.patchInput(Object.fromEntries(['keywords','exclusions','city','remote','language','min_salary','currency','include_unknown_salary','freshness','residence_permit'].map(k => [k,d[k]])),'filters'); return this.panel(...filtersPanel(this.s)); }
     if (action === 'delete') return this.panel('Удалить ваши настройки, скрытые вакансии, жалобы и историю уведомлений?', [[button('Удалить мои данные','delete_confirm')], ...BACK]);
-    if (action === 'delete_confirm') { await this.store.deleteUser(this.uid); this.s=null; return this.panel('Ваши данные удалены. Уведомления выключены. /start — начать заново.', [], null); }
+    if (action === 'delete_confirm') { if(!await this.store.deleteUser(this.uid,this.updateKey))return this.home(); this.s=null; return this.panel(DELETED_TEXT, [], null); }
     return this.home();
   }
   async removeAcceptedInput(message,callback) {
@@ -172,7 +182,7 @@ export class Bot {
   }
   async handle(update) {
     const callback = update.callback_query, message = callback?.message || update.message || {}, user = callback?.from || message.from || {};
-    const valid = message.chat?.type === 'private' && positive(user.id) && positive(message.chat.id) && !user.is_bot;
+    const valid = message.chat?.type === 'private' && positive(user.id) && message.chat.id===user.id && !user.is_bot;
     if(positive(user.id) && user.id!==OWNER_ID && await inboundBanNotice(this,user.id,message.chat?.id,valid))return;
     if (callback && !valid) { try { await this.api.answerCallbackQuery({ callback_query_id: callback.id, ...(!valid ? { text: 'Откройте личный чат с ботом.' } : {}) }); } catch { /* expired acknowledgements do not cancel the action */ } }
     if (!valid) return;
@@ -190,6 +200,7 @@ export class Bot {
     const owner = `${Date.now()}:${Math.random()}`, lock = `user:${this.uid}`;
     if (!await this.store.lock(lock, owner, 180)) throw new Error('User operation busy; retry update');
     const key = update.update_id != null ? `u:${update.update_id}` : callback ? `c:${callback.id}` : `m:${this.chat}:${message.message_id}`;
+    this.updateKey=key;
     let claimed = false;
     try {
       claimed = await this.store.claimUpdate(key);
@@ -201,13 +212,29 @@ export class Bot {
       if(this.uid!==OWNER_ID && await this.store.isBanned(this.uid)){if(this.uid===this.chat)await deliverBanNotice(this.store,this.api,this.InputFile,this.uid,{contact:true});await this.store.finishUpdate(key);return;}
       if(callback){try{await this.api.answerCallbackQuery({callback_query_id:callback.id});}catch{}}
       if(!await this.store.meta('active')){await this.panel('⏳ Бот обновляется. Попробуйте через несколько минут.');await this.finishAcceptedInput(key,message,callback);return;}
+      const replay=await this.store.inputEffectStatus(this.uid,key);
+      if(replay && replay.status!=='planned'){
+        this.s=replay.user?settings(replay.user.settings):null;
+        if(replay.status==='applied')await this.replayInput(replay.effect.screen);
+        await this.finishAcceptedInput(key,message,callback);return;
+      }
       this.s = settings((await this.store.ensure(this.uid,this.chat)).settings);
+      const ordinary=!(callback && /^(admin(?::|$)|ads(?::|$))/.test(callback.data||'')) && !(this.s.pending_input && !['keywords','exclusions','salary','hour'].includes(this.s.pending_input));
+      const mutation=callback?inputMutation(callback.data):Boolean(this.s.pending_input);
+      const cleanup=this.s.pending_input || this.s.ban_draft || this.s.staff_draft;
+      if(ordinary && (mutation || cleanup))await this.store.inputEffect(this.uid,key,callback?inputScreen(callback.data):this.s.pending_input && !message.text?.startsWith('/')?'filters':'menu');
       if(!callback && ['keywords','exclusions','salary','hour','owner_ban','owner_ban_reason','staff_target'].includes(this.s.pending_input) && !message.text?.startsWith('/') && positive(this.s.ui_panel_id)) {this.mid=this.s.ui_panel_id;this.isPhoto=this.s.ui_panel_kind==='photo';}
       await this.store.captureUsername(this.uid,user.username);
       await activity(this.store,this.uid);
       if(this.s.bot_blocked) await this.patch({bot_blocked:false});
       let action;
-      if (callback) { action = callback.data || '';if(this.s.staff_draft&&!action.startsWith('admin:team:confirm:'))await this.patch({staff_draft:null}); if (this.s.pending_input || (this.s.ban_draft && !action.startsWith('admin:bans:confirm:'))) await this.patch({ pending_input: null, ...(!action.startsWith('admin:bans:confirm:')?{ban_draft:null,ban_target:null}:{}) }); }
+      if (callback) {
+        action = typeof callback.data==='string'?callback.data:'';
+        const fields={...(this.s.staff_draft&&!action.startsWith('admin:team:confirm:')?{staff_draft:null}:{}),...(this.s.pending_input || this.s.ban_draft && !action.startsWith('admin:bans:confirm:')?{pending_input:null,...(!action.startsWith('admin:bans:confirm:')?{ban_draft:null,ban_target:null}:{})}:{})};
+        if(Object.keys(fields).length) {
+          if(ordinary && !mutation)await this.patchInput(fields);else await this.patch(fields);
+        }
+      }
       else {
         if(await staffInput(this,message)){await this.finishAcceptedInput(key,message,callback);return;}
         if(await banInput(this,message)){await this.finishAcceptedInput(key,message,callback);return;}
@@ -216,7 +243,7 @@ export class Bot {
         if (typeof text !== 'string' || !text.trim()) { await this.finishAcceptedInput(key,message,callback); return; }
         if ([...text].length > 1000) { await this.panel('Пожалуйста, сократите сообщение до 1000 символов.'); await this.finishAcceptedInput(key,message,callback); return; }
         if (this.s.pending_input && !text.startsWith('/')) { await this.input(text); await this.finishAcceptedInput(key,message,callback); return; }
-        if (this.s.pending_input || this.s.ban_draft || this.s.staff_draft) await this.patch({ pending_input: null,ban_draft:null,ban_target:null,staff_draft:null });
+        if (this.s.pending_input || this.s.ban_draft || this.s.staff_draft) {const fields={pending_input:null,ban_draft:null,ban_target:null,staff_draft:null};if(ordinary)await this.patchInput(fields);else await this.patch(fields);}
         action = ({ '/start': 'start', '/menu': 'menu', '/cancel': 'menu', '/delete_me': 'delete', '/admin': 'admin' })[text.split(/\s+/)[0].split('@')[0]] || 'menu';
       }
       await this.route(action);

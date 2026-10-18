@@ -39,9 +39,15 @@ export async function userStatistics(store,now=Date.now()) {
  FROM sjc_users`,{':today':today,':week':week,':month':month});
  return row;
 }
-export async function freshness(store,now=Date.now()) {
+export async function successfulCollection(store) {
+ const heartbeat=await store.meta('last_successful_collection');
+ if(Number.isFinite(Date.parse(heartbeat)))return heartbeat;
  const run=await store.meta('last_collection');
- const value=await store.meta('last_successful_collection') || (!run?.failed && run?.totals?.sources>0 ? run.finished_at : null);
+ // Older snapshots have no healthy_sources counter; an explicit zero is never success.
+ return !run?.failed && run?.totals?.sources>0 && (run.totals.healthy_sources===undefined || run.totals.healthy_sources>0) ? run.finished_at : null;
+}
+export async function freshness(store,now=Date.now()) {
+ const value=await successfulCollection(store);
  const stamp=Date.parse(value),age=now-stamp;
  if(!Number.isFinite(stamp))return '<i>⚠️ Свежесть базы пока не подтверждена. Проверяйте актуальность у работодателя.</i>\n\n';
  if(age<=7200000)return '';

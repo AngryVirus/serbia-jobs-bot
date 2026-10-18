@@ -17,7 +17,17 @@ try {
     const sources = {};
     const walk = directory => { for (const entry of readdirSync(directory,{ withFileTypes: true })) { const path = join(directory,entry.name); if (entry.isDirectory()) walk(path); else if (entry.name.endsWith('.js')) sources[relative(root,path).replace(/\\/g,'/').slice(0,-3)] = readFileSync(path,'utf8'); } };
     walk(root);
-    const response = await client.runFunction(token,'endpoints/admin',sources,input.args,{ ownerRun: true });
+    let entrypoint='endpoints/admin',selected=sources;
+    if(['backup_create','backup_page','backup_release'].includes(input.args?.operation)) {
+      // /run needs its complete module space; it cannot use the deployed code as a cache.
+      // This reviewed entrypoint uses only the backup dependency closure, without UI assets.
+      entrypoint='endpoints/backup';
+      selected=Object.fromEntries(['lib/backup','lib/store','lib/filters','lib/config','lib/source-policy'].map(name=>{
+        if(typeof sources[name]!=='string')throw Error('Missing backup dependency');return [name,sources[name]];
+      }));
+      selected[entrypoint]="import { db, api } from 'sdk';\nimport { backupAdmin } from '../lib/backup.js';\nexport default async function(input,ctx){return backupAdmin(input,ctx,{db,api});}\n";
+    }
+    const response = await client.runFunction(token,entrypoint,selected,input.args,{ ownerRun: true });
     result = response.result;
   } else throw new Error('Invalid command');
   process.stdout.write(JSON.stringify({ ok: true, result }));

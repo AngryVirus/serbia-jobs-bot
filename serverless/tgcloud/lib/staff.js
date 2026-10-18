@@ -18,6 +18,36 @@ export function roleNoticeText(before,after,by){
  lines.push(after==='user'?'Раздел управления командой и модерацией для вас закрыт.':'Для работы откройте панель управления кнопкой ниже.');
  return lines.join('\n\n');
 }
+// Callers hold user:<uid>. A versioned claim precedes the API call, so a crash
+// with an unknown delivery outcome cannot repeat a notification or replace a role.
+export async function deliverRoleNotice(store,api,uid,now=Date.now()){
+ const row=await roleRecord(store,uid),notice=row?.notice;
+ if(notice?.state!=='pending'||(notice.retry_at||0)>now)return {state:notice?.state||'none'};
+ const before=notice.before,after=row.role||'user';
+ if(!['user','moderator','administrator'].includes(before)||!['user','moderator','administrator'].includes(after))return {state:'invalid'};
+ const claimed=await store.db.run("UPDATE sjc_records SET payload=json_set(payload,'$.notice.state','sending') WHERE kind='staff_role' AND record_key=:uid AND json_extract(payload,'$.version')=:version AND json_extract(payload,'$.notice.state')='pending'",{':uid':String(uid),':version':row.version});
+ if(claimed.rowsAffected!==1)return {state:'busy'};
+ let receipt;
+ try{
+  const message=await api.sendMessage({chat_id:uid,text:roleNoticeText(before,after,row.actor),reply_markup:{inline_keyboard:[[button(after==='user'?'🏠 Меню':'🛡 Панель управления',after==='user'?'menu':'admin')]]}});
+  receipt=positive(message?.message_id)?{state:'sent',message_id:message.message_id}:{state:'unconfirmed'};
+ }catch(error){
+  if(error.code===429){const delay=Number(error.parameters?.retry_after),seconds=Number.isFinite(delay)&&delay>0?Math.ceil(delay):60;receipt={state:'pending',retry_at:now+seconds*1000};}
+  else receipt={state:error.code===403?'blocked':error.code===400?'failed':'unconfirmed'};
+ }
+ await store.db.run("UPDATE sjc_records SET payload=json_set(payload,'$.notice',json(:notice)) WHERE kind='staff_role' AND record_key=:uid AND json_extract(payload,'$.version')=:version AND json_extract(payload,'$.notice.state')='sending'",{':uid':String(uid),':version':row.version,':notice':JSON.stringify({...receipt,before})});
+ return receipt;
+}
+export async function roleNoticeTick(store,api,now=Date.now()){
+ if(!await store.meta('active'))return {checked:0};
+ const rows=await store.db.all("SELECT record_key FROM sjc_records WHERE kind='staff_role' AND json_extract(payload,'$.notice.state')='pending' AND COALESCE(json_extract(payload,'$.notice.retry_at'),0)<=:now ORDER BY record_key LIMIT 5",{':now':now});
+ let checked=0;
+ for(const row of rows){const uid=Number(row.record_key);if(!positive(uid)||uid===OWNER_ID)continue;
+  const key='user:'+uid,lease='role-notice:'+nonce();if(!await store.lock(key,lease,180))continue;
+  try{await deliverRoleNotice(store,api,uid,now);checked++;}finally{await store.unlock(key,lease);}
+ }
+ return {checked};
+}
 async function memberName(bot,uid){
  const user=await bot.store.user(uid);
  return String(uid)+(user?.telegram_username?' · @'+user.telegram_username:'');
@@ -90,27 +120,23 @@ export async function teamPanel(bot,action){
   if(!positive(uid)||uid===OWNER_ID||uid===bot.uid)return bot.panel('Нельзя изменить собственные права или права владельца.',BACK);
   const key='user:'+uid,lease='role:'+nonce();
   if(!await bot.store.lock(key,lease,180))return bot.panel('Пользователь сейчас обрабатывается. Повторите действие.',[[button('🔄 Повторить',action)],...BACK]);
-  let changed=false,noticeSent=false;
+  let changed=false,noticeState='none';
   try{
    const current=await roleRecord(bot.store,uid),currentRole=await rawRole(bot.store,uid),freshRole=await accessRole(bot),expected=confirm?draft.expected:remove[2];
    if((current?.version||null)!==expected||!mayManage(freshRole,currentRole,desired)||(desired!=='user'&&await bot.store.isBanned(uid)))return bot.panel('Права изменились или действие недоступно. Откройте список заново.',BACK);
    if(draft?.username){let chat;try{chat=await bot.api.getChat({chat_id:uid});}catch{}if(chat?.id!==uid||chat?.type!=='private'||String(chat.username||'').toLowerCase()!==draft.username.toLowerCase())return bot.panel('Тег изменился или не подтверждён. Укажите ID заново.',BACK);}
    if(currentRole!==desired){
-    // Claim delivery in the same commit as the role: ambiguous sends are never replayed.
-    const at=new Date().toISOString(),version=confirm?draft.token:nonce(),next={uid,role:desired==='user'?null:desired,version,by:bot.uid,actor:actor(bot),at,notice:{state:'sending'}};
+    // Persist the unattempted notice with the decision; the delivery claim is CAS.
+    const at=new Date().toISOString(),version=confirm?draft.token:nonce(),next={uid,role:desired==='user'?null:desired,version,by:bot.uid,actor:actor(bot),at,notice:{state:'pending',before:currentRole}};
     await staffDecision(bot.store,'staff_role',uid,next,{action:desired==='user'?'revoke_'+currentRole:currentRole==='moderator'&&desired==='administrator'?'promote':currentRole==='administrator'&&desired==='moderator'?'demote':'grant_'+desired,actor:actor(bot),actor_role:freshRole,target:uid,before:currentRole,after:desired,at});
     // Stale pending input and confirmations must not survive a changed privilege level.
     await bot.store.db.run("UPDATE sjc_users SET payload=json_set(payload,'$.settings.pending_input',NULL,'$.settings.ban_draft',NULL,'$.settings.staff_draft',NULL) WHERE id=:uid",{':uid':uid});
     changed=true;
-    try{
-     await bot.api.sendMessage({chat_id:uid,text:roleNoticeText(currentRole,desired,actor(bot)),reply_markup:{inline_keyboard:[[button(desired==='user'?'🏠 Меню':'🛡 Панель управления',desired==='user'?'menu':'admin')]]}});
-     noticeSent=true;
-    }catch{/* A delivery failure must not undo a committed role or disclose API details. */}
-    await bot.store.record('staff_role',String(uid),{...next,notice:{state:noticeSent?'sent':'unconfirmed'}});
+    noticeState=(await deliverRoleNotice(bot.store,bot.api,uid)).state;
    }
   }finally{await bot.store.unlock(key,lease);}
   await bot.patch({staff_draft:null});
-  return bot.panel(changed?`Права пользователя ${uid} обновлены. Роль: ${ROLE_NAMES[desired]}.\n${noticeSent?'Уведомление пользователю отправлено.':'Доставка уведомления не подтверждена. Пользователь мог не запускать бота или заблокировать его.'}`:'Права не изменились.',BACK);
+  return bot.panel(changed?`Права пользователя ${uid} обновлены. Роль: ${ROLE_NAMES[desired]}.\n${noticeState==='sent'?'Уведомление пользователю отправлено.':noticeState==='pending'?'Telegram временно ограничил отправку. Уведомление будет отправлено позже.':'Доставка уведомления не подтверждена. Пользователь мог не запускать бота или заблокировать его.'}`:'Права не изменились.',BACK);
  }
  match=/^admin:team:(\d+)$/.exec(action);if(!match)return bot.panel('Откройте раздел заново.',BACK);
  await bot.patch?.({staff_draft:null});

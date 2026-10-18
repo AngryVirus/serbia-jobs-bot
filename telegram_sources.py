@@ -77,7 +77,7 @@ def hiring_post(text):
         r'\b(?:тражимо|потребан|потребна|потребни|запошљавамо)\b', value))
 
 
-def post_job(source, post):
+def post_job(source, post, *, include_expired=False):
     text = post['text'][:16000]
     if not hiring_post(text):
         return None
@@ -110,10 +110,10 @@ def post_job(source, post):
     job.salary_min, job.salary_currency, job.salary_period = text_salary(text)
     job = enrich(job)
     now = datetime.now(timezone.utc)
-    return job if active(job.__dict__, now) and freshness_matches(job.__dict__, 'any', now) and serbia_eligible(job.__dict__) else None
+    return job if (include_expired or active(job.__dict__, now)) and freshness_matches(job.__dict__, 'any', now) and serbia_eligible(job.__dict__) else None
 
 
-def collect_channel(source, fetcher):
+def collect_channel(source, fetcher, *, include_expired=False):
     jobs, seen = {}, set()
     withdrawn = []
     url = source.listing_url
@@ -137,7 +137,7 @@ def collect_channel(source, fetcher):
                 seen.add(post['id'])
                 if quality_reason(post['text']) == 'closed':
                     withdrawn.append(f'https://t.me/{source.telegram_channel}/{post["id"]}')
-                job = post_job(source, post)
+                job = post_job(source, post, include_expired=include_expired)
                 if job:
                     jobs[job.url] = job
                 else:

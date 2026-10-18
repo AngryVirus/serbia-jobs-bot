@@ -43,9 +43,11 @@ test('all statistics subpages require both numeric owner and private owner chat'
  const f=await fixture();
  for(const action of ['admin:stats','admin:stats:usage','admin:stats:delivery']){
   for(const [uid,chat] of [[1,OWNER_ID],[OWNER_ID,1],[OWNER_ID,-100]]){
+   const edited=f.api.edited.length,sent=f.api.sent.length;
    const u=callback(uid,action);u.callback_query.message.chat.id=chat;await handle(f,u);
-   assert.match(f.api.edited.at(-1).text,/только владельцу/);
+   assert.equal(f.api.edited.length,edited);assert.equal(f.api.sent.length,sent);
   }
+  await handle(f,callback(1,action));assert.match(f.api.edited.at(-1).text,/только владельцу/);
   await handle(f,callback(OWNER_ID,action));assert.doesNotMatch(f.api.edited.at(-1).text,/только владельцу/);
  }
 });

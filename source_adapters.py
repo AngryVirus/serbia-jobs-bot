@@ -117,10 +117,21 @@ def extract_special_jobs(source, html, url):
     return [enrich(job)]
 
 
-def collect_lako(source, fetcher, detail_limit):
+def collect_lako(source, fetcher, detail_limit, *, include_expired=False):
     """Anonymous endpoints used by the site's published Next.js client."""
     jobs, inspected, errors = {}, 0, []
+    withdrawn = []
     base = 'https://prod.lakodoposla.net/api'
+
+    def record_closed(node, identity):
+        slug = node.get('slug')
+        if not include_expired or not isinstance(slug, str) or len(slug) > 1900:
+            return
+        if re.fullmatch(r'[a-z0-9-]+-' + str(identity), slug):
+            url = 'https://www.lakodoposla.com/oglasi/' + slug
+            if len(withdrawn) < 100 and url not in withdrawn:
+                withdrawn.append(url)
+
     try:
         body, _ = fetcher.get(base + '/postings?page=1')
         payload = json.loads(body)
@@ -130,7 +141,14 @@ def collect_lako(source, fetcher, detail_limit):
         for item in payload['data']:
             if not isinstance(item, dict) or type(item.get('id')) is not int or item['id'] <= 0:
                 continue
-            if item['id'] in seen or item.get('hasExpired') is True:
+            if item['id'] in seen:
+                continue
+            if item.get('hasExpired') is True:
+                # The public list already confirms closure; no detail request
+                # or invented expiry date is needed to update a known URL.
+                record_closed(item, item['id'])
+                if include_expired:
+                    seen.add(item['id'])
                 continue
             if inspected >= max(0, min(detail_limit, 50)):
                 break
@@ -143,7 +161,10 @@ def collect_lako(source, fetcher, detail_limit):
                 if not isinstance(node, dict) or node.get('id') != item['id']:
                     raise FetchError('error', 'Изменился формат карточки Lako do posla.')
                 slug = str(node.get('slug') or '')
-                if not re.fullmatch(r'[a-z0-9-]+-' + str(item['id']), slug) or node.get('hasExpired') is True:
+                if not re.fullmatch(r'[a-z0-9-]+-' + str(item['id']), slug):
+                    continue
+                if node.get('hasExpired') is True:
+                    record_closed(node, item['id'])
                     continue
                 title = clean_text(node.get('positionTitle'))
                 # Whitelist public vacancy fields. Do not store employer account
@@ -157,7 +178,7 @@ def collect_lako(source, fetcher, detail_limit):
                           clean_text(node.get('employerName')), clean_text(node.get('locationName')), description[:16000],
                           published_at=_date(node.get('date'), '%d.%m.%Y'), expires_at=_date(node.get('expiryDate'), '%d.%m.%Y'))
                 job = enrich(job)
-                if active(job.__dict__) and serbia_eligible(job.__dict__):
+                if (include_expired or active(job.__dict__)) and serbia_eligible(job.__dict__):
                     jobs[job.url] = job
             except (FetchError, ValueError) as error:
                 if isinstance(error, FetchError) and error.state in {'blocked', 'robots_disallowed', 'robots_unavailable', 'timeout'}:
@@ -166,10 +187,12 @@ def collect_lako(source, fetcher, detail_limit):
     except (FetchError, ValueError) as error:
         detail = error.detail if isinstance(error, FetchError) else 'Некорректный JSON публичного API.'
         state = 'partial' if jobs else error.state if isinstance(error, FetchError) else 'error'
-        return list(jobs.values()), _status(source, state, len(jobs), detail, inspected=inspected, public_api=True)
+        return list(jobs.values()), _status(source, state, len(jobs), detail, inspected=inspected, public_api=True,
+                                            **({'withdrawn_urls': withdrawn} if include_expired else {}))
     detail = 'Публичный API Lako do posla: первая страница списка и ограниченная выборка подробных карточек.'
     if errors:
         detail += ' ' + errors[0]
     state = ('partial' if jobs else 'error') if errors else ('ok' if jobs else 'empty')
     return list(jobs.values()), _status(source, state, len(jobs),
-                                        detail, inspected=inspected, public_api=True)
+                                        detail, inspected=inspected, public_api=True,
+                                        **({'withdrawn_urls': withdrawn} if include_expired else {}))
