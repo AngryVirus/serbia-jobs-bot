@@ -39,6 +39,7 @@ export class Store {
     if (user.chat_id !== chat) { user.chat_id = chat; await this.saveUser(user); }
     return user;
   }
+  async isBanned(uid) { return Boolean(await this.db.get("SELECT 1 AS banned FROM sjc_records WHERE kind='user_ban' AND record_key=:uid",{':uid':String(uid)})); }
   async user(uid) { const row = await this.db.get('SELECT payload FROM sjc_users WHERE id=:id', { ':id': uid }); return row ? JSON.parse(row.payload) : null; }
   async saveUser(user) { await this.db.run('UPDATE sjc_users SET payload=:payload WHERE id=:id', { ':id': user.user_id, ':payload': JSON.stringify(user) }); }
   async patch(uid, fields) { const user = await this.user(uid); assert(user, 'Missing user'); user.settings = { ...settings(user.settings), ...fields }; user.updated_at = new Date().toISOString(); await this.saveUser(user); return user.settings; }
