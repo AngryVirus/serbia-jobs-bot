@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture,handle,callback,message } from './fixtures.js';
+import { administer } from '../tgcloud/lib/admin.js';
 import { Store } from '../tgcloud/lib/store.js';
 import { healthTick } from '../tgcloud/lib/health.js';
 import { adTick } from '../tgcloud/lib/ads.js';
@@ -83,4 +84,30 @@ test('health retries only explicit 429 responses without duplicate warnings',asy
  await healthTick(f.store,f.api,now+9000);assert.equal(f.api.sent.length,0);
  await healthTick(f.store,f.api,now+11000);await healthTick(f.store,f.api,now+12000);
  assert.equal(f.api.sent.length,1);
+});
+test('emergency during campaign creation also cancels the launch before its first send',async()=>{
+ const f=await fixture();await f.store.ensure(1,1);
+ await handle(f,callback(OWNER_ID,'ads:new'));await handle(f,message(OWNER_ID,'Пост'));
+ const {id}=await f.store.meta('ad_draft');await handle(f,callback(OWNER_ID,'ads:confirm:'+id));
+ const run=f.db.run;let stopped=false;
+ f.db.run=async(sql,params)=>{
+  const result=await run(sql,params);
+  if(!stopped && sql.startsWith('INSERT OR IGNORE') && sql.includes('ad_target')) {
+   stopped=true;await handle(f,callback(OWNER_ID,'ads:emergency'));
+  }
+  return result;
+ };
+ const n=f.api.sent.filter(p=>p.text?.startsWith('📣')).length;
+ await handle(f,callback(OWNER_ID,'ads:start:'+id));
+ assert(stopped);assert.equal(f.api.sent.filter(p=>p.text?.startsWith('📣')).length,n);
+ assert.equal((await f.store.records('ad_campaign'))[0].state,'stopped');
+});
+
+test('only a completed collection with a healthy source advances the success heartbeat',async()=>{
+ const f=await fixture(),owner='00000000-0000-0000-0000-000000000001';
+ for(const [failed,healthy] of [[true,1],[false,0],[false,1]]) {
+  await administer({operation:'collection_begin',owner},{ownerRun:true},f);
+  await administer({operation:'collection_end',owner,failed,totals:{sources:1,healthy_sources:healthy}},{ownerRun:true},f);
+  assert.equal(Boolean(await f.store.meta('last_successful_collection')),!failed && healthy>0);
+ }
 });
