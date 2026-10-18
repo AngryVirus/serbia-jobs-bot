@@ -5,9 +5,9 @@ from pathlib import Path
 import sys
 from cloud import call, cli, invoke, routing_identity
 
-# Reviewed predecessor: 75d78fc (advertising preference buttons removed).
+# Reviewed predecessor: 27da06b (advertising/rate-limit security release).
 # A later release must explicitly review and update its predecessor digest.
-PREVIOUS_DIGEST = '11b96e94237985133f89518d72f9453b4c45a310c11b6a8a72817ad50bfdec56'  # pragma: allowlist secret
+PREVIOUS_DIGEST = '182b5fbaf90f1b4f99cc739a807394f347bcd16e5c1a9d29b3e499b0f8a2c715'  # pragma: allowlist secret
 
 
 def digest(modules):

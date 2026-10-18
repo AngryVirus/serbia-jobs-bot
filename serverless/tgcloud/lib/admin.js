@@ -1,3 +1,5 @@
+import { sourceHistory, analyticsPanel, freshness } from './analytics.js';
+import { backupOperation } from './backup.js';
 import { healthTick } from './health.js';
 import { Store, TABLES, assert, positive } from './store.js';
 import { settings, contains, belgradeDay } from './filters.js';
@@ -55,13 +57,19 @@ export async function administer(input, ctx, deps) {
   const me = await deps.api.getMe();
   assert(me.is_bot && me.id === 8802394224 && me.username?.toLowerCase() === 'serbiajobsbot', 'Wrong bot; stopped');
   const store = new Store(deps.db), op = input?.operation;
+  if(['backup_create','backup_page','backup_release'].includes(op)) return backupOperation(store,input);
   if(op==='health_tick') return healthTick(store,deps.api);
   if(op==='ads_tick') return adTick(store,deps.api);
   if (op === 'init') {
     await store.init();
+    if(!await store.meta('analytics_started'))await store.setMeta('analytics_started',new Date().toISOString().slice(0,10));
     assert(contains('Русский повар','повар') && !contains('повариха','повар'), 'Runtime Unicode mismatch');
     assert(belgradeDay(Date.UTC(2026,9,25,23,30)) === Math.floor(Date.UTC(2026,9,26)/86400000), 'Runtime date mismatch');
     return { ready: true, active: Boolean(await store.meta('active')), sources: Object.keys(SOURCE_NAMES).filter(sourceEnabled).length, counts: await store.stats() };
+  }
+  if(op==='backup_status') {
+    assert(input.verified===true && input.counts && Object.values(input.counts).every(n=>Number.isSafeInteger(n)&&n>=0),'Verified backup report required');
+    await store.setMeta('last_backup',{verified_at:new Date().toISOString(),counts:input.counts});return {recorded:true};
   }
   if (op === 'status') return { active: Boolean(await store.meta('active')), ever_active: Boolean(await store.meta('ever_active')), counts: await store.stats(), migration: await store.meta('migration') };
   if (op === 'owner_report') {
@@ -89,6 +97,12 @@ export async function administer(input, ctx, deps) {
       assert(jobButtons(job).flat().every(b => !b.callback_data || b.callback_data.length <= 64), 'Invalid callback length');
     }
     return { records: jobs.length, unique: groups.length, duplicates: jobs.length-groups.length, visible: visible.length, elapsed_ms: Date.now()-start };
+  }
+  if(op==='operations_check') {
+    const report=await ownerReport(store), panels=[];
+    const bot={store,panel:async(text,rows)=>{assert(typeof text==='string' && text.length<4096,'Invalid operations panel');assert(rows.flat().every(b=>!b.callback_data || b.callback_data.length<=64),'Invalid operations callback');panels.push(true);}};
+    for(const action of ['admin:stats','admin:quality','admin:quality:sources:0','admin:quality:duplicates:0'])await analyticsPanel(bot,action,report);
+    return {panels:panels.length,freshness_warning:Boolean(await freshness(store)),backup_verified:Boolean((await store.meta('last_backup'))?.verified_at)};
   }
   if (op === 'export') return { rows: await store.rows(input.table,input.offset,input.limit) };
   if (op === 'refresh_facts') {
@@ -144,6 +158,7 @@ export async function administer(input, ctx, deps) {
       const blocked=(await store.db.get("SELECT COUNT(*) AS n FROM sjc_deliveries WHERE state='blocked'")).n;
       const result={...run,state:input.failed?'error':'finished',failed:Boolean(input.failed),finished_at:now,totals:{...(input.totals || {}),blocked:Math.max(0,blocked-(run.blocked_baseline ?? blocked))},new_unique:visibleJobs(groups,settings()).filter(j=>j._duplicate_ids.every(id=>id>run.baseline)).length,new_duplicates:newRows.length-newGroups};
       if(!input.failed && (input.totals?.healthy_sources || 0)>0) await store.setMeta('last_successful_collection',now);
+      await sourceHistory(store,input.owner,run.started_at);
       await store.setMeta('last_collection',result); await store.setMeta('collection_run',result);
       await store.sourceStatus('_collection', { state: result.state, checked_at: now }); await store.unlock('collection',input.owner); return { released: true };
     }

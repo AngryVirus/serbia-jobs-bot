@@ -1,0 +1,51 @@
+name: Encrypted SQLite backup
+on:
+  schedule:
+    - cron: '43 3 * * *'
+  workflow_dispatch:
+  workflow_run:
+    workflows: [Serbia Jobs Serverless]
+    types: [completed]
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: serbia-jobs-backup
+  cancel-in-progress: false
+jobs:
+  backup:
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'workflow_run' && github.event.workflow_run.head_sha == github.sha)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: serverless/package-lock.json
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: serverless
+      - name: Create encrypted snapshot and verify offline recovery
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_PROBE_TOKEN }}
+        run: python3 serverless/backup.py create work/backup/runtime.sjcbk
+      - name: Save encrypted backup only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: encrypted-sqlite-${{ github.run_id }}
+          path: |
+            work/backup/runtime.sjcbk
+            work/backup/runtime.report.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Record successful artifact upload
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_PROBE_TOKEN }}
+        run: python3 serverless/backup.py confirm work/backup/runtime.sjcbk
