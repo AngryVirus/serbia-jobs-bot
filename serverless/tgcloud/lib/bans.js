@@ -116,7 +116,7 @@ export async function banInput(bot,message) {
  if(!await mayBan(bot,uid)){await bot.patch({pending_input:null,ban_draft:null});await bot.panel('Недостаточно прав для блокировки этого пользователя.',BACK);return true;}
  const current=await banRecord(bot.store,uid),draft={uid,reason,username:bot.s.ban_target_username||null,token:token(),expected:current?banVersion(current):null};
  await bot.patch({pending_input:null,ban_target:null,ban_draft:draft});
- await bot.panel(`<b>Забанить пользователя ${uid}${draft.username?' · @'+safe(draft.username,32):''}?</b>\n\n<b>Причина:</b> ${safe(reason,300)}\n<b>Исполнитель:</b> ${actorName(moderator(bot))}\n\nПользователь получит одно уведомление картинкой и кнопку связи с администратором. Затем бот перестанет отвечать на сообщения и кнопки, отправлять вакансии и рекламу.`,[[button('🚫 Подтвердить бан',`admin:bans:confirm:${draft.token}`)],[CONTACT],...BACK]);return true;
+ await bot.panel(`<b>Забанить пользователя ${uid}${draft.username?' · @'+safe(draft.username,32):''}?</b>\n\n<b>Причина:</b> ${safe(reason,300)}\n<b>Исполнитель:</b> ${actorName(moderator(bot))}\n\nПользователь получит одно уведомление картинкой и кнопку связи с администратором. Затем бот перестанет отвечать на сообщения и кнопки, отправлять вакансии и рекламу.`,[[button('🚫 Подтвердить бан',`admin:bans:confirm:${draft.token}`)],...BACK]);return true;
 }
 export async function banPanel(bot,action) {
  const role=await accessRole(bot);

@@ -79,3 +79,20 @@ test('administrator ban list hides unban controls for protected administrators',
  const f=await fixture();await seed(f,2,'administrator');await seed(f,3,'administrator');await ban(f,OWNER_ID,3);await ban(f,OWNER_ID,77);
  await handle(f,callback(2,'admin:bans:0'));assert(!callbacks(last(f)).some(x=>x.startsWith('admin:bans:remove:3:')));assert(callbacks(last(f)).some(x=>x.startsWith('admin:bans:remove:77:')));
 });
+
+test('role changes notify the target once, explain both roles on promotion, and revoke each role explicitly',async()=>{
+ const f=await fixture();await f.store.ensure(77,77);
+ const notices=()=>f.api.sent.filter(p=>p.chat_id===77);
+ const first=await grant(f,OWNER_ID,77,'moderator');assert.equal(notices().length,1);assert.match(notices()[0].text,/назначены модератором/);assert.equal(callbacks(notices()[0])[0],'admin');
+ await handle(f,callback(OWNER_ID,first));assert.equal(notices().length,1);
+ await grant(f,OWNER_ID,77,'administrator');assert.equal(notices().length,2);assert.match(notices()[1].text,/сняты полномочия модератора/);assert.match(notices()[1].text,/назначены администратором/);
+ const remove=await revoke(f,OWNER_ID,77);assert.equal(notices().length,3);assert.match(notices()[2].text,/сняты полномочия администратора/);assert.equal(callbacks(notices()[2])[0],'menu');
+ await handle(f,callback(OWNER_ID,remove));assert.equal(notices().length,3);
+ await grant(f,OWNER_ID,77,'moderator');await revoke(f,OWNER_ID,77);assert.match(notices().at(-1).text,/сняты полномочия модератора/);
+});
+test('ambiguous role notification failure cannot undo or repeat the decision or delivery',async()=>{
+ const f=await fixture();let attempts=0;const send=f.api.sendMessage;
+ f.api.sendMessage=async p=>{if(p.chat_id===77){attempts++;assert.equal(await rawRole(f.store,77),'moderator');assert.equal((await roleRecord(f.store,77)).notice.state,'sending');throw Error('private transport details');}return send(p);};
+ const action=await grant(f,OWNER_ID,77,'moderator');assert.equal(attempts,1);assert.equal(await rawRole(f.store,77),'moderator');assert.equal((await roleRecord(f.store,77)).notice.state,'unconfirmed');assert.match(last(f).text,/Доставка уведомления не подтверждена/);assert(!JSON.stringify(await roleRecord(f.store,77)).includes('private transport'));
+ await handle(f,callback(OWNER_ID,action));assert.equal(attempts,1);assert.equal((await f.store.records('staff_audit')).filter(e=>e.target===77).length,1);
+});

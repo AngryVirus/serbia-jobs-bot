@@ -161,6 +161,15 @@ export class Bot {
     if (action === 'delete_confirm') { await this.store.deleteUser(this.uid); this.s=null; return this.panel('Ваши данные удалены. Уведомления выключены. /start — начать заново.', [], null); }
     return this.home();
   }
+  async removeAcceptedInput(message,callback) {
+    if(callback || message.chat?.type!=='private' || message.from?.id!==message.chat?.id || !positive(message.message_id))return;
+    try {await this.api.deleteMessage({chat_id:message.chat.id,message_id:message.message_id});}
+    catch {/* Cleanup must never replay a completed action or log the received text. */}
+  }
+  async finishAcceptedInput(key,message,callback) {
+    await this.store.finishUpdate(key);
+    await this.removeAcceptedInput(message,callback);
+  }
   async handle(update) {
     const callback = update.callback_query, message = callback?.message || update.message || {}, user = callback?.from || message.from || {};
     const valid = message.chat?.type === 'private' && positive(user.id) && positive(message.chat.id) && !user.is_bot;
@@ -184,10 +193,14 @@ export class Bot {
     let claimed = false;
     try {
       claimed = await this.store.claimUpdate(key);
-      if (!claimed) return;
+      if (!claimed) {
+        const previous=await this.store.db.get('SELECT state FROM sjc_updates WHERE key=:key',{':key':key});
+        if(previous?.state==='done')await this.removeAcceptedInput(message,callback);
+        return;
+      }
       if(this.uid!==OWNER_ID && await this.store.isBanned(this.uid)){if(this.uid===this.chat)await deliverBanNotice(this.store,this.api,this.InputFile,this.uid,{contact:true});await this.store.finishUpdate(key);return;}
       if(callback){try{await this.api.answerCallbackQuery({callback_query_id:callback.id});}catch{}}
-      if(!await this.store.meta('active')){await this.panel('⏳ Бот обновляется. Попробуйте через несколько минут.');await this.store.finishUpdate(key);return;}
+      if(!await this.store.meta('active')){await this.panel('⏳ Бот обновляется. Попробуйте через несколько минут.');await this.finishAcceptedInput(key,message,callback);return;}
       this.s = settings((await this.store.ensure(this.uid,this.chat)).settings);
       if(!callback && ['keywords','exclusions','salary','hour','owner_ban','owner_ban_reason','staff_target'].includes(this.s.pending_input) && !message.text?.startsWith('/') && positive(this.s.ui_panel_id)) {this.mid=this.s.ui_panel_id;this.isPhoto=this.s.ui_panel_kind==='photo';}
       await this.store.captureUsername(this.uid,user.username);
@@ -196,18 +209,18 @@ export class Bot {
       let action;
       if (callback) { action = callback.data || '';if(this.s.staff_draft&&!action.startsWith('admin:team:confirm:'))await this.patch({staff_draft:null}); if (this.s.pending_input || (this.s.ban_draft && !action.startsWith('admin:bans:confirm:'))) await this.patch({ pending_input: null, ...(!action.startsWith('admin:bans:confirm:')?{ban_draft:null,ban_target:null}:{}) }); }
       else {
-        if(await staffInput(this,message)){await this.store.finishUpdate(key);return;}
-        if(await banInput(this,message)){await this.store.finishUpdate(key);return;}
-        if(await adInput(this,message)) {await this.store.finishUpdate(key);return;}
+        if(await staffInput(this,message)){await this.finishAcceptedInput(key,message,callback);return;}
+        if(await banInput(this,message)){await this.finishAcceptedInput(key,message,callback);return;}
+        if(await adInput(this,message)) {await this.finishAcceptedInput(key,message,callback);return;}
         const text = message.text;
-        if (typeof text !== 'string' || !text.trim()) { await this.store.finishUpdate(key); return; }
-        if ([...text].length > 1000) { await this.panel('Пожалуйста, сократите сообщение до 1000 символов.'); await this.store.finishUpdate(key); return; }
-        if (this.s.pending_input && !text.startsWith('/')) { await this.input(text); await this.store.finishUpdate(key); return; }
+        if (typeof text !== 'string' || !text.trim()) { await this.finishAcceptedInput(key,message,callback); return; }
+        if ([...text].length > 1000) { await this.panel('Пожалуйста, сократите сообщение до 1000 символов.'); await this.finishAcceptedInput(key,message,callback); return; }
+        if (this.s.pending_input && !text.startsWith('/')) { await this.input(text); await this.finishAcceptedInput(key,message,callback); return; }
         if (this.s.pending_input || this.s.ban_draft || this.s.staff_draft) await this.patch({ pending_input: null,ban_draft:null,ban_target:null,staff_draft:null });
         action = ({ '/start': 'start', '/menu': 'menu', '/cancel': 'menu', '/delete_me': 'delete', '/admin': 'admin' })[text.split(/\s+/)[0].split('@')[0]] || 'menu';
       }
       await this.route(action);
-      await this.store.finishUpdate(key);
+      await this.finishAcceptedInput(key,message,callback);
     } catch (error) { if (claimed) await this.store.releaseUpdate(key); throw error; }
     finally { await this.store.unlock(lock,owner); }
   }

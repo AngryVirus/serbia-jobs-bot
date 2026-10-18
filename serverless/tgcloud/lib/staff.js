@@ -6,6 +6,15 @@ import { button,safe } from './ui.js';
 import { belgradeOffset } from './filters.js';
 const BACK=[[button('🛡 Панель','admin')],[button('🏠 Меню','menu')]];
 const actor=bot=>bot.actor?.id===bot.uid?bot.actor:moderatorSnapshot({id:bot.uid});
+export function roleNoticeText(before,after){
+ const removed=before==='moderator'?'модератора':'администратора';
+ const lines=[];
+ if(before!=='user')lines.push(`С вас сняты полномочия ${removed}.`);
+ if(after==='moderator')lines.push('Вы назначены модератором @SerbiaJobsBot. Вы можете блокировать обычных пользователей.');
+ if(after==='administrator')lines.push('Вы назначены администратором @SerbiaJobsBot. Вы можете блокировать и разблокировать пользователей, назначать и снимать модераторов.');
+ lines.push(after==='user'?'Раздел управления командой и модерацией для вас закрыт.':'Для работы откройте панель управления кнопкой ниже.');
+ return lines.join('\n\n');
+}
 export function staffHomeDocument(role){
  if(role==='moderator')return ['<b>🛡 Модератор</b>\n\nВы можете блокировать обычных пользователей. Разблокировка и управление сотрудниками недоступны.',[[button('🚫 Забанить пользователя','admin:bans:new')],[button('🏠 Меню','menu')]]];
  return ['<b>🛡 Администратор</b>\n\nВы можете блокировать и разблокировать пользователей, назначать и снимать модераторов.',[[button('🚫 Забанить пользователя','admin:bans:new')],[button('🔓 Баны и разблокировка','admin:bans:0')],[button('👥 Модераторы','admin:team:0')],[button('🏠 Меню','menu')]]];
@@ -51,21 +60,27 @@ export async function teamPanel(bot,action){
   if(!positive(uid)||uid===OWNER_ID||uid===bot.uid)return bot.panel('Нельзя изменить собственные права или права владельца.',BACK);
   const key='user:'+uid,lease='role:'+nonce();
   if(!await bot.store.lock(key,lease,180))return bot.panel('Пользователь сейчас обрабатывается. Повторите действие.',[[button('🔄 Повторить',action)],...BACK]);
-  let changed=false;
+  let changed=false,noticeSent=false;
   try{
    const current=await roleRecord(bot.store,uid),currentRole=await rawRole(bot.store,uid),freshRole=await accessRole(bot),expected=confirm?draft.expected:remove[2];
    if((current?.version||null)!==expected||!mayManage(freshRole,currentRole,desired)||(desired!=='user'&&await bot.store.isBanned(uid)))return bot.panel('Права изменились или действие недоступно. Откройте список заново.',BACK);
    if(draft?.username){let chat;try{chat=await bot.api.getChat({chat_id:uid});}catch{}if(chat?.id!==uid||chat?.type!=='private'||String(chat.username||'').toLowerCase()!==draft.username.toLowerCase())return bot.panel('Тег изменился или не подтверждён. Укажите ID заново.',BACK);}
    if(currentRole!==desired){
-    const at=new Date().toISOString(),version=confirm?draft.token:nonce(),next={uid,role:desired==='user'?null:desired,version,by:bot.uid,actor:actor(bot),at};
+    // Claim delivery in the same commit as the role: ambiguous sends are never replayed.
+    const at=new Date().toISOString(),version=confirm?draft.token:nonce(),next={uid,role:desired==='user'?null:desired,version,by:bot.uid,actor:actor(bot),at,notice:{state:'sending'}};
     await staffDecision(bot.store,'staff_role',uid,next,{action:desired==='user'?'revoke_'+currentRole:'grant_'+desired,actor:actor(bot),actor_role:freshRole,target:uid,before:currentRole,after:desired,at});
     // Stale pending input and confirmations must not survive a changed privilege level.
     await bot.store.db.run("UPDATE sjc_users SET payload=json_set(payload,'$.settings.pending_input',NULL,'$.settings.ban_draft',NULL,'$.settings.staff_draft',NULL) WHERE id=:uid",{':uid':uid});
     changed=true;
+    try{
+     await bot.api.sendMessage({chat_id:uid,text:roleNoticeText(currentRole,desired),reply_markup:{inline_keyboard:[[button(desired==='user'?'🏠 Меню':'🛡 Панель управления',desired==='user'?'menu':'admin')]]}});
+     noticeSent=true;
+    }catch{/* A delivery failure must not undo a committed role or disclose API details. */}
+    await bot.store.record('staff_role',String(uid),{...next,notice:{state:noticeSent?'sent':'unconfirmed'}});
    }
   }finally{await bot.store.unlock(key,lease);}
   await bot.patch({staff_draft:null});
-  return bot.panel(changed?`Права пользователя ${uid} обновлены. Роль: ${ROLE_NAMES[desired]}.`:'Права не изменились.',BACK);
+  return bot.panel(changed?`Права пользователя ${uid} обновлены. Роль: ${ROLE_NAMES[desired]}.\n${noticeSent?'Уведомление пользователю отправлено.':'Доставка уведомления не подтверждена. Пользователь мог не запускать бота или заблокировать его.'}`:'Права не изменились.',BACK);
  }
  match=/^admin:team:(\d+)$/.exec(action);if(!match)return bot.panel('Откройте раздел заново.',BACK);
  await bot.patch?.({staff_draft:null});
