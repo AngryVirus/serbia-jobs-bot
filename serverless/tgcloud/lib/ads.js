@@ -1,3 +1,4 @@
+import { deliveryForbidden } from './analytics.js';
 import { OWNER_ID } from './owner.js';
 import { button, safe } from './ui.js';
 
@@ -159,7 +160,7 @@ export async function adTick(store,api,heldUser=null) {
                 await store.record('ad_campaign',id,c);return {retry_after:Math.ceil((c.retry_at-Date.now())/1000)};
               }
               receipt.state=error.code===403?'blocked':error.code===400?'failed':'uncertain';
-              if(error.code===403) await store.patch(row.id,{bot_blocked:true});
+              if(error.code===403) await deliveryForbidden(store,row.id,error);
             }
             await store.record('ad_delivery',key,receipt);
           }

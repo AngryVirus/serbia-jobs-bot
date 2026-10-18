@@ -2,7 +2,7 @@
 import { zlibSync, unzlibSync } from './image-codec.js';
 import { HEADER } from './image-header.js';
 import { FONTS, FONT_DATA } from './image-fonts.js';
-export const IMAGE_VERSION='belgrade-v1';
+export const IMAGE_VERSION='belgrade-v2-icons';
 const W=960, BG=[251,246,236], INK=[22,45,67], MUTED=[100,117,129], BLUE=[44,106,160];
 export function fromBase64(value) {
  const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/',out=[];let bits=0,n=0;
@@ -22,6 +22,29 @@ export function imageHash(text) {
  }return h.map(v=>(v>>>0).toString(16).padStart(8,'0')).join('');
 }
 const decode=s=>s.replace(/&#(x[0-9a-f]+|\d+);/gi,(_,n)=>{const c=n[0].toLowerCase()==='x'?parseInt(n.slice(1),16):Number(n);return c>=0&&c<=0x10ffff?String.fromCodePoint(c):'□';}).replace(/&(lt|gt|amp|quot|apos|#x27);/g,(_,n)=>({lt:'<',gt:'>',amp:'&',quot:'"',apos:"'",'#x27':"'"})[n]);
+export function categoryIcon(text) {
+ const label=text.split(':')[0].trim();
+ return {'Города':'pin','Формат работы':'laptop','Языки':'chat','Возраст вакансии':'clock','Наличие ВНЖ':'id','ВНЖ':'id','Ключевые слова':'search','Исключения':'exclude','Зарплата':'coins','Без зарплаты':'coins','Уведомления':'bell','Скрытые вакансии':'eye'}[label] || null;
+}
+// Small antialiased vector glyphs, drawn locally without emoji fonts or requests.
+function drawIcon(pixel,kind,cx,cy) {
+ const ink=[44,106,160],background=[228,236,237];
+ const disc=(x,y,r,color)=>{for(let yy=Math.floor(y-r-1);yy<=y+r+1;yy++)for(let xx=Math.floor(x-r-1);xx<=x+r+1;xx++){const a=Math.max(0,Math.min(1,r+.5-Math.hypot(xx-x,yy-y)));if(a)pixel(cx+xx,cy+yy,color,Math.round(a*255));}};
+ const line=(x1,y1,x2,y2)=>{const dx=x2-x1,dy=y2-y1,n=dx*dx+dy*dy;for(let y=Math.floor(Math.min(y1,y2)-2);y<=Math.max(y1,y2)+2;y++)for(let x=Math.floor(Math.min(x1,x2)-2);x<=Math.max(x1,x2)+2;x++){const t=n?Math.max(0,Math.min(1,((x-x1)*dx+(y-y1)*dy)/n)):0;const a=Math.max(0,Math.min(1,1.8-Math.hypot(x-x1-t*dx,y-y1-t*dy)));if(a)pixel(cx+x,cy+y,ink,Math.round(a*255));}};
+ const path=points=>{for(let i=1;i<points.length;i++)line(...points[i-1],...points[i]);};
+ const circle=(x,y,r)=>{const points=[];for(let i=0;i<=48;i++)points.push([x+r*Math.cos(i*Math.PI/24),y+r*Math.sin(i*Math.PI/24)]);path(points);};
+ disc(0,0,24,background);
+ if(kind==='pin'){circle(0,-5,9);path([[-8,0],[0,14],[8,0]]);circle(0,-5,3);}
+ if(kind==='laptop'){path([[-12,-10],[12,-10],[12,7],[-12,7],[-12,-10]]);path([[-15,11],[15,11]]);}
+ if(kind==='chat'){path([[-13,-10],[13,-10],[13,6],[0,6],[-7,13],[-7,6],[-13,6],[-13,-10]]);line(-7,-4,7,-4);line(-7,1,4,1);}
+ if(kind==='clock'){circle(0,0,13);path([[0,-8],[0,0],[7,4]]);}
+ if(kind==='id'){path([[-15,-10],[15,-10],[15,10],[-15,10],[-15,-10]]);circle(-6,-3,3);path([[-11,6],[-9,3],[-3,3],[-1,6]]);line(4,-3,10,-3);line(4,3,10,3);}
+ if(kind==='search'){circle(-3,-3,9);line(4,4,13,13);}
+ if(kind==='exclude'){circle(0,0,13);line(-9,9,9,-9);}
+ if(kind==='coins'){circle(-5,-3,10);circle(5,5,10);line(5,-1,5,11);line(2,1,8,1);line(2,8,8,8);}
+ if(kind==='bell'){path([[-12,8],[-9,4],[-8,-6],[-4,-11],[4,-11],[8,-6],[9,4],[12,8],[-12,8]]);line(-3,13,3,13);}
+ if(kind==='eye'){path([[-15,0],[-8,-8],[0,-11],[8,-8],[15,0],[8,8],[0,11],[-8,8],[-15,0]]);circle(0,0,4);}
+}
 export function imageDocument(html) {
  const lines=String(html).replace(/<\/?blockquote>/g,'\n').split('\n').map(s=>({bold:/<b>/.test(s),text:decode(s.replace(/<[^>]*>/g,'')).replace(/[\p{Extended_Pictographic}\uFE0F\u200D\u20E3]/gu,'').normalize('NFC').trim()}));
  while(lines.length&&!lines[0].text)lines.shift();
@@ -47,13 +70,14 @@ export function renderImage(html) {
  const take=(text,max)=>{let count=0,n=0,lastSpace=-1;for(const c of text){const next=width(c,'body');if(n+next>max)break;n+=next;count+=c.length;if(c===' ')lastSpace=count;}if(count<text.length && lastSpace>0)count=lastSpace;return [text.slice(0,count).trim(),text.slice(count).trim()];};
  for(const line of doc.lines){
   if(!line.text){y+=20;continue;}
-  const colon=line.text.indexOf(':');
-  if(line.bold && colon>0 && width(line.text.slice(0,colon+1),'bold')<W-300){
-   const label=line.text.slice(0,colon+1),x=68+width(label,'bold')+12;
+  const colon=line.text.indexOf(':'),icon=colon>0?categoryIcon(line.text):null,left=icon?132:68;
+  if(icon)layout.push({icon,x:88,y:y+24});
+  if(line.bold && colon>0 && width(line.text.slice(0,colon+1),'bold')<W-300-(icon?64:0)){
+   const label=line.text.slice(0,colon+1),x=left+width(label,'bold')+12;
    let [first,rest]=take(line.text.slice(colon+1).trim(),W-68-x);
-   layout.push({text:label,face:'bold',x:68,y,color:INK});layout.push({text:first,face:'body',x,y:y+2,color:INK});y+=48;
-   while(rest){const [part,tail]=take(rest,W-136);layout.push({text:part,face:'body',x:68,y,color:INK});y+=48;rest=tail;}
-  }else{const face=line.bold?'bold':'body';for(const text of wrap(line.text,face,W-136)){layout.push({text,face,x:68,y,color:line.bold?INK:MUTED});y+=48;}}
+   layout.push({text:label,face:'bold',x:left,y,color:INK});layout.push({text:first,face:'body',x,y:y+2,color:INK});y+=48;
+   while(rest){const [part,tail]=take(rest,W-68-left);layout.push({text:part,face:'body',x:left,y,color:INK});y+=48;rest=tail;}
+  }else{const face=line.bold?'bold':'body';for(const text of wrap(line.text,face,W-68-left)){layout.push({text,face,x:left,y,color:line.bold?INK:MUTED});y+=48;}}
   y+=10;
  }
  const height=Math.max(660,y+64);if(height>8500)throw Error('Image panel exceeds safe height');
@@ -62,6 +86,6 @@ export function renderImage(html) {
  const rect=(x,y,w,h,c)=>{for(let yy=y;yy<y+h;yy++)for(let xx=x;xx<x+w;xx++)pixel(xx,yy,c);};
  for(let p=0;p<headerPixels.length;p++){const i=headerPixels[p]*3;rgb.set(HEADER.palette.slice(i,i+3),p*3);}
  rect(56,ruleY,100,4,[184,51,63]);rect(156,ruleY,100,4,BLUE);rect(256,ruleY,W-312,2,[226,219,207]);
- for(const line of layout){let x=line.x;const check=line.text.startsWith('✓') || line.text.startsWith('Выбрано:');if(check)rect(48,line.y-2,W-96,50,[225,237,242]);for(const c of line.text){const [w,h,left,top,advance,offset]=glyph(c,line.face);for(let yy=0;yy<h;yy++)for(let xx=0;xx<w;xx++){const a=fontPixels[offset+yy*w+xx];if(a)pixel(x+left+xx,line.y+top+yy,line.color,a);}x+=advance;}}
- return {bytes:png(rgb,height),width:W,height,title:doc.title};
+ for(const line of layout){if(line.icon){drawIcon(pixel,line.icon,line.x,line.y);continue;}let x=line.x;const check=line.text.startsWith('✓') || line.text.startsWith('Выбрано:');if(check)rect(48,line.y-2,W-96,50,[225,237,242]);for(const c of line.text){const [w,h,left,top,advance,offset]=glyph(c,line.face);for(let yy=0;yy<h;yy++)for(let xx=0;xx<w;xx++){const a=fontPixels[offset+yy*w+xx];if(a)pixel(x+left+xx,line.y+top+yy,line.color,a);}x+=advance;}}
+ return {bytes:png(rgb,height),width:W,height,title:doc.title,icons:layout.filter(l=>l.icon).length};
 }

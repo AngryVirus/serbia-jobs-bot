@@ -112,3 +112,13 @@ test('all reachable user menu and vacancy controls remain usable with image tran
  }
  assert(seen.size>40);
 });
+
+test('filter categories have distinct local vector icons and retain readable wrapped values',async()=>{
+ const {categoryIcon,IMAGE_VERSION}=await import('../tgcloud/lib/image-renderer.js');
+ const document=imageDocument(filtersPanel(defaults())[0]);
+ const labels=document.lines.filter(l=>l.bold&&l.text.includes(':'));
+ assert.equal(labels.length,9);assert(labels.every(l=>categoryIcon(l.text)));
+ assert.equal(new Set(labels.map(l=>categoryIcon(l.text))).size,8);
+ assert.equal(categoryIcon('Произвольный текст: значение'),null);
+ assert.match(IMAGE_VERSION,/v2/);assert.equal(renderImage(filtersPanel(defaults())[0]).icons,9);
+});
