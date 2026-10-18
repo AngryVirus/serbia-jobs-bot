@@ -1,3 +1,5 @@
+import { Bot } from './bot.js';
+import { renderImage } from './image-renderer.js';
 import { sourceHistory, analyticsPanel, freshness } from './analytics.js';
 import { backupOperation } from './backup.js';
 import { healthTick } from './health.js';
@@ -8,7 +10,7 @@ import { SOURCE_NAMES } from './config.js';
 import { sourceEnabled } from './source-policy.js';
 import { adTick } from './ads.js';
 import { ownerReport, OWNER_ID, notifyReports } from './owner.js';
-import { card, jobButtons, menu, translatedCard } from './ui.js';
+import { card, jobButtons, menu, filtersPanel, choicePanel, translatedCard } from './ui.js';
 export async function notifyOne(store, api, uid) {
   assert(positive(uid), 'Invalid subscriber');
   const cooldown = await store.meta('notification_cooldown');
@@ -58,6 +60,21 @@ export async function administer(input, ctx, deps) {
   assert(me.is_bot && me.id === 8802394224 && me.username?.toLowerCase() === 'serbiajobsbot', 'Wrong bot; stopped');
   const store = new Store(deps.db), op = input?.operation;
   if(['backup_create','backup_page','backup_release'].includes(op)) return backupOperation(store,input);
+  if(op==='menu_image_audit') {
+    assert(typeof deps.InputFile==='function','Runtime image upload unsupported');
+    const s=settings((await store.user(OWNER_ID))?.settings),start=Date.now(),panels=[menu(s)[0],filtersPanel(s)[0],choicePanel(s,'city')[0]];
+    const sizes=panels.map(text=>{const image=renderImage(text);assert(image.bytes.length<10000000 && image.width+image.height<=10000,'Image exceeds Telegram limits');return {width:image.width,height:image.height,bytes:image.bytes.length};});
+    return {rendered:sizes.length,elapsed_ms:Date.now()-start,images:sizes};
+  }
+  if(op==='menu_image_preview') {
+    assert(typeof deps.InputFile==='function','Runtime image upload unsupported');
+    const bot=new Bot(deps);bot.uid=OWNER_ID;bot.chat=OWNER_ID;bot.s=settings((await store.ensure(OWNER_ID,OWNER_ID)).settings);bot.mid=null;bot.isPhoto=false;
+    await bot.home();const id=bot.mid;
+    await bot.panel(...filtersPanel(bot.s));assert(bot.mid===id,'Image was not edited in place');
+    await bot.panel(...choicePanel(bot.s,'city'));assert(bot.mid===id,'Choice image was not edited in place');
+    await bot.home();assert(bot.mid===id,'Menu was not restored in place');
+    return {sent:1,edited_in_place:3,owner_only:true};
+  }
   if(op==='health_tick') return healthTick(store,deps.api);
   if(op==='ads_tick') return adTick(store,deps.api);
   if (op === 'init') {
@@ -141,6 +158,10 @@ export async function administer(input, ctx, deps) {
   if (op === 'owner_preview') {
     const chat = await deps.api.getChat({ chat_id: 340780041 });
     assert(chat.type === 'private' && chat.username?.toLowerCase() === 'angryvirus', 'Owner chat mismatch');
+    if(deps.InputFile){
+      const bot=new Bot(deps);bot.uid=OWNER_ID;bot.chat=OWNER_ID;bot.s=settings((await store.ensure(OWNER_ID,OWNER_ID)).settings);bot.mid=null;bot.isPhoto=false;
+      await bot.home();return {sent:1};
+    }
     const s = settings((await store.user(340780041))?.settings), [text, rows] = menu(s, hiddenGroups(groupJobs(await store.jobs()), s).length);
     await deps.api.sendMessage({ chat_id: 340780041, text: '<i>Проверка переноса в Telegram Serverless</i>\n\n'+text, parse_mode: 'HTML', reply_markup: { inline_keyboard: rows } });
     return { sent: 1 };

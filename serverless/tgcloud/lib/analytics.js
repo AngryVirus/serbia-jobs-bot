@@ -30,6 +30,7 @@ export async function sourceHistory(store,owner,started,now=Date.now()) {
    ON CONFLICT(kind,record_key) DO UPDATE SET payload=json_object('checks',json_extract(payload,'$.checks')+1,'failures',json_extract(payload,'$.failures')+:bad,'streak',CASE WHEN :bad=0 THEN 0 ELSE json_extract(payload,'$.streak')+1 END,'last_run',:owner,'last_ok',CASE WHEN :bad=0 THEN :ok ELSE json_extract(payload,'$.last_ok') END,'state',:state)
    WHERE json_extract(payload,'$.last_run')!=:owner`,{':source':row.source,':bad':healthy?0:1,':owner':owner,':ok':healthy?new Date(now).toISOString():null,':state':row.payload.state});
  }
+ await store.db.run("DELETE FROM sjc_records WHERE kind='menu_image' AND json_extract(payload,'$.expires')<=:now",{':now':now});
  // Anonymous totals are sufficient; no request text, filter values or event-level IDs.
  await store.db.run("DELETE FROM sjc_records WHERE kind='usage' AND record_key<:before",{':before':new Date(now-90*86400000).toISOString().slice(0,10)});
 }

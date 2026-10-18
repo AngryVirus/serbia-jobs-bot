@@ -115,7 +115,7 @@ export async function ownerRoute(bot, action) {
     const rows=[...links(group.members[0],false), blocked ? [button('↩️ Вернуть в выдачу',`admin:restore:${group.id}`)] : [button('Убрать из выдачи',`admin:block:${group.id}`),button('Оставить',`admin:keep:${group.id}`)]];
     const route=blocked?'blocked':'reports';
     const nav=[]; if(index>0) nav.push(button('⬅️',`admin:${route}:${index-1}`)); if(index+1<groups.length) nav.push(button('➡️',`admin:${route}:${index+1}`));
-    return bot.panel(text,[...rows,...(nav.length?[nav]:[]),...OWNER_BACK]);
+    return bot.panel(text,[...rows,...(nav.length?[nav]:[]),...OWNER_BACK],bot.mid,false);
   }
   if ((m=/^admin:(block|keep|restore):([1-9]\d*)$/.exec(action))) {
     const group=data.groups.find(g=>includesId(g,Number(m[2])));
