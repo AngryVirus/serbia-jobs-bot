@@ -1,0 +1,81 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { fixture,handle,message,callback } from './fixtures.js';
+import { OWNER_ID,rawRole,roleRecord } from '../tgcloud/lib/permissions.js';
+import { banRecord,banVersion } from '../tgcloud/lib/bans.js';
+import { Store } from '../tgcloud/lib/store.js';
+async function seed(f,uid,role){await f.store.ensure(uid,uid);await f.store.record('staff_role',String(uid),{uid,role,version:'seed'+uid});}
+async function grantDraft(f,actor,target,role){await handle(f,callback(actor,'admin:team:add:'+role));await handle(f,message(actor,String(target)));return 'admin:team:confirm:'+(await f.store.user(actor)).settings.staff_draft.token;}
+async function grant(f,actor,target,role){const action=await grantDraft(f,actor,target,role);await handle(f,callback(actor,action));return action;}
+async function revoke(f,actor,target){const row=await roleRecord(f.store,target);const action=`admin:team:remove:${target}:${row.version}`;await handle(f,callback(actor,action));return action;}
+async function banDraft(f,actor,target){await handle(f,callback(actor,'admin:bans:new'));await handle(f,message(actor,String(target)));await handle(f,message(actor,'Спам'));return 'admin:bans:confirm:'+(await f.store.user(actor)).settings.ban_draft.token;}
+async function ban(f,actor,target){const action=await banDraft(f,actor,target);await handle(f,callback(actor,action));return action;}
+const last=f=>f.api.edited.at(-1)||f.api.sent.at(-1);
+const callbacks=p=>p.reply_markup.inline_keyboard.flat().map(b=>b.callback_data).filter(Boolean);
+
+test('role-specific panels hide every unavailable owner, team and unban function',async()=>{
+ const f=await fixture();await seed(f,1,'moderator');await seed(f,2,'administrator');
+ await handle(f,callback(1,'admin'));assert.deepEqual(callbacks(last(f)),['admin:bans:new','menu']);
+ await handle(f,callback(1,'admin:bans:0'));assert(!callbacks(last(f)).some(x=>x.includes('remove')||x.includes('team')||x.includes('audit')));
+ await handle(f,callback(2,'admin'));assert.deepEqual(callbacks(last(f)),['admin:bans:new','admin:bans:0','admin:team:0','menu']);
+ await handle(f,callback(2,'admin:team:0'));assert(callbacks(last(f)).includes('admin:team:add:moderator'));assert(!JSON.stringify(last(f)).includes('admin:team:add:administrator'));
+ for(const uid of [1,2])for(const action of ['admin:stats','admin:quality','admin:details','admin:reports:0','admin:audit:0','ads']){await handle(f,callback(uid,action));assert(!callbacks(last(f)).some(x=>/^ads:(new|start)|admin:(stats|quality|reports|audit)/.test(x)));}
+ await handle(f,callback(OWNER_ID,'admin'));assert(callbacks(last(f)).includes('admin:team:0'));assert(callbacks(last(f)).includes('admin:audit:0'));
+});
+test('owner assigns administrators, administrators manage only moderators; roles survive restart',async()=>{
+ const f=await fixture();await grant(f,OWNER_ID,2,'administrator');assert.equal(await rawRole(new Store(f.db),2),'administrator');
+ const action=await grant(f,2,1,'moderator');assert.equal(await rawRole(f.store,1),'moderator');await handle(f,callback(2,action));assert.equal((await f.store.records('staff_audit')).filter(e=>e.action==='grant_moderator').length,1);
+ await handle(f,callback(2,'admin:team:add:administrator'));assert.equal((await f.store.user(2)).settings.pending_input,null);
+ await revoke(f,2,1);assert.equal(await rawRole(f.store,1),'user');
+ await revoke(f,OWNER_ID,2);assert.equal(await rawRole(f.store,2),'user');
+ assert.deepEqual((await f.store.records('staff_audit')).map(e=>e.action).sort(),['grant_administrator','grant_moderator','revoke_administrator','revoke_moderator'].sort());
+});
+test('moderator bans but cannot unban; administrator unbans and actual actor is audited',async()=>{
+ const f=await fixture();await seed(f,1,'moderator');await seed(f,2,'administrator');await f.store.ensure(77,77);
+ const action=await banDraft(f,1,77),u=callback(1,action);u.callback_query.from.username='RealModerator';await handle(f,u);assert.equal(await f.store.isBanned(77),true);
+ const row=await banRecord(f.store,77),remove=`admin:bans:remove:77:${banVersion(row)}`;
+ await handle(f,callback(1,remove));assert.equal(await f.store.isBanned(77),true);
+ await handle(f,callback(2,remove));assert.equal(await f.store.isBanned(77),false);
+ const events=await f.store.records('staff_audit');assert.equal(events.length,2);assert.deepEqual(events.find(e=>e.action==='ban').actor,{id:1,username:'RealModerator'});assert.equal(events.find(e=>e.action==='unban').actor.id,2);
+});
+test('hierarchy prevents peer/owner bans and disguised administrator demotions',async()=>{
+ const f=await fixture();await seed(f,1,'moderator');await seed(f,2,'administrator');await seed(f,3,'administrator');await seed(f,4,'moderator');
+ for(const [actor,target] of [[1,2],[1,4],[1,OWNER_ID],[2,3],[2,OWNER_ID],[2,2]]){await handle(f,callback(actor,'admin:bans:new'));await handle(f,message(actor,String(target)));assert.equal((await f.store.user(actor)).settings.ban_draft??null,null);assert.equal(await f.store.isBanned(target),false);}
+ await handle(f,callback(2,'admin:team:add:moderator'));await handle(f,message(2,'3'));assert.equal((await f.store.user(2)).settings.staff_draft??null,null);assert.equal(await rawRole(f.store,3),'administrator');
+ await revoke(f,2,3);assert.equal(await rawRole(f.store,3),'administrator');
+ await grant(f,OWNER_ID,3,'moderator');assert.equal(await rawRole(f.store,3),'moderator');
+});
+test('revocation invalidates saved ban drafts, direct callbacks and forged private chat identities',async()=>{
+ const f=await fixture();await seed(f,1,'moderator');await seed(f,2,'administrator');const action=await banDraft(f,1,77);
+ await revoke(f,2,1);await handle(f,callback(1,action));assert.equal(await f.store.isBanned(77),false);
+ for(const [uid,chat] of [[1,OWNER_ID],[2,OWNER_ID],[OWNER_ID,2]]){const u=callback(uid,'admin:team:add:administrator');u.callback_query.message.chat.id=chat;await handle(f,u);assert.equal(await rawRole(f.store,77),'user');}
+ await f.store.patch(1,{pending_input:'staff_target',staff_desired:'administrator'});await handle(f,message(1,'77'));assert.equal(await rawRole(f.store,77),'user');
+});
+test('target promotion after ban preview and target ban after role preview are checked at confirmation',async()=>{
+ const f=await fixture();await seed(f,1,'moderator');await seed(f,2,'administrator');let action=await banDraft(f,1,77);
+ await grant(f,OWNER_ID,77,'administrator');await handle(f,callback(1,action));assert.equal(await f.store.isBanned(77),false);
+ action=await grantDraft(f,2,78,'moderator');await ban(f,OWNER_ID,78);await handle(f,callback(2,action));assert.equal(await rawRole(f.store,78),'user');
+});
+test('stale revoke cannot remove a newly reassigned role and staff lists do not reveal administrators to administrators',async()=>{
+ const f=await fixture();await seed(f,2,'administrator');await seed(f,3,'administrator');await seed(f,1,'moderator');const stale=`admin:team:remove:1:${(await roleRecord(f.store,1)).version}`;
+ await grant(f,OWNER_ID,1,'administrator');await handle(f,callback(2,stale));assert.equal(await rawRole(f.store,1),'administrator');
+ await handle(f,callback(2,'admin:team:0'));assert(!last(f).text.includes('3 · Администратор'));assert(!callbacks(last(f)).some(x=>x.startsWith('admin:team:remove:3:')));
+ await handle(f,callback(2,'admin:audit:0'));assert(!last(f).text.includes('grant_'));await handle(f,callback(OWNER_ID,'admin:audit:0'));assert.match(last(f).text,/Назначен администратор/);
+});
+test('failed audit insert rolls back the moderation decision and does not silently grant privilege',async()=>{
+ const f=await fixture();await seed(f,1,'moderator');const action=await banDraft(f,1,77);
+ await f.db.run("CREATE TRIGGER reject_staff_audit BEFORE INSERT ON sjc_records WHEN NEW.kind='staff_audit' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END");
+ await assert.rejects(handle(f,callback(1,action)),/audit unavailable/);assert.equal(await f.store.isBanned(77),false);assert.equal((await f.store.records('staff_audit')).length,0);
+ const grantAction=await grantDraft(f,OWNER_ID,2,'administrator');await assert.rejects(handle(f,callback(OWNER_ID,grantAction)),/audit unavailable/);assert.equal(await rawRole(f.store,2),'user');
+ await f.db.run('DROP TRIGGER reject_staff_audit');await handle(f,callback(OWNER_ID,grantAction));assert.equal(await rawRole(f.store,2),'administrator');
+});
+test('role changes share the target lease and cannot race an in-flight staff action',async()=>{
+ const f=await fixture();await seed(f,1,'moderator');await seed(f,2,'administrator');await f.store.lock('user:1','inflight',180);
+ await revoke(f,2,1);assert.equal(await rawRole(f.store,1),'moderator');assert.match(last(f).text,/сейчас обрабатывается/);
+ await f.store.unlock('user:1','inflight');await revoke(f,2,1);assert.equal(await rawRole(f.store,1),'user');
+});
+
+test('administrator ban list hides unban controls for protected administrators',async()=>{
+ const f=await fixture();await seed(f,2,'administrator');await seed(f,3,'administrator');await ban(f,OWNER_ID,3);await ban(f,OWNER_ID,77);
+ await handle(f,callback(2,'admin:bans:0'));assert(!callbacks(last(f)).some(x=>x.startsWith('admin:bans:remove:3:')));assert(callbacks(last(f)).some(x=>x.startsWith('admin:bans:remove:77:')));
+});

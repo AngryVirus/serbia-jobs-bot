@@ -1,3 +1,5 @@
+import { staffRoute,staffInput } from './staff.js';
+import { accessRole,rank } from './permissions.js';
 import { banInput, inboundBanNotice, deliverBanNotice, moderatorSnapshot } from './bans.js';
 import { imagePanel, textPanel } from './image-panel.js';
 import { activity, usage, freshness } from './analytics.js';
@@ -5,7 +7,7 @@ import { OPTIONS } from './config.js';
 import { settings, defaults, choose, hidden, validUrl } from './filters.js';
 import { groupJobs, visibleJobs, hiddenGroups, includesId, decorate } from './catalog.js';
 import { Store, positive } from './store.js';
-import { OWNER_ID, complaint, ownerRoute } from './owner.js';
+import { OWNER_ID, complaint } from './owner.js';
 import { adRoute, adInput } from './ads.js';
 import { button, BACK, safe, menu, filtersPanel, choicePanel, emptyText, jobButtons, translatedCard, viewerButtons, browserUrl, cardActions } from './ui.js';
 const PROMPTS = { keywords: 'Введите слова или фразы через запятую. Достаточно совпадения одного. «-» — очистить.', exclusions: 'Введите исключения через запятую. «-» — очистить.', salary: 'Введите минимальную зарплату в месяц: 1000 EUR или 120000 RSD. «-» — снять фильтр.' };
@@ -45,7 +47,8 @@ export class Bot {
   async home() {
     const count = hidden(this.s).size ? hiddenGroups(groupJobs(await this.store.jobs()), this.s).length : 0;
     const [text,rows] = menu(this.s,count);
-    if (this.uid === OWNER_ID) rows.push([button('📊 Отчёт владельца','admin')]);
+    const role=await accessRole(this);
+    if(rank(role))rows.push([button(role==='owner'?'📊 Отчёт владельца':role==='administrator'?'🛡 Админ-панель':'🛡 Модерация','admin')]);
     return this.panel(text,rows);
   }
   async hiddenPanel(page = 0) {
@@ -134,7 +137,7 @@ export class Bot {
       await this.patch(patch); return this.home();
     }
     let m;
-    if (action === 'admin' || action.startsWith('admin:')) return ownerRoute(this,action);
+    if (action === 'admin' || action.startsWith('admin:')) return staffRoute(this,action);
     if ((m = /^actions:([1-9]\d*):(-1|\d+):(s|f|rs|rf)$/.exec(action)) && positive(Number(m[1])) && Number(m[2])<=1000000) {
       const j=await this.store.job(Number(m[1]));
       return j ? this.panel(...cardActions(j,Number(m[2]),m[3])) : this.panel('Вакансия больше не найдена.');
@@ -186,20 +189,21 @@ export class Bot {
       if(callback){try{await this.api.answerCallbackQuery({callback_query_id:callback.id});}catch{}}
       if(!await this.store.meta('active')){await this.panel('⏳ Бот обновляется. Попробуйте через несколько минут.');await this.store.finishUpdate(key);return;}
       this.s = settings((await this.store.ensure(this.uid,this.chat)).settings);
-      if(!callback && ['keywords','exclusions','salary','hour','owner_ban','owner_ban_reason'].includes(this.s.pending_input) && !message.text?.startsWith('/') && positive(this.s.ui_panel_id)) {this.mid=this.s.ui_panel_id;this.isPhoto=this.s.ui_panel_kind==='photo';}
+      if(!callback && ['keywords','exclusions','salary','hour','owner_ban','owner_ban_reason','staff_target'].includes(this.s.pending_input) && !message.text?.startsWith('/') && positive(this.s.ui_panel_id)) {this.mid=this.s.ui_panel_id;this.isPhoto=this.s.ui_panel_kind==='photo';}
       await this.store.captureUsername(this.uid,user.username);
       await activity(this.store,this.uid);
       if(this.s.bot_blocked) await this.patch({bot_blocked:false});
       let action;
-      if (callback) { action = callback.data || ''; if (this.s.pending_input || (this.s.ban_draft && !action.startsWith('admin:bans:confirm:'))) await this.patch({ pending_input: null, ...(!action.startsWith('admin:bans:confirm:')?{ban_draft:null,ban_target:null}:{}) }); }
+      if (callback) { action = callback.data || '';if(this.s.staff_draft&&!action.startsWith('admin:team:confirm:'))await this.patch({staff_draft:null}); if (this.s.pending_input || (this.s.ban_draft && !action.startsWith('admin:bans:confirm:'))) await this.patch({ pending_input: null, ...(!action.startsWith('admin:bans:confirm:')?{ban_draft:null,ban_target:null}:{}) }); }
       else {
+        if(await staffInput(this,message)){await this.store.finishUpdate(key);return;}
         if(await banInput(this,message)){await this.store.finishUpdate(key);return;}
         if(await adInput(this,message)) {await this.store.finishUpdate(key);return;}
         const text = message.text;
         if (typeof text !== 'string' || !text.trim()) { await this.store.finishUpdate(key); return; }
         if ([...text].length > 1000) { await this.panel('Пожалуйста, сократите сообщение до 1000 символов.'); await this.store.finishUpdate(key); return; }
         if (this.s.pending_input && !text.startsWith('/')) { await this.input(text); await this.store.finishUpdate(key); return; }
-        if (this.s.pending_input || this.s.ban_draft) await this.patch({ pending_input: null,ban_draft:null,ban_target:null });
+        if (this.s.pending_input || this.s.ban_draft || this.s.staff_draft) await this.patch({ pending_input: null,ban_draft:null,ban_target:null,staff_draft:null });
         action = ({ '/start': 'start', '/menu': 'menu', '/cancel': 'menu', '/delete_me': 'delete', '/admin': 'admin' })[text.split(/\s+/)[0].split('@')[0]] || 'menu';
       }
       await this.route(action);
