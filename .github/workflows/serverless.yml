@@ -59,6 +59,7 @@ jobs:
             deploy)
               python3 serverless/deploy.py
               python3 serverless/refresh_facts.py
+              python3 serverless/health_check.py
               ;;
             collect)
               python3 serverless/collect.py
