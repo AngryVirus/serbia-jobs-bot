@@ -118,7 +118,7 @@ test('cards escape text and include only validated HTTPS links', () => {
   const message = card(safe, 123);
   assert.match(message.text, /Повар &lt;&amp;&gt;/);
   assert.equal(message.reply_markup.inline_keyboard[1][0].url, job.map_url);
-  for (const url of ['https://user:secret@radim.rs/jobs/1', 'http://radim.rs/jobs/1', 'https://radim.rs/\n<bad>']) {
+  for (const url of ['https://user:secret@radim.rs/jobs/1', 'http://radim.rs/jobs/1', 'https://radim.rs/\n<bad>']) {  // pragma: allowlist secret
     assert.throws(() => validateJobs([{ ...job, url }]));
   }
   assert.throws(() => validateJobs([{ ...job, map_url: 'https://evil.example/maps' }]));

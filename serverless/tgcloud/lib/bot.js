@@ -109,6 +109,12 @@ export class Bot {
   }
   async route(action) {
     if (typeof action !== 'string') return this.home();
+    const kind = /^report:.*:(not_job|duplicate|outdated)(:|$)/.test(action) ? 'report' : /translate|^job:\d+:ru_|^view:.*:(rs|rf)$/.test(action) ? 'translate' : /^(search:|view:|job:)/.test(action) ? 'search' : null;
+    if(kind) {
+      const [limit,seconds]={search:[40,60],translate:[10,60],report:[5,60]}[kind];
+      const wait=await this.store.rate(`${this.uid}:${kind}`,limit,seconds);
+      if(wait) return this.panel(`Слишком много запросов. Повторите через ${wait} сек.`);
+    }
     if(action==='ads'||action.startsWith('ads:')) return adRoute(this,action);
     action = action.replace(/^(choose|set):freshness:(today|yesterday)(?=:|$)/, '$1:freshness:7');
     if (action === 'menu' || action === 'start' || action === 'cancel') return this.home();
@@ -152,6 +158,14 @@ export class Bot {
     if (!valid) return;
     this.uid = user.id; this.chat = message.chat.id; this.mid = callback ? message.message_id : null;
     if (!(await this.store.meta('active'))) return this.panel('⏳ Бот обновляется. Попробуйте через несколько минут.');
+    // Emergency stop must remain available while the owner's start request sends a batch.
+    if(callback?.data==='ads:emergency' && this.uid===OWNER_ID && this.chat===OWNER_ID) {
+      const key=`emergency:${update.update_id ?? callback.id}`;
+      if(!await this.store.claimUpdate(key)) return;
+      try {await adRoute(this,'ads:emergency');await this.store.finishUpdate(key);}
+      catch(error) {await this.store.releaseUpdate(key);throw error;}
+      return;
+    }
     const owner = `${Date.now()}:${Math.random()}`, lock = `user:${this.uid}`;
     if (!await this.store.lock(lock, owner, 180)) throw new Error('User operation busy; retry update');
     const key = update.update_id != null ? `u:${update.update_id}` : callback ? `c:${callback.id}` : `m:${this.chat}:${message.message_id}`;

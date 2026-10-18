@@ -1,0 +1,33 @@
+import { OWNER_ID } from './owner.js';
+// Persistent transitions claimed before delivery: ambiguous sends are never replayed.
+export async function healthTick(store,api,now=Date.now()) {
+  if(!await store.meta('active')) return {paused:true};
+  const lock=`${now}:${Math.random()}`;
+  if(!await store.lock('health',lock,120)) return {busy:true};
+  try {
+    const previousRun=await store.meta('last_collection');
+    const last=await store.meta('last_successful_collection') || (!previousRun?.failed && previousRun?.totals?.sources>0 ? previousRun.finished_at : null);
+    const rows=await store.db.all("SELECT state,COUNT(*) AS n FROM sjc_deliveries WHERE json_extract(payload,'$.delivered_at')>=:since GROUP BY state",{':since':new Date(now-7200000).toISOString()});
+    const ads=await store.db.all("SELECT json_extract(payload,'$.state') AS state,COUNT(*) AS n FROM sjc_records WHERE kind='ad_delivery' AND json_extract(payload,'$.at')>=:since GROUP BY state",{':since':new Date(now-7200000).toISOString()});
+    const checks={collection:!Number.isFinite(Date.parse(last)) || now-Date.parse(last)>7200000};
+    for(const [kind,list] of [['notifications',rows],['advertising',ads]]) {
+      const total=list.filter(r=>r.state!=='skipped').reduce((n,r)=>n+r.n,0),bad=list.filter(r=>['blocked','failed','uncertain','sending'].includes(r.state)).reduce((n,r)=>n+r.n,0);
+      checks[kind]=bad>=5 && bad/total>=0.2;
+    }
+    for(const [kind,bad] of Object.entries(checks)) {
+      const key='health:'+kind,previous=await store.meta(key);
+      const retry=previous?.notice==='pending' && previous.retry_at<=now;
+      if(Boolean(previous?.bad)===bad && !retry) continue;
+      await store.setMeta(key,{bad,at:new Date(now).toISOString(),notice:'claimed'});
+      try {
+        const message=await api.sendMessage({chat_id:OWNER_ID,text:bad ? ({collection:'⚠️ Нет успешного сбора вакансий более двух часов.',notifications:'⚠️ Повышенная доля ошибок доставки уведомлений за 2 часа (не менее 5 и 20%).',advertising:'⚠️ Повышенная доля ошибок доставки рекламы за 2 часа (не менее 5 и 20%).'})[kind] : `✅ Восстановление: ${{collection:'сбор вакансий',notifications:'доставка уведомлений',advertising:'доставка рекламы'}[kind]}.`});
+        if(!Number.isSafeInteger(message?.message_id) || message.message_id<=0) throw Error('Unconfirmed warning');
+        await store.setMeta(key,{bad,at:new Date(now).toISOString(),notice:'sent'});
+      } catch(error) {
+        if(error.code===429) await store.setMeta(key,{bad,notice:'pending',retry_at:now+Math.min(3600,Math.max(5,Number(error.parameters?.retry_after)||60))*1000});
+        // Ambiguous sends remain claimed; no payloads or user details are logged.
+      }
+    }
+    return {checked:true};
+  } finally {await store.unlock('health',lock);}
+}

@@ -48,7 +48,7 @@ def main():
     owner = str(uuid.uuid4())
     invoke('collection_begin', owner=owner)
     failed = True
-    totals = {'added': 0, 'sent': 0, 'uncertain': 0, 'sources': 0}
+    totals = {'added': 0, 'sent': 0, 'uncertain': 0, 'sources': 0, 'healthy_sources': 0}
     deadline = time.monotonic() + 1200
     try:
         sent, uncertain = notify(min(deadline, time.monotonic()+30))
@@ -62,6 +62,8 @@ def main():
             for batch in batches:
                 added += invoke('collect', source=source, jobs=batch, status=status, owner=owner)['added']
             totals['added'] += added; totals['sources'] += 1
+            if status.get('state') in ('ok', 'empty'):
+                totals['healthy_sources'] += 1
             print('Source', source, status.get('state'), 'found', len(jobs), 'new', added, flush=True)
             if added:
                 sent, uncertain = notify(min(deadline,time.monotonic()+30))

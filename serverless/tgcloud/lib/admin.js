@@ -1,3 +1,4 @@
+import { healthTick } from './health.js';
 import { Store, TABLES, assert, positive } from './store.js';
 import { settings, contains, belgradeDay } from './filters.js';
 import { groupJobs, visibleJobs, hiddenGroups } from './catalog.js';
@@ -54,6 +55,7 @@ export async function administer(input, ctx, deps) {
   const me = await deps.api.getMe();
   assert(me.is_bot && me.id === 8802394224 && me.username?.toLowerCase() === 'serbiajobsbot', 'Wrong bot; stopped');
   const store = new Store(deps.db), op = input?.operation;
+  if(op==='health_tick') return healthTick(store,deps.api);
   if(op==='ads_tick') return adTick(store,deps.api);
   if (op === 'init') {
     await store.init();
@@ -141,6 +143,7 @@ export async function administer(input, ctx, deps) {
       const newGroups=groups.filter(g=>g.members.every(j=>j.id>run.baseline)).length;
       const blocked=(await store.db.get("SELECT COUNT(*) AS n FROM sjc_deliveries WHERE state='blocked'")).n;
       const result={...run,state:input.failed?'error':'finished',failed:Boolean(input.failed),finished_at:now,totals:{...(input.totals || {}),blocked:Math.max(0,blocked-(run.blocked_baseline ?? blocked))},new_unique:visibleJobs(groups,settings()).filter(j=>j._duplicate_ids.every(id=>id>run.baseline)).length,new_duplicates:newRows.length-newGroups};
+      if(!input.failed && (input.totals?.healthy_sources || 0)>0) await store.setMeta('last_successful_collection',now);
       await store.setMeta('last_collection',result); await store.setMeta('collection_run',result);
       await store.sourceStatus('_collection', { state: result.state, checked_at: now }); await store.unlock('collection',input.owner); return { released: true };
     }

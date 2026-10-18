@@ -337,7 +337,7 @@ class SupabaseStoreTests(unittest.TestCase):
 
 
 class SupabaseTransportTests(unittest.TestCase):
-    LEGACY_KEY = "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.test-signature"
+    LEGACY_KEY = "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.test-signature"  # pragma: allowlist secret
 
     @staticmethod
     def response(body=b"[]"):
@@ -346,7 +346,7 @@ class SupabaseTransportTests(unittest.TestCase):
         return response
 
     def test_constructor_rejects_unsafe_urls_and_header_injection(self):
-        for url in ("http://example.supabase.co", "https://user:password@example.supabase.co",
+        for url in ("http://example.supabase.co", "https://user:password@example.supabase.co",  # pragma: allowlist secret
                     "https://example.supabase.co/path", "https://example.supabase.co?key=secret",
                     "https://example.supabase.co#fragment"):
             with self.subTest(url=url), self.assertRaises(ValueError):
