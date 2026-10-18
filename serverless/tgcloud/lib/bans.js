@@ -10,7 +10,7 @@ const active=row=>row && row.active!==false;
 const token=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,12);
 export function moderatorSnapshot(user) {
  const actor={id:user.id};
- if(typeof user.username==='string' && /^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(user.username))actor.username=user.username;
+ if(typeof user.username==='string' && /^[A-Za-z0-9_]{1,32}$/.test(user.username))actor.username=user.username;
  const name=[user.first_name,user.last_name].filter(v=>typeof v==='string').join(' ').replace(/\s+/g,' ').trim();
  if(name)actor.name=[...name].slice(0,80).join('');
  return actor;
@@ -78,28 +78,48 @@ export async function banNoticeTick(store,api,InputFile,now=Date.now()) {
  return {checked};
 }
 const deliveryLabel=state=>({sent:'Уведомление доставлено.',waiting_contact:'Уведомление будет показано при первом обращении пользователя.',blocked:'Telegram запретил доставку. Уведомление будет показано, если пользователь снова обратится в бот.',pending:'Уведомление ожидает отправки после ограничения Telegram.',uncertain:'Доставка не подтверждена; автоматического повтора не будет.',sending:'Доставка не подтверждена; автоматического повтора не будет.',runtime_unavailable:'Отправка картинки пока недоступна.',render_failed:'Не удалось подготовить картинку.',failed:'Telegram отклонил уведомление.',busy:'Уведомление уже обрабатывается.'})[state]||'Уведомление уже обработано.';
+async function verifiedUsername(api,uid,username) {
+ try {const chat=await api.getChat({chat_id:uid});return chat.id===uid && chat.type==='private' && String(chat.username||'').toLowerCase()===username.toLowerCase();}catch{return false;}
+}
+export async function resolveBanUsername(store,api,username) {
+ const cached=await store.db.all("SELECT id FROM sjc_users WHERE lower(json_extract(payload,'$.telegram_username'))=:username LIMIT 6",{':username':username.toLowerCase()});
+ if(cached.length>5)return null;
+ // Backfill lookup for profiles imported before usernames were recorded, without messages.
+ const recent=await store.db.all("SELECT id FROM sjc_users ORDER BY COALESCE(json_extract(payload,'$.last_seen_day'),'') DESC,id LIMIT 30");
+ const ids=[...new Set([...cached,...recent].map(r=>r.id))],found=[];
+ for(const uid of ids){
+  if(await verifiedUsername(api,uid,username)){found.push(uid);if(found.length>1)return null;}
+  // A cached match was verified directly; no scan is needed in the normal case.
+  if(found.length && cached.some(r=>r.id===uid) && cached.length===1)break;
+ }
+ if(found.length!==1)return null;
+ await store.captureUsername(found[0],username);
+ return {uid:found[0],username};
+}
 export async function banInput(bot,message) {
  if(!owner(bot) || !['owner_ban','owner_ban_reason'].includes(bot.s.pending_input) || message.text?.startsWith('/'))return false;
  const value=String(message.text||'').trim();
  if(bot.s.pending_input==='owner_ban') {
-  const uid=Number(value);
-  if(!/^[1-9]\d{0,15}$/.test(value)||!positive(uid)||uid===OWNER_ID){await bot.panel('Введите положительный числовой Telegram ID. Владельца забанить нельзя.',BACK);return true;}
+  let resolved;
+  if(/^@[A-Za-z0-9_]{1,32}$/.test(value)){resolved=await resolveBanUsername(bot.store,bot.api,value.slice(1));if(!resolved){await bot.panel('Не удалось однозначно найти и проверить этот @username среди известных боту пользователей. Укажите числовой ID. Telegram не позволяет найти любой личный аккаунт по тегу.',BACK);return true;}}
+  const uid=resolved?.uid ?? Number(value);
+  if((!resolved && !/^[1-9]\d{0,15}$/.test(value))||!positive(uid)||uid===OWNER_ID){await bot.panel('Введите положительный числовой Telegram ID или @username. Владельца забанить нельзя.',BACK);return true;}
   if(await bot.store.isBanned(uid)){await bot.patch({pending_input:null,ban_target:null});await bot.panel('Пользователь уже забанен. Откройте список банов.',BACK);return true;}
-  await bot.patch({pending_input:'owner_ban_reason',ban_target:uid,ban_draft:null});
-  await bot.panel(`<b>Причина блокировки ${uid}</b>\n\nОпишите причину понятными словами, до 300 символов. Этот текст увидит пользователь на картинке.\n\n/cancel — отмена.`,BACK);return true;
+  await bot.patch({pending_input:'owner_ban_reason',ban_target:uid,ban_target_username:resolved?.username||null,ban_draft:null});
+  await bot.panel(`<b>Причина блокировки ${uid}${resolved?' · @'+safe(resolved.username,32):''}</b>\n\nОпишите причину понятными словами, до 300 символов. Этот текст увидит пользователь на картинке.\n\n/cancel — отмена.`,BACK);return true;
  }
  const reason=value.replace(/[\u0000-\u001f\u007f]+/g,' ').replace(/\s+/g,' ').trim();
  if(!reason||[...reason].length>300){await bot.panel('Введите причину блокировки: от 1 до 300 символов.',BACK);return true;}
  const uid=bot.s.ban_target;if(!positive(uid)||uid===OWNER_ID){await bot.patch({pending_input:null,ban_target:null});await bot.panel('Начните ввод ID заново.',BACK);return true;}
- const current=await banRecord(bot.store,uid),draft={uid,reason,token:token(),expected:current?banVersion(current):null};
+ const current=await banRecord(bot.store,uid),draft={uid,reason,username:bot.s.ban_target_username||null,token:token(),expected:current?banVersion(current):null};
  await bot.patch({pending_input:null,ban_target:null,ban_draft:draft});
- await bot.panel(`<b>Забанить пользователя ${uid}?</b>\n\n<b>Причина:</b> ${safe(reason,300)}\n<b>Администратор:</b> ${actorName(moderator(bot))}\n\nПользователь получит одно уведомление картинкой и кнопку связи с администратором. Затем бот перестанет отвечать на сообщения и кнопки, отправлять вакансии и рекламу.`,[[button('🚫 Подтвердить бан',`admin:bans:confirm:${draft.token}`)],[CONTACT],...BACK]);return true;
+ await bot.panel(`<b>Забанить пользователя ${uid}${draft.username?' · @'+safe(draft.username,32):''}?</b>\n\n<b>Причина:</b> ${safe(reason,300)}\n<b>Администратор:</b> ${actorName(moderator(bot))}\n\nПользователь получит одно уведомление картинкой и кнопку связи с администратором. Затем бот перестанет отвечать на сообщения и кнопки, отправлять вакансии и рекламу.`,[[button('🚫 Подтвердить бан',`admin:bans:confirm:${draft.token}`)],[CONTACT],...BACK]);return true;
 }
 export async function banPanel(bot,action) {
  if(!owner(bot))return bot.panel('Этот раздел доступен только владельцу бота.');
  if(action==='admin:bans:new'){
   await bot.patch({pending_input:'owner_ban',ban_target:null,ban_draft:null});
-  return bot.panel('<b>🚫 Бан пользователя</b>\n\nВведите числовой Telegram ID пользователя. Следующим шагом укажите причину. Можно забанить ID до первого обращения в бот.\n\n/cancel — отмена.',BACK);
+  return bot.panel('<b>🚫 Бан пользователя</b>\n\nВведите числовой Telegram ID или @username известного боту пользователя. Тег будет проверен через Telegram. Следующим шагом укажите причину. Можно забанить ID до первого обращения в бот.\n\n/cancel — отмена.',BACK);
  }
  let match=/^admin:bans:confirm:([a-z0-9]+)$/.exec(action),draft;
  if(match){draft=bot.s.ban_draft;if(!draft||draft.token!==match[1]||!positive(draft.uid)||draft.uid===OWNER_ID||typeof draft.reason!=='string'||!draft.reason.trim()||[...draft.reason].length>300)return bot.panel('Подтверждение устарело. Создайте бан заново.',BACK);}
@@ -112,9 +132,10 @@ export async function banPanel(bot,action) {
   try{
    const current=await banRecord(bot.store,uid);let next;
    if(match){
-    if(current?.version===draft.token)next=current;
+    if(draft.username && !await verifiedUsername(bot.api,uid,draft.username))stale=true;
+    else if(current?.version===draft.token)next=current;
     else if(active(current)||(current?banVersion(current):null)!==draft.expected)stale=true;
-    else next={uid,active:true,version:draft.token,reason:draft.reason,by:bot.uid,actor:moderator(bot),at:new Date().toISOString(),notice:{state:'pending'}};
+    else next={uid,active:true,version:draft.token,reason:draft.reason,target_username:draft.username||null,by:bot.uid,actor:moderator(bot),at:new Date().toISOString(),notice:{state:'pending'}};
    }else{
     const version=remove[2],unbanVersion='u'+version;
     if(current?.active===false && current.version===unbanVersion)next=current;
@@ -137,7 +158,7 @@ export async function banPanel(bot,action) {
  const total=(await bot.store.db.get('SELECT COUNT(*) AS n FROM sjc_records WHERE '+where)).n;
  const page=Math.min(Number(match[1]),Math.max(0,Math.ceil(total/5)-1));
  const rows=await bot.store.db.all('SELECT record_key,payload FROM sjc_records WHERE '+where+' ORDER BY record_key LIMIT 5 OFFSET :offset',{':offset':page*5});
- const controls=rows.map(r=>[button(`Разбанить ${r.record_key}`,`admin:bans:remove:${r.record_key}:${banVersion(JSON.parse(r.payload))}`)]),nav=[];
+ const controls=rows.map(r=>[button(`Разбанить ${JSON.parse(r.payload).target_username?'@'+JSON.parse(r.payload).target_username:r.record_key}`,`admin:bans:remove:${r.record_key}:${banVersion(JSON.parse(r.payload))}`)]),nav=[];
  if(page)nav.push(button('⬅️',`admin:bans:${page-1}`));if((page+1)*5<total)nav.push(button('➡️',`admin:bans:${page+1}`));
- return bot.panel(`<b>🚫 Баны пользователей</b>\n\nВсего: ${total}\n\n${rows.map(r=>r.record_key+' · '+safe(JSON.parse(r.payload).reason||'Причина не указана',90)).join('\n')||'Список пуст.'}\n\nО блокировке и разблокировке отправляется одно уведомление картинкой. Остальные обращения забаненных игнорируются. Удаление профиля не снимает бан.`,[[button('➕ Забанить по ID','admin:bans:new')],...controls,...(nav.length?[nav]:[]),[button('🔄 Обновить',`admin:bans:${page}`)],[button('📊 Админка','admin')]]);
+ return bot.panel(`<b>🚫 Баны пользователей</b>\n\nВсего: ${total}\n\n${rows.map(r=>r.record_key+(JSON.parse(r.payload).target_username?' · @'+safe(JSON.parse(r.payload).target_username,32):'')+' · '+safe(JSON.parse(r.payload).reason||'Причина не указана',90)).join('\n')||'Список пуст.'}\n\nО блокировке и разблокировке отправляется одно уведомление картинкой. Остальные обращения забаненных игнорируются. Удаление профиля не снимает бан.`,[[button('➕ Забанить по ID / @','admin:bans:new')],...controls,...(nav.length?[nav]:[]),[button('🔄 Обновить',`admin:bans:${page}`)],[button('📊 Админка','admin')]]);
 }

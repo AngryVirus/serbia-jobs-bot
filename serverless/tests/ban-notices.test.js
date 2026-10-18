@@ -89,3 +89,27 @@ test('forged owner identity cannot confirm an existing draft or deliver a modera
  for(const [uid,chat] of [[1,1],[1,OWNER_ID],[OWNER_ID,1]]){const u=callback(uid,action);u.callback_query.message.chat.id=chat;await handle(f,u);assert.equal(await f.store.isBanned(77),false);}
  assert.equal(notices(f).length,0);
 });
+
+test('username lookup supports known and legacy profiles, case-insensitive tags and final ID verification',async()=>{
+ const f=await graphics();await f.store.ensure(77,77);
+ f.api.getChat=async({chat_id})=>({id:chat_id,type:'private',username:chat_id===77?'KnownPerson':'OtherPerson'});
+ await handle(f,ownerCallback('admin:bans:new'));await handle(f,message(OWNER_ID,'@kNoWnPeRsOn'));
+ assert.equal((await f.store.user(OWNER_ID)).settings.ban_target,77);
+ await handle(f,message(OWNER_ID,'Спам'));const draft=(await f.store.user(OWNER_ID)).settings.ban_draft;assert.equal(draft.uid,77);
+ await handle(f,ownerCallback('admin:bans:confirm:'+draft.token));assert.equal(await f.store.isBanned(77),true);assert.equal(notices(f).length,1);
+});
+test('changed, unknown or ambiguous usernames cannot silently ban the cached account',async()=>{
+ const f=await graphics();await f.store.ensure(77,77);await f.store.captureUsername(77,'KnownPerson');
+ let current='KnownPerson';f.api.getChat=async({chat_id})=>({id:chat_id,type:'private',username:chat_id===77?current:'OtherPerson'});
+ await handle(f,ownerCallback('admin:bans:new'));await handle(f,message(OWNER_ID,'@KnownPerson'));await handle(f,message(OWNER_ID,'Спам'));
+ const action='admin:bans:confirm:'+(await f.store.user(OWNER_ID)).settings.ban_draft.token;
+ current='ChangedPerson';await handle(f,ownerCallback(action));assert.equal(await f.store.isBanned(77),false);assert.equal(notices(f).length,0);
+ await handle(f,ownerCallback('admin:bans:new'));await handle(f,message(OWNER_ID,'@KnownPerson'));assert.equal((await f.store.user(OWNER_ID)).settings.pending_input,'owner_ban');
+ await f.store.ensure(78,78);await f.store.captureUsername(78,'KnownPerson');f.api.getChat=async({chat_id})=>({id:chat_id,type:'private',username:'KnownPerson'});
+ await handle(f,message(OWNER_ID,'@KnownPerson'));assert.equal((await f.store.user(OWNER_ID)).settings.pending_input,'owner_ban');
+});
+test('incoming verified Telegram metadata refreshes and clears a user username',async()=>{
+ const f=await fixture();let u=message(77,'/start');u.message.from.username='KnownPerson';await handle(f,u);assert.equal((await f.store.user(77)).telegram_username,'KnownPerson');
+ u=message(77,'/start');u.message.from.username='NewPerson';await handle(f,u);assert.equal((await f.store.user(77)).telegram_username,'NewPerson');
+ await handle(f,message(77,'/start'));assert.equal((await f.store.user(77)).telegram_username,null);
+});
