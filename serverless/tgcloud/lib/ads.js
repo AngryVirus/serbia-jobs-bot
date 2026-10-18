@@ -8,7 +8,7 @@ const token=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
 const read=async(store,kind,key)=>{const r=await store.db.get('SELECT payload FROM sjc_records WHERE kind=:kind AND record_key=:key',{':kind':kind,':key':key});return r?JSON.parse(r.payload):null;};
 async function audit(store,action,id=null) { await store.record('ad_audit',token(),{owner:OWNER_ID,action,id,at:new Date().toISOString()}); }
 const eligible=u=>u && u.settings?.ads_enabled!==false && !u.settings?.bot_blocked;
-const audienceSQL="FROM sjc_users WHERE COALESCE(json_extract(payload,'$.settings.ads_enabled'),1) != 0 AND COALESCE(json_extract(payload,'$.settings.bot_blocked'),0) = 0 AND NOT EXISTS(SELECT 1 FROM sjc_records AS bans WHERE bans.kind='user_ban' AND bans.record_key=CAST(sjc_users.id AS TEXT))";
+const audienceSQL="FROM sjc_users WHERE COALESCE(json_extract(payload,'$.settings.ads_enabled'),1) != 0 AND COALESCE(json_extract(payload,'$.settings.bot_blocked'),0) = 0 AND NOT EXISTS(SELECT 1 FROM sjc_records AS bans WHERE bans.kind='user_ban' AND bans.record_key=CAST(sjc_users.id AS TEXT) AND COALESCE(json_extract(bans.payload,'$.active'),1)!=0)";
 
 export async function sendAd(api,chat,post) {
   const rows=[];

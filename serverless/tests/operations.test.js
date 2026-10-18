@@ -66,7 +66,7 @@ test('new panels reject forged owner identity and contain no individual usage de
   assert.match(f.api.edited.at(-1).text,/только владельцу/);
   await handle(f,callback(OWNER_ID,action));assert(!f.api.edited.at(-1).text.includes('только владельцу'));
  }
- const result=await administer({operation:'operations_check'},{ownerRun:true},f);assert.equal(result.panels,7);
+ const result=await administer({operation:'operations_check'},{ownerRun:true},f);assert.equal(result.panels,9);
 });
 test('missing backups alert independently after 36 hours and recover without repeat spam',async()=>{
  const {healthTick}=await import('../tgcloud/lib/health.js');
