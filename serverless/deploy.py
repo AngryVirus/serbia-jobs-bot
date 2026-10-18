@@ -5,9 +5,9 @@ from pathlib import Path
 import sys
 from cloud import call, cli, invoke, routing_identity
 
-# Reviewed predecessor: 3361eee (scoped staff roles and atomic audit).
+# Reviewed predecessor: b94e2a2 (staff notices and accepted input cleanup).
 # A later release must explicitly review and update its predecessor digest.
-PREVIOUS_DIGEST = '6b686f82a8c66060bda027c8c878bd54475241e09c451da233873503bd7f9313'  # pragma: allowlist secret
+PREVIOUS_DIGEST = '2bf3f520abf2f4e0698ce36e3e66a22fa22d0fc30ed1892534bce15d1432d9c5'  # pragma: allowlist secret
 
 
 def digest(modules):

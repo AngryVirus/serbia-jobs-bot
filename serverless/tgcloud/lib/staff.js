@@ -6,14 +6,26 @@ import { button,safe } from './ui.js';
 import { belgradeOffset } from './filters.js';
 const BACK=[[button('🛡 Панель','admin')],[button('🏠 Меню','menu')]];
 const actor=bot=>bot.actor?.id===bot.uid?bot.actor:moderatorSnapshot({id:bot.uid});
-export function roleNoticeText(before,after){
- const removed=before==='moderator'?'модератора':'администратора';
+export function roleNoticeText(before,after,by){
  const lines=[];
- if(before!=='user')lines.push(`С вас сняты полномочия ${removed}.`);
- if(after==='moderator')lines.push('Вы назначены модератором @SerbiaJobsBot. Вы можете блокировать обычных пользователей.');
- if(after==='administrator')lines.push('Вы назначены администратором @SerbiaJobsBot. Вы можете блокировать и разблокировать пользователей, назначать и снимать модераторов.');
+ if(before==='moderator'&&after==='administrator')lines.push('Вы повышены с модератора до администратора @SerbiaJobsBot.');
+ else if(before==='administrator'&&after==='moderator')lines.push('Вы понижены с администратора до модератора @SerbiaJobsBot.');
+ else if(after==='user')lines.push(`С вас сняты полномочия ${before==='moderator'?'модератора':'администратора'} @SerbiaJobsBot.`);
+ else lines.push(`Вы назначены ${after==='moderator'?'модератором':'администратором'} @SerbiaJobsBot.`);
+ if(after==='moderator')lines.push('Вы можете блокировать обычных пользователей.');
+ if(after==='administrator')lines.push('Вы можете блокировать и разблокировать пользователей, назначать и снимать модераторов.');
+ lines.push(`Кто изменил права: ${by?.name||'Сотрудник'}${by?.username?' · @'+by.username:''} · ID ${by?.id}.`);
  lines.push(after==='user'?'Раздел управления командой и модерацией для вас закрыт.':'Для работы откройте панель управления кнопкой ниже.');
  return lines.join('\n\n');
+}
+async function memberName(bot,uid){
+ const user=await bot.store.user(uid);
+ return String(uid)+(user?.telegram_username?' · @'+user.telegram_username:'');
+}
+async function roleDraft(bot,uid,desired,current,currentRole,username=null){
+ const draft={uid,desired,username,expected:current?.version||null,token:nonce()};
+ await bot.patch({pending_input:null,staff_draft:draft});
+ return bot.panel(`<b>Подтвердить изменение прав?</b>\n\nПользователь: ${safe(await memberName(bot,uid),100)}\nТекущая роль: ${ROLE_NAMES[currentRole]}\nНовая роль: ${ROLE_NAMES[desired]}`,[[button('✅ Подтвердить',`admin:team:confirm:${draft.token}`)],[button('⬅️ Команда','admin:team:0')],...BACK]);
 }
 export function staffHomeDocument(role){
  if(role==='moderator')return ['<b>🛡 Модератор</b>\n\nВы можете блокировать обычных пользователей. Разблокировка и управление сотрудниками недоступны.',[[button('🚫 Забанить пользователя','admin:bans:new')],[button('🏠 Меню','menu')]]];
@@ -40,9 +52,7 @@ export async function staffInput(bot,message){
  const currentRole=await rawRole(bot.store,uid),current=await roleRecord(bot.store,uid);
  if(!mayManage(role,currentRole,desired)||await bot.store.isBanned(uid)){await bot.panel('Этому пользователю нельзя выдать выбранную роль: проверьте его текущие права и блокировку.',BACK);return true;}
  if(currentRole===desired){await bot.patch({pending_input:null});await bot.panel('Эта роль у пользователя уже есть.',BACK);return true;}
- const draft={uid,desired,username:resolved?.username||null,expected:current?.version||null,token:nonce()};
- await bot.patch({pending_input:null,staff_draft:draft});
- await bot.panel(`<b>Назначить роль?</b>\n\nПользователь: ${uid}${draft.username?' · @'+safe(draft.username,32):''}\nТекущая роль: ${ROLE_NAMES[currentRole]}\nНовая роль: ${ROLE_NAMES[desired]}`,[[button('✅ Подтвердить',`admin:team:confirm:${draft.token}`)],...BACK]);return true;
+ await roleDraft(bot,uid,desired,current,currentRole,resolved?.username||null);return true;
 }
 export async function teamPanel(bot,action){
  const role=await accessRole(bot);
@@ -52,10 +62,30 @@ export async function teamPanel(bot,action){
   await bot.patch({pending_input:'staff_target',staff_desired:match[1],staff_draft:null});
   return bot.panel(`<b>${match[1]==='moderator'?'Назначить модератора':'Назначить администратора'}</b>\n\nВведите числовой Telegram ID или @username известного боту пользователя. Затем подтвердите назначение.`,BACK);
  }
+ const view=/^admin:team:view:([1-9]\d*)$/.exec(action),edit=/^admin:team:set:([1-9]\d*):([a-z0-9]+):(moderator|administrator|user)$/.exec(action);
+ if(view||edit){
+  const uid=Number((view||edit)[1]),current=await roleRecord(bot.store,uid),currentRole=await rawRole(bot.store,uid);
+  if(!positive(uid)||uid===OWNER_ID||uid===bot.uid||!['moderator','administrator'].includes(currentRole)||!mayManage(role,currentRole,'user'))return bot.panel('Управление этим сотрудником недоступно.',BACK);
+  if(edit){
+   const desired=edit[3];
+   if(current?.version!==edit[2]||currentRole===desired||!mayManage(role,currentRole,desired)||(desired!=='user'&&await bot.store.isBanned(uid)))return bot.panel('Права изменились или действие недоступно. Откройте карточку заново.',[[button('⬅️ Команда','admin:team:0')],...BACK]);
+   return roleDraft(bot,uid,desired,current,currentRole);
+  }
+  await bot.patch({pending_input:null,staff_draft:null});
+  const rows=[];
+  if(role==='owner')rows.push([button(currentRole==='moderator'?'⬆️ Повысить до администратора':'⬇️ Понизить до модератора',`admin:team:set:${uid}:${current.version}:${currentRole==='moderator'?'administrator':'moderator'}`)]);
+  rows.push([button('❌ Снять полномочия',`admin:team:set:${uid}:${current.version}:user`)]);
+  return bot.panel(`<b>👤 Сотрудник</b>\n\n${safe(await memberName(bot,uid),100)}\nРоль: ${ROLE_NAMES[currentRole]}`, [...rows,[button('⬅️ Команда','admin:team:0')],...BACK]);
+ }
  const confirm=/^admin:team:confirm:([a-z0-9]+)$/.exec(action),remove=/^admin:team:remove:([1-9]\d*):([a-z0-9]+)$/.exec(action);
+ if(remove){
+  const uid=Number(remove[1]),current=await roleRecord(bot.store,uid),currentRole=await rawRole(bot.store,uid);
+  if(!positive(uid)||uid===OWNER_ID||uid===bot.uid||current?.version!==remove[2]||!['moderator','administrator'].includes(currentRole)||!mayManage(role,currentRole,'user'))return bot.panel('Права изменились или действие недоступно. Откройте список заново.',BACK);
+  return roleDraft(bot,uid,'user',current,currentRole);
+ }
  if(confirm||remove){
   const draft=confirm?bot.s.staff_draft:null;
-  if(confirm&&(!draft||draft.token!==confirm[1]||!['moderator','administrator'].includes(draft.desired)))return bot.panel('Подтверждение устарело.',BACK);
+  if(confirm&&(!draft||draft.token!==confirm[1]||!['moderator','administrator','user'].includes(draft.desired)))return bot.panel('Подтверждение устарело.',BACK);
   const uid=confirm?draft.uid:Number(remove[1]),desired=confirm?draft.desired:'user';
   if(!positive(uid)||uid===OWNER_ID||uid===bot.uid)return bot.panel('Нельзя изменить собственные права или права владельца.',BACK);
   const key='user:'+uid,lease='role:'+nonce();
@@ -68,12 +98,12 @@ export async function teamPanel(bot,action){
    if(currentRole!==desired){
     // Claim delivery in the same commit as the role: ambiguous sends are never replayed.
     const at=new Date().toISOString(),version=confirm?draft.token:nonce(),next={uid,role:desired==='user'?null:desired,version,by:bot.uid,actor:actor(bot),at,notice:{state:'sending'}};
-    await staffDecision(bot.store,'staff_role',uid,next,{action:desired==='user'?'revoke_'+currentRole:'grant_'+desired,actor:actor(bot),actor_role:freshRole,target:uid,before:currentRole,after:desired,at});
+    await staffDecision(bot.store,'staff_role',uid,next,{action:desired==='user'?'revoke_'+currentRole:currentRole==='moderator'&&desired==='administrator'?'promote':currentRole==='administrator'&&desired==='moderator'?'demote':'grant_'+desired,actor:actor(bot),actor_role:freshRole,target:uid,before:currentRole,after:desired,at});
     // Stale pending input and confirmations must not survive a changed privilege level.
     await bot.store.db.run("UPDATE sjc_users SET payload=json_set(payload,'$.settings.pending_input',NULL,'$.settings.ban_draft',NULL,'$.settings.staff_draft',NULL) WHERE id=:uid",{':uid':uid});
     changed=true;
     try{
-     await bot.api.sendMessage({chat_id:uid,text:roleNoticeText(currentRole,desired),reply_markup:{inline_keyboard:[[button(desired==='user'?'🏠 Меню':'🛡 Панель управления',desired==='user'?'menu':'admin')]]}});
+     await bot.api.sendMessage({chat_id:uid,text:roleNoticeText(currentRole,desired,actor(bot)),reply_markup:{inline_keyboard:[[button(desired==='user'?'🏠 Меню':'🛡 Панель управления',desired==='user'?'menu':'admin')]]}});
      noticeSent=true;
     }catch{/* A delivery failure must not undo a committed role or disclose API details. */}
     await bot.store.record('staff_role',String(uid),{...next,notice:{state:noticeSent?'sent':'unconfirmed'}});
@@ -87,16 +117,17 @@ export async function teamPanel(bot,action){
  const where="kind='staff_role' AND json_extract(payload,'$.role') IN ("+(role==='owner'?"'moderator','administrator'":"'moderator'")+")";
  const total=(await bot.store.db.get('SELECT COUNT(*) AS n FROM sjc_records WHERE '+where)).n,page=Math.min(Number(match[1]),Math.max(0,Math.ceil(total/5)-1));
  const rows=await bot.store.db.all('SELECT payload FROM sjc_records WHERE '+where+' ORDER BY record_key LIMIT 5 OFFSET :offset',{':offset':page*5});
- const members=rows.map(r=>JSON.parse(r.payload)),nav=[];if(page)nav.push(button('⬅️',`admin:team:${page-1}`));if((page+1)*5<total)nav.push(button('➡️',`admin:team:${page+1}`));
- return bot.panel(`<b>👥 ${role==='owner'?'Команда бота':'Модераторы'}</b>\n\n${members.map(m=>`${m.uid} · ${ROLE_NAMES[m.role]}`).join('\n')||'Назначений пока нет.'}`,[[button('➕ Модератор','admin:team:add:moderator')],...(role==='owner'?[[button('➕ Администратор','admin:team:add:administrator')]]:[]),...members.map(m=>[button(`Снять ${m.uid}`,`admin:team:remove:${m.uid}:${m.version}`)]),...(nav.length?[nav]:[]),...BACK]);
+ const members=rows.map(r=>JSON.parse(r.payload)),labels=await Promise.all(members.map(m=>memberName(bot,m.uid))),nav=[];if(page)nav.push(button('⬅️',`admin:team:${page-1}`));if((page+1)*5<total)nav.push(button('➡️',`admin:team:${page+1}`));
+ return bot.panel(`<b>👥 ${role==='owner'?'Команда бота':'Модераторы'}</b>\n\n${members.map((m,i)=>`${safe(labels[i],100)} · ${ROLE_NAMES[m.role]}`).join('\n')||'Назначений пока нет.'}`,[[button('➕ Модератор','admin:team:add:moderator')],...(role==='owner'?[[button('➕ Администратор','admin:team:add:administrator')]]:[]),...members.map((m,i)=>[button(`${ROLE_NAMES[m.role]} · ${labels[i]}`,`admin:team:view:${m.uid}`)]),...(nav.length?[nav]:[]),...BACK]);
 }
 export async function auditPanel(bot,action){
  if(await accessRole(bot)!=='owner')return bot.panel('Журнал доступен только владельцу.',BACK);
  const match=/^admin:audit:(\d+)$/.exec(action);if(!match)return bot.panel('Откройте журнал заново.',BACK);
+ if(!bot.readOnly)await bot.store.pruneStaffAudit();
  const total=(await bot.store.db.get("SELECT COUNT(*) AS n FROM sjc_records WHERE kind='staff_audit'")).n,page=Math.min(Number(match[1]),Math.max(0,Math.ceil(total/5)-1));
  const rows=await bot.store.db.all("SELECT payload FROM sjc_records WHERE kind='staff_audit' ORDER BY json_extract(payload,'$.at') DESC,record_key DESC LIMIT 5 OFFSET :offset",{':offset':page*5});
- const names={ban:'Бан',unban:'Разбан',grant_moderator:'Назначен модератор',grant_administrator:'Назначен администратор',revoke_moderator:'Снят модератор',revoke_administrator:'Снят администратор'};
+ const names={promote:'Повышен до администратора',demote:'Понижен до модератора',ban:'Бан',unban:'Разбан',grant_moderator:'Назначен модератор',grant_administrator:'Назначен администратор',revoke_moderator:'Снят модератор',revoke_administrator:'Снят администратор'};
  const text=rows.map(r=>{const e=JSON.parse(r.payload),stamp=Date.parse(e.at),date=new Date(stamp+belgradeOffset(stamp)).toISOString().replace('T',' ').slice(0,16);return `<b>${names[e.action]||'Действие'}</b> · ${date} (Белград)\nКто: ${safe(e.actor?.username?'@'+e.actor.username:e.actor?.name||'Сотрудник',80)} · ID ${e.actor.id} · ${ROLE_NAMES[e.actor_role]}\nПользователь: ${e.target}${e.reason?'\nПричина: '+safe(e.reason,140):''}`;}).join('\n\n');
  const nav=[];if(page)nav.push(button('⬅️',`admin:audit:${page-1}`));if((page+1)*5<total)nav.push(button('➡️',`admin:audit:${page+1}`));
- return bot.panel('<b>📋 Журнал действий команды</b>\n\n'+(text||'Действий пока нет.'),[...(nav.length?[nav]:[]),[button('🔄 Обновить',`admin:audit:${page}`)],...BACK]);
+ return bot.panel('<b>📋 Журнал действий команды</b>\nХранятся последние 10 дней.\n\n'+(text||'Действий пока нет.'),[...(nav.length?[nav]:[]),[button('🔄 Обновить',`admin:audit:${page}`)],...BACK]);
 }

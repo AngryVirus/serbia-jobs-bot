@@ -18,6 +18,7 @@ export function mayManage(actorRole,currentRole,nextRole){
 }
 // Decision and audit event commit in one SQLite statement; replay uses the same version.
 export async function staffDecision(store,kind,uid,next,event){
+ await store.pruneStaffAudit();
  const key=`${kind}:${uid}:${next.version}`;
  await store.db.run("INSERT INTO sjc_records(kind,record_key,payload) VALUES(:kind,:uid,:payload),('staff_audit',:event,:audit) ON CONFLICT(kind,record_key) DO UPDATE SET payload=excluded.payload",{':kind':kind,':uid':String(uid),':payload':JSON.stringify(next),':event':key,':audit':JSON.stringify(event)});
 }

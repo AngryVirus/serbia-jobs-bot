@@ -14,6 +14,9 @@ export const positive = x => Number.isSafeInteger(x) && x > 0;
 export class Store {
   constructor(db) { this.db = db; }
   async init() { for (const sql of SCHEMA) await this.db.run(sql); }
+  async pruneStaffAudit(now=Date.now()) {
+    await this.db.run("DELETE FROM sjc_records WHERE kind='staff_audit' AND julianday(json_extract(payload,'$.at'))<julianday(:cutoff)",{':cutoff':new Date(now-10*86400000).toISOString()});
+  }
   async meta(key) { const row = await this.db.get('SELECT payload FROM sjc_meta WHERE key=:key', { ':key': key }); return row ? JSON.parse(row.payload) : null; }
   async setMeta(key, value) { await this.db.run('INSERT INTO sjc_meta(key,payload) VALUES(:key,:payload) ON CONFLICT(key) DO UPDATE SET payload=excluded.payload', { ':key': key, ':payload': JSON.stringify(value) }); }
   async rate(key, limit, seconds, now = Date.now()) {

@@ -1,6 +1,7 @@
 import { OWNER_ID } from './owner.js';
 // Persistent transitions claimed before delivery: ambiguous sends are never replayed.
 export async function healthTick(store,api,now=Date.now()) {
+  await store.pruneStaffAudit(now);
   if(!await store.meta('active')) return {paused:true};
   const lock=`${now}:${Math.random()}`;
   if(!await store.lock('health',lock,120)) return {busy:true};
