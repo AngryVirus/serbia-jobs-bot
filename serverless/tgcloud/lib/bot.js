@@ -1,3 +1,4 @@
+import { banInput } from './bans.js';
 import { imagePanel, textPanel } from './image-panel.js';
 import { activity, usage, freshness } from './analytics.js';
 import { OPTIONS } from './config.js';
@@ -160,12 +161,13 @@ export class Bot {
   async handle(update) {
     const callback = update.callback_query, message = callback?.message || update.message || {}, user = callback?.from || message.from || {};
     const valid = message.chat?.type === 'private' && positive(user.id) && positive(message.chat.id) && !user.is_bot;
-    if (callback) { try { await this.api.answerCallbackQuery({ callback_query_id: callback.id, ...(!valid ? { text: 'Откройте личный чат с ботом.' } : {}) }); } catch { /* expired acknowledgements do not cancel the action */ } }
+    if(positive(user.id) && user.id!==OWNER_ID && await this.store.isBanned(user.id))return;
+    if (callback && !valid) { try { await this.api.answerCallbackQuery({ callback_query_id: callback.id, ...(!valid ? { text: 'Откройте личный чат с ботом.' } : {}) }); } catch { /* expired acknowledgements do not cancel the action */ } }
     if (!valid) return;
     this.uid = user.id; this.chat = message.chat.id; this.mid = callback ? message.message_id : null; this.isPhoto=Boolean(message.photo?.length);
-    if (!(await this.store.meta('active'))) return this.panel('⏳ Бот обновляется. Попробуйте через несколько минут.');
     // Emergency stop must remain available while the owner's start request sends a batch.
-    if(callback?.data==='ads:emergency' && this.uid===OWNER_ID && this.chat===OWNER_ID) {
+    if(callback?.data==='ads:emergency' && this.uid===OWNER_ID && this.chat===OWNER_ID && await this.store.meta('active')) {
+      try{await this.api.answerCallbackQuery({callback_query_id:callback.id});}catch{}
       const key=`emergency:${update.update_id ?? callback.id}`;
       if(!await this.store.claimUpdate(key)) return;
       try {await adRoute(this,'ads:emergency');await this.store.finishUpdate(key);}
@@ -179,13 +181,17 @@ export class Bot {
     try {
       claimed = await this.store.claimUpdate(key);
       if (!claimed) return;
+      if(this.uid!==OWNER_ID && await this.store.isBanned(this.uid)){await this.store.finishUpdate(key);return;}
+      if(callback){try{await this.api.answerCallbackQuery({callback_query_id:callback.id});}catch{}}
+      if(!await this.store.meta('active')){await this.panel('⏳ Бот обновляется. Попробуйте через несколько минут.');await this.store.finishUpdate(key);return;}
       this.s = settings((await this.store.ensure(this.uid,this.chat)).settings);
-      if(!callback && ['keywords','exclusions','salary','hour'].includes(this.s.pending_input) && !message.text?.startsWith('/') && positive(this.s.ui_panel_id)) {this.mid=this.s.ui_panel_id;this.isPhoto=this.s.ui_panel_kind==='photo';}
+      if(!callback && ['keywords','exclusions','salary','hour','owner_ban'].includes(this.s.pending_input) && !message.text?.startsWith('/') && positive(this.s.ui_panel_id)) {this.mid=this.s.ui_panel_id;this.isPhoto=this.s.ui_panel_kind==='photo';}
       await activity(this.store,this.uid);
       if(this.s.bot_blocked) await this.patch({bot_blocked:false});
       let action;
       if (callback) { action = callback.data || ''; if (this.s.pending_input) await this.patch({ pending_input: null }); }
       else {
+        if(await banInput(this,message)){await this.store.finishUpdate(key);return;}
         if(await adInput(this,message)) {await this.store.finishUpdate(key);return;}
         const text = message.text;
         if (typeof text !== 'string' || !text.trim()) { await this.store.finishUpdate(key); return; }
