@@ -11,6 +11,10 @@ on:
         description: Render is suspended AND the old Check Serbia jobs workflow is disabled
         type: boolean
         default: false
+  workflow_run:
+    workflows: [Test bot]
+    types: [completed]
+    branches: [main]
   schedule:
     - cron: '7,37 * * * *'
     - cron: '2,12,17,22,27,32,42,47,52,57 * * * *'
@@ -21,16 +25,19 @@ concurrency:
   cancel-in-progress: false
 jobs:
   cloud:
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_sha == github.sha)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: serverless/package-lock.json
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
       - run: npm ci --ignore-scripts --no-audit --no-fund
@@ -44,7 +51,7 @@ jobs:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_PROBE_TOKEN }}
           SUPABASE_URL: https://iajwyuldjwptkbafpmgl.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          CLOUD_ACTION: ${{ inputs.action || (github.event.schedule == '7,37 * * * *' && 'collect' || 'ads') }}
+          CLOUD_ACTION: ${{ (github.event_name == 'workflow_run' && 'deploy') || inputs.action || (github.event.schedule == '7,37 * * * *' && 'collect' || 'ads') }}
           LEGACY_STOPPED: ${{ inputs.legacy_stopped }}
         run: |
           case "$CLOUD_ACTION" in
@@ -52,6 +59,7 @@ jobs:
             deploy)
               python3 serverless/deploy.py
               python3 serverless/refresh_facts.py
+              python3 serverless/health_check.py
               ;;
             collect)
               python3 serverless/collect.py

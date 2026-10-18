@@ -144,6 +144,8 @@ test('all current menu/card/filter callbacks produce a usable response; translat
   while(queue.length) {
     const action=queue.shift(); if(seen.has(action)) continue; seen.add(action);
     const before=f.api.edited.length+f.api.sent.length;
+    // Explore every route independently; burst quotas have dedicated security tests.
+    await f.db.run("DELETE FROM sjc_records WHERE kind='rate'");
     await handle(f,callback(1,action));
     assert(f.api.edited.length+f.api.sent.length>before,action);
     const last=f.api.edited.at(-1);

@@ -16,6 +16,15 @@ export class Store {
   async init() { for (const sql of SCHEMA) await this.db.run(sql); }
   async meta(key) { const row = await this.db.get('SELECT payload FROM sjc_meta WHERE key=:key', { ':key': key }); return row ? JSON.parse(row.payload) : null; }
   async setMeta(key, value) { await this.db.run('INSERT INTO sjc_meta(key,payload) VALUES(:key,:payload) ON CONFLICT(key) DO UPDATE SET payload=excluded.payload', { ':key': key, ':payload': JSON.stringify(value) }); }
+  async rate(key, limit, seconds, now = Date.now()) {
+    const end = now + seconds*1000;
+    const result = await this.db.run(`INSERT INTO sjc_records(kind,record_key,payload) VALUES('rate',:key,json_object('n',1,'end',:end))
+      ON CONFLICT(kind,record_key) DO UPDATE SET payload=json_object('n',CASE WHEN json_extract(payload,'$.end')<=:now THEN 1 ELSE json_extract(payload,'$.n')+1 END,'end',CASE WHEN json_extract(payload,'$.end')<=:now THEN :end ELSE json_extract(payload,'$.end') END)
+      WHERE json_extract(payload,'$.end')<=:now OR json_extract(payload,'$.n')<:limit`, {':key':key,':end':end,':now':now,':limit':limit});
+    if(result.rowsAffected===1) return 0;
+    const row=await this.db.get("SELECT json_extract(payload,'$.end') AS until FROM sjc_records WHERE kind='rate' AND record_key=:key",{':key':key});
+    return Math.max(1,Math.ceil((row.until-now)/1000));
+  }
   async lock(key, owner, seconds = 120) {
     const result = await this.db.run(`INSERT INTO sjc_locks(key,owner,expires) VALUES(:key,:owner,:expires)
       ON CONFLICT(key) DO UPDATE SET owner=excluded.owner,expires=excluded.expires WHERE sjc_locks.expires<=:now OR sjc_locks.owner=:owner`,
@@ -34,6 +43,7 @@ export class Store {
   async saveUser(user) { await this.db.run('UPDATE sjc_users SET payload=:payload WHERE id=:id', { ':id': user.user_id, ':payload': JSON.stringify(user) }); }
   async patch(uid, fields) { const user = await this.user(uid); assert(user, 'Missing user'); user.settings = { ...settings(user.settings), ...fields }; user.updated_at = new Date().toISOString(); await this.saveUser(user); return user.settings; }
   async deleteUser(uid) {
+    await this.db.run("DELETE FROM sjc_records WHERE kind='rate' AND record_key LIKE :prefix",{':prefix':uid+':%'});
     await this.db.run("DELETE FROM sjc_records WHERE kind='ad_delivery' AND record_key LIKE :suffix",{':suffix': '%:'+uid});
     await this.db.run("DELETE FROM sjc_records WHERE kind='ad_target' AND record_key LIKE :suffix",{':suffix': '%:'+String(uid).padStart(20,'0')});
     // Callers hold the same user lease as notification delivery.

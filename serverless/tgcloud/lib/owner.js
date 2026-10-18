@@ -40,7 +40,10 @@ export async function complaint(bot, id, reason, index=-1, mode='s') {
   if (!Object.hasOwn(REASONS,reason)) return bot.home();
   const previous = (await bot.store.records('report')).filter(r=>r.user_id===bot.uid);
   const exists = previous.some(r=>includesId(group,r.job_id)||includesId(group,r.group_id));
-  if (!exists && previous.filter(r=>Date.now()-Date.parse(r.created_at)<86400000).length>=20) return bot.panel('Можно отправить до 20 жалоб за сутки. Попробуйте позже.',BACK);
+  if(!exists) {
+    const wait=await bot.store.rate(`${bot.uid}:report_daily`,20,86400);
+    if(wait) return bot.panel(`Суточный лимит жалоб исчерпан. Повторите через ${Math.ceil(wait/60)} мин.`,BACK);
+  }
   const key = `${bot.uid}:${group.id}`;
   const record = { user_id: bot.uid, job_id: id, group_id: group.id, reason, state: 'open', created_at: new Date().toISOString(), owner_notice:'pending',job_title:group.members.find(j=>j.id===id)?.title || group.members[0].title };
   // One complaint per person and recognized vacancy, even on replay/another copy.
