@@ -1,6 +1,6 @@
 import { Bot } from './bot.js';
 import { renderImage } from './image-renderer.js';
-import { sourceHistory, analyticsPanel, freshness } from './analytics.js';
+import { sourceHistory, analyticsPanel, freshness, deliveryForbidden } from './analytics.js';
 import { backupOperation } from './backup.js';
 import { healthTick } from './health.js';
 import { Store, TABLES, assert, positive } from './store.js';
@@ -44,6 +44,7 @@ export async function notifyOne(store, api, uid) {
         return { sent: 0, retry_after: retry };
       }
       if (error.code === 403) {
+        await deliveryForbidden(store,uid,error);
         await store.patch(uid, { notifications: 'off' });
         await store.db.run("UPDATE sjc_deliveries SET state='blocked' WHERE user_id=:uid AND job_id=:jid",params);
         return { sent: 0, done: true, blocked: true };
@@ -63,7 +64,7 @@ export async function administer(input, ctx, deps) {
   if(op==='menu_image_audit') {
     assert(typeof deps.InputFile==='function','Runtime image upload unsupported');
     const s=settings((await store.user(OWNER_ID))?.settings),start=Date.now(),panels=[menu(s)[0],filtersPanel(s)[0],choicePanel(s,'city')[0]];
-    const sizes=panels.map(text=>{const image=renderImage(text);assert(image.bytes.length<10000000 && image.width+image.height<=10000,'Image exceeds Telegram limits');return {width:image.width,height:image.height,bytes:image.bytes.length};});
+    const sizes=panels.map(text=>{const image=renderImage(text);assert(image.bytes.length<10000000 && image.width+image.height<=10000,'Image exceeds Telegram limits');return {width:image.width,height:image.height,bytes:image.bytes.length,icons:image.icons};});
     return {rendered:sizes.length,elapsed_ms:Date.now()-start,images:sizes};
   }
   if(op==='menu_image_preview') {
@@ -117,8 +118,8 @@ export async function administer(input, ctx, deps) {
   }
   if(op==='operations_check') {
     const report=await ownerReport(store), panels=[];
-    const bot={store,panel:async(text,rows)=>{assert(typeof text==='string' && text.length<4096,'Invalid operations panel');assert(rows.flat().every(b=>!b.callback_data || b.callback_data.length<=64),'Invalid operations callback');panels.push(true);}};
-    for(const action of ['admin:stats','admin:quality','admin:quality:sources:0','admin:quality:duplicates:0'])await analyticsPanel(bot,action,report);
+    const bot={store,panel:async(text,rows)=>{assert(typeof text==='string' && text.length<4096,'Invalid operations panel');assert(rows.flat().every(b=>!b.callback_data || b.callback_data.length<=64),'Invalid operations callback');const image=renderImage(text);assert(image.width+image.height<=10000 && image.bytes.length<10000000,'Invalid operations image');panels.push(true);}};
+    for(const action of ['admin:stats','admin:stats:delivery','admin:stats:usage','admin:quality','admin:quality:sources:0','admin:quality:duplicates:0'])await analyticsPanel(bot,action,report);
     return {panels:panels.length,freshness_warning:Boolean(await freshness(store)),backup_verified:Boolean((await store.meta('last_backup'))?.verified_at)};
   }
   if (op === 'export') return { rows: await store.rows(input.table,input.offset,input.limit) };

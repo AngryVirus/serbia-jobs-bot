@@ -54,13 +54,15 @@ test('snapshot excludes opt-outs, opt-out before delivery and deleted/recreated 
 test('429 retries the same recipient; blocked and ambiguous deliveries do not repeat',async()=>{
   const f=await fixture();await f.store.ensure(1,1);await f.store.ensure(2,2);await f.store.ensure(3,3);
   const id=await draft(f);const send=f.api.sendMessage;let limited=true;
-  f.api.sendMessage=async p=>{if(p.chat_id===1&&limited)throw {code:429,parameters:{retry_after:10}};if(p.chat_id===2)throw {code:403};if(p.chat_id===3)throw new Error('Timeout');return send(p);};
+  f.api.sendMessage=async p=>{if(p.chat_id===1&&limited)throw {code:429,parameters:{retry_after:10}};if(p.chat_id===2)throw {code:403,description:'Forbidden: bot was blocked by the user'};if(p.chat_id===3)throw new Error('Timeout');return send(p);};
   await ready(f,id);assert.equal((await campaign(f)).cursor,0);
   assert.equal((await f.store.records('ad_delivery')).length,0);
   limited=false;await tick(f);
   const states=(await f.store.records('ad_delivery')).map(r=>r.state).sort();
   assert.deepEqual(states,['blocked','sent','sent','uncertain']);
   assert.equal((await f.store.user(2)).settings.bot_blocked,true);
+  assert.equal((await f.store.user(2)).delivery_status,'blocked');
+  assert.equal((await f.store.user(2)).ever_confirmed_blocked,1);
   const count=f.api.sent.length;await tick(f);assert.equal(f.api.sent.length,count);
 });
 

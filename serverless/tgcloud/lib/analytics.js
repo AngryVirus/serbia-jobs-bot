@@ -11,7 +11,33 @@ export async function usage(store,field,now=Date.now()) {
 }
 export async function activity(store,uid,now=Date.now()) {
  const day=new Date(now).toISOString().slice(0,10);
- await store.db.run("UPDATE sjc_users SET payload=json_set(payload,'$.last_seen_day',:day) WHERE id=:uid AND COALESCE(json_extract(payload,'$.last_seen_day'),'')!=:day",{':day':day,':uid':uid});
+ await store.db.run("UPDATE sjc_users SET payload=json_set(payload,'$.last_seen_day',:day,'$.settings.bot_blocked',json('false'),'$.delivery_status','reachable') WHERE id=:uid AND (COALESCE(json_extract(payload,'$.last_seen_day'),'')!=:day OR COALESCE(json_extract(payload,'$.settings.bot_blocked'),0)!=0 OR COALESCE(json_extract(payload,'$.delivery_status'),'')!='reachable')",{':day':day,':uid':uid});
+}
+// Only Telegram's explicit blocked description is evidence of a user blocking the bot.
+// No raw error descriptions or personal event logs are retained.
+export async function deliveryForbidden(store,uid,error,now=Date.now()) {
+ if(error?.code!==403)return;
+ const description=String(error.description||error.message||'');
+ const status=/bot was blocked by the user/i.test(description)?'blocked':/user is deactivated/i.test(description)?'deactivated':'forbidden';
+ await store.db.run("UPDATE sjc_users SET payload=json_set(payload,'$.settings.bot_blocked',json('true'),'$.delivery_status',:status,'$.delivery_status_day',:day,'$.ever_confirmed_blocked',CASE WHEN :status='blocked' THEN 1 ELSE COALESCE(json_extract(payload,'$.ever_confirmed_blocked'),0) END) WHERE id=:uid",{':uid':uid,':status':status,':day':new Date(now).toISOString().slice(0,10)});
+}
+export async function userStatistics(store,now=Date.now()) {
+ const today=new Date(now).toISOString().slice(0,10),week=new Date(now-6*86400000).toISOString().slice(0,10),month=new Date(now-29*86400000).toISOString().slice(0,10);
+ const row=await store.db.get(`SELECT COUNT(*) AS total,
+ COALESCE(SUM(json_extract(payload,'$.last_seen_day') IS NOT NULL),0) AS observed,
+ COALESCE(SUM(json_extract(payload,'$.last_seen_day')>=:today),0) AS active_today,
+ COALESCE(SUM(json_extract(payload,'$.last_seen_day')>=:week),0) AS active_week,
+ COALESCE(SUM(json_extract(payload,'$.last_seen_day')>=:month),0) AS active_month,
+ COALESCE(SUM(substr(json_extract(payload,'$.created_at'),1,10)>=:today),0) AS new_today,
+ COALESCE(SUM(substr(json_extract(payload,'$.created_at'),1,10)>=:week),0) AS new_week,
+ COALESCE(SUM(substr(json_extract(payload,'$.created_at'),1,10)>=:month),0) AS new_month,
+ COALESCE(SUM(json_extract(payload,'$.settings.notifications') IS NOT NULL AND json_extract(payload,'$.settings.notifications')!='off'),0) AS subscribed,
+ COALESCE(SUM(COALESCE(json_extract(payload,'$.settings.bot_blocked'),0)!=0),0) AS unavailable,
+ COALESCE(SUM(json_extract(payload,'$.delivery_status')='blocked'),0) AS blocked,
+ COALESCE(SUM(json_extract(payload,'$.delivery_status')='deactivated'),0) AS deactivated,
+ COALESCE(SUM(json_extract(payload,'$.ever_confirmed_blocked')=1),0) AS ever_blocked
+ FROM sjc_users`,{':today':today,':week':week,':month':month});
+ return row;
 }
 export async function freshness(store,now=Date.now()) {
  const run=await store.meta('last_collection');
@@ -56,13 +82,21 @@ export function qualitySummary(jobs,groups=groupJobs(jobs),now=Date.now()) {
 }
 export async function analyticsPanel(bot,action,data) {
  if(action==='admin:stats') {
+  const s=await userStatistics(bot.store),started=await bot.store.meta('analytics_started');
+  return bot.panel(`<b>👥 Пользователи бота</b>\n\n<b>Всего в базе:</b> ${s.total}\nВоспользовались за время учёта: ${s.observed}\n\n<b>Активные пользователи · UTC</b>\nСегодня: ${s.active_today}\nЗа 7 дней: ${s.active_week}\nЗа 30 дней: ${s.active_month}\n\n<b>Новые пользователи · UTC</b>\nСегодня: ${s.new_today}\nЗа 7 дней: ${s.new_week}\nЗа 30 дней: ${s.new_month}\n\n<b>Уведомления включены:</b> ${s.subscribed}\n<b>Не принимают сообщения (403):</b> ${s.unavailable}\nПодтверждённо заблокировали бота: ${s.blocked}\n\n<i>Активность учитывается с ${safe(started||'первого обращения',30)}. Данные об удалённых профилях сюда не входят; возвращение после удаления считается новой регистрацией.</i>`,[[button('🚫 Блокировки и доставка','admin:stats:delivery')],[button('📈 Поиски и переводы','admin:stats:usage')],[button('🔄 Обновить','admin:stats')],...BACK]);
+ }
+ if(action==='admin:stats:delivery') {
+  const s=await userStatistics(bot.store);
+  return bot.panel(`<b>🚫 Блокировки и доставка</b>\n\n<b>Не принимают сообщения (403):</b> ${s.unavailable}\nБлокировка подтверждена Telegram: ${s.blocked}\nАккаунт деактивирован: ${s.deactivated}\nПрочие / старые отказы: ${Math.max(0,s.unavailable-s.blocked-s.deactivated)}\n\nБлокировали хотя бы раз за время наблюдения: ${s.ever_blocked}\n\n<i>Это пользователи, а не число ошибок отправки. Учитываются только профили, которые сейчас есть в базе. Блокировки становятся известны по ответу Telegram при доставке: полного списка заблокировавших бот не получает. Отдельной проверки рассылкой нет. Возвращение в бот снимает текущий отказ; исторические отказы без точной причины не считаются подтверждённой блокировкой.</i>`,[[button('🔄 Обновить','admin:stats:delivery')],[button('👥 Пользователи','admin:stats')],...BACK]);
+ }
+ if(action==='admin:stats:usage') {
   const now=Date.now(),since=new Date(now-6*86400000).toISOString().slice(0,10),today=new Date(now).toISOString().slice(0,10);
   const rows=await bot.store.db.all("SELECT payload FROM sjc_records WHERE kind='usage' AND record_key>=:since",{':since':since});
   const totals={searches:0,empty:0,translations:0};for(const r of rows)for(const key of Object.keys(totals))totals[key]+=JSON.parse(r.payload)[key]||0;
   const active=async day=>(await bot.store.db.get("SELECT COUNT(*) AS n FROM sjc_users WHERE json_extract(payload,'$.last_seen_day')>=:day",{':day':day})).n;
   const subscriptions=await bot.store.db.get("SELECT COUNT(*) AS n FROM sjc_users WHERE json_extract(payload,'$.settings.notifications') IS NOT NULL AND json_extract(payload,'$.settings.notifications')!='off'");
   const sinceMetrics=await bot.store.meta('analytics_started');
-  return bot.panel(`<b>📈 Использование бота</b>\n\nАктивных сегодня (UTC): ${await active(today)}\nЗа 7 дней: ${await active(since)}\nЗа 30 дней: ${await active(new Date(now-29*86400000).toISOString().slice(0,10))}\nВключены уведомления: ${subscriptions.n}\n\n<b>Последние 7 дней</b>\nПоисков: ${totals.searches}\nБез результатов: ${totals.empty}${totals.searches?' · '+Math.round(100*totals.empty/totals.searches)+'%':''}\nЗапросов перевода: ${totals.translations}\n\n<i>Учёт с ${safe(sinceMetrics||'первого обращения',30)}. Переходы между карточками не считаются новым поиском. Тексты запросов и значения фильтров не собираются.</i>`,BACK);
+  return bot.panel(`<b>📈 Использование бота</b>\n\nАктивных сегодня (UTC): ${await active(today)}\nЗа 7 дней: ${await active(since)}\nЗа 30 дней: ${await active(new Date(now-29*86400000).toISOString().slice(0,10))}\nВключены уведомления: ${subscriptions.n}\n\n<b>Последние 7 дней</b>\nПоисков: ${totals.searches}\nБез результатов: ${totals.empty}${totals.searches?' · '+Math.round(100*totals.empty/totals.searches)+'%':''}\nЗапросов перевода: ${totals.translations}\n\n<i>Учёт с ${safe(sinceMetrics||'первого обращения',30)}. Переходы между карточками не считаются новым поиском. Тексты запросов и значения фильтров не собираются.</i>`,[[button('👥 Пользователи','admin:stats')],...BACK]);
  }
  const q=qualitySummary(data.groups.flatMap(g=>g.members),data.groups);
  if(action==='admin:quality') {

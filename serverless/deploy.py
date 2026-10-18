@@ -5,9 +5,9 @@ from pathlib import Path
 import sys
 from cloud import call, cli, invoke, routing_identity
 
-# Reviewed predecessor: ca39726 (encrypted backups and owner analytics).
+# Reviewed predecessor: 3fdfd3a (graphical menus; runtime from 9b5e3b7).
 # A later release must explicitly review and update its predecessor digest.
-PREVIOUS_DIGEST = 'd7bbe04ee41f5d4428dcd067475fee8892cd66973f404e1ada7d133283a38c1f'  # pragma: allowlist secret
+PREVIOUS_DIGEST = 'fc8c2804aad7fd9a504a92dc48122d9cbaa32df6f430863d297b8c8d292f24e1'  # pragma: allowlist secret
 
 
 def digest(modules):
