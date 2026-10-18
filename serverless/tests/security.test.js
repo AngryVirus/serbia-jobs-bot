@@ -111,3 +111,21 @@ test('only a completed collection with a healthy source advances the success hea
   assert.equal(Boolean(await f.store.meta('last_successful_collection')),!failed && healthy>0);
  }
 });
+test('parallel live advertising workers claim each recipient once',async()=>{
+ const f=await fixture();for(let i=1;i<=15;i++)await f.store.ensure(i,i);
+ const id=await start(f),campaign=(await f.store.records('ad_campaign'))[0];
+ await f.store.record('ad_campaign',id,{...campaign,retry_at:0});
+ let entered,release;const waiting=new Promise(r=>entered=r),gate=new Promise(r=>release=r);
+ const send=f.api.sendMessage;
+ f.api.sendMessage=async p=>{if(p.chat_id===6){entered();await gate;}return send(p);};
+ const first=adTick(f.store,f.api);await waiting;
+ assert.equal((await adTick(f.store,f.api)).busy,true);
+ release();await first;
+ for(let i=0;i<5;i++) {
+  const c=(await f.store.records('ad_campaign'))[0];
+  await f.store.record('ad_campaign',id,{...c,retry_at:0});
+  if((await adTick(f.store,f.api)).done)break;
+ }
+ const messages=f.api.sent.filter(p=>p.text?.startsWith('📣') && p.chat_id!==OWNER_ID);
+ assert.equal(messages.length,15);assert.equal(new Set(messages.map(p=>p.chat_id)).size,15);
+});
