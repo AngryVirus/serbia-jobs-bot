@@ -9,10 +9,13 @@ import { groupJobs, visibleJobs, hiddenGroups, includesId, decorate } from './ca
 import { Store, positive } from './store.js';
 import { OWNER_ID, complaint } from './owner.js';
 import { adRoute, adInput } from './ads.js';
+import { searchRoute, searchInput, replaySearches } from './searches.js';
+import { openDiscovery, discoveryRoute, replayDiscovery } from './discovery.js';
 import { button, BACK, safe, menu, filtersPanel, choicePanel, emptyText, jobButtons, translatedCard, viewerButtons, browserUrl, cardActions } from './ui.js';
 const DELETED_TEXT='Ваши данные удалены. Уведомления выключены. /start — начать заново.';
-const inputMutation=action=>typeof action==='string' && (/^(notify:(off|instant|daily)|toggle_salary|reset|delete_confirm)$/.test(action) || /^(choose:|set:|hide:|restore:)/.test(action) || /^view:[^:]+:[^:]+:hide:/.test(action) || action.startsWith('input:') && Object.hasOwn(PROMPTS,action.slice(6)));
-const inputScreen=action=>typeof action!=='string'?'menu':/^(choose|set):/.test(action)?'filters':action==='toggle_salary'||action==='reset'?'filters':action==='delete_confirm'?'deleted':action?.startsWith('input:')?action:'menu';
+const discoveryAction=action=>/^(discover:|similar:|risk:|search:0$|plans:(?:open|new):)/.test(action||'');
+const inputMutation=action=>typeof action==='string' && (discoveryAction(action)||/^plans(?::|$)/.test(action)||/^(notify:(off|instant|daily)|toggle_salary|reset|delete_confirm)$/.test(action) || /^(choose:|set:|hide:|restore:)/.test(action) || /^view:[^:]+:[^:]+:hide:/.test(action) || action.startsWith('input:') && Object.hasOwn(PROMPTS,action.slice(6)));
+const inputScreen=action=>typeof action!=='string'?'menu':discoveryAction(action)?'discovery':/^plans(?::|$)/.test(action)?'plans':/^(choose|set):/.test(action)?'filters':action==='toggle_salary'||action==='reset'?'filters':action==='delete_confirm'?'deleted':action?.startsWith('input:')?action:'menu';
 const PROMPTS = { keywords: 'Введите слова или фразы через запятую. Достаточно совпадения одного. «-» — очистить.', exclusions: 'Введите исключения через запятую. «-» — очистить.', salary: 'Введите минимальную зарплату в месяц: 1000 EUR или 120000 RSD. «-» — снять фильтр.' };
 export class Bot {
   constructor(deps) { this.api = deps.api; this.fetch = deps.fetch; this.store = new Store(deps.db); this.InputFile=deps.InputFile; }
@@ -30,11 +33,14 @@ export class Bot {
   async replayInput(screen) {
     if(screen==='deleted')return this.panel(DELETED_TEXT,[],null);
     if(screen==='filters')return this.panel(...filtersPanel(this.s));
+    if(screen==='plans')return replaySearches(this);
+    if(screen==='discovery')return replayDiscovery(this);
     if(screen?.startsWith('input:') && Object.hasOwn(PROMPTS,screen.slice(6)) && this.s.pending_input===screen.slice(6))return this.panel(PROMPTS[screen.slice(6)]+'\n/cancel — отмена.',[[button('✖ Отменить ввод','cancel')],...BACK]);
     return this.home();
   }
+  async showPlan(id,newOnly=false) {return openDiscovery(this,id,newOnly?'new':'all');}
   async notifications() {
-    await this.panel('<b>🔔 Уведомления</b>\n\nНовая вакансия по вашим фильтрам придёт сразу после обнаружения. Проверка источников запускается примерно каждые 30 минут; запуск может задержаться. Старый каталог при включении не рассылается. Уже отправленные вакансии не повторяются.', [[button(this.s.notifications === 'off' ? '🔔 Включить' : '🔕 Выключить', this.s.notifications === 'off' ? 'notify:instant' : 'notify:off')], ...BACK]);
+    await this.panel('<b>🔔 Уведомления текущего поиска</b>\n\nНовая вакансия по текущим фильтрам придёт после обнаружения. У сохранённых поисков свои переключатели: Фильтры → Мои поиски. Проверка источников запускается примерно каждые 30 минут; запуск может задержаться. Старый каталог при включении не рассылается. Одна вакансия не приходит повторно при совпадении нескольких поисков.', [[button(this.s.notifications === 'off' ? '🔔 Включить' : '🔕 Выключить', this.s.notifications === 'off' ? 'notify:instant' : 'notify:off')], ...BACK]);
   }
   async input(text) {
     const field = this.s.pending_input; let patch;
@@ -128,7 +134,7 @@ export class Bot {
   }
   async route(action) {
     if (typeof action !== 'string') return this.home();
-    const kind = /^report:.*:(not_job|duplicate|outdated)(:|$)/.test(action) ? 'report' : /translate|^job:\d+:ru_|^view:.*:(rs|rf)$/.test(action) ? 'translate' : /^(search:|view:|job:)/.test(action) ? 'search' : null;
+    const kind = /^report:.*:(not_job|duplicate|outdated)(:|$)/.test(action) ? 'report' : /translate|^job:\d+:ru_|^(view|discover):.*:(rs|rf)$/.test(action) ? 'translate' : /^(search:|view:|job:|discover:|similar:|risk:|plans:(?:open|new):)/.test(action) ? 'search' : null;
     if(kind) {
       const [limit,seconds]={search:[40,60],translate:[10,60],report:[5,60]}[kind];
       const wait=await this.store.rate(`${this.uid}:${kind}`,limit,seconds);
@@ -136,6 +142,9 @@ export class Bot {
       if(kind==='translate')await usage(this.store,'translations');
     }
     if(action==='ads'||action.startsWith('ads:')) return adRoute(this,action);
+    if(/^plans(?::|$)/.test(action))return searchRoute(this,action);
+    if(action==='search:0')return openDiscovery(this);
+    if(/^(discover:|similar:|risk:)/.test(action))return discoveryRoute(this,action);
     action = action.replace(/^(choose|set):freshness:(today|yesterday)(?=:|$)/, '$1:freshness:7');
     if (action === 'menu' || action === 'start' || action === 'cancel') return this.home();
     if (action === 'filters') return this.panel(...filtersPanel(this.s));
@@ -152,7 +161,7 @@ export class Bot {
       const j=await this.store.job(Number(m[1]));
       return j ? this.panel(...cardActions(j,Number(m[2]),m[3])) : this.panel('Вакансия больше не найдена.');
     }
-    if ((m = /^report:([1-9]\d*):(choose|not_job|duplicate|outdated):(-1|\d+):(s|f|rs|rf)$/.exec(action)) && positive(Number(m[1])) && Number(m[3])<=1000000) return complaint(this,Number(m[1]),m[2]==='choose'?null:m[2],Number(m[3]),m[4]);
+    if ((m = /^report:([1-9]\d*):(choose|not_job|duplicate|outdated):(-1|\d+):(s|f|rs|rf)(?::([a-z0-9]{8}))?$/.exec(action)) && positive(Number(m[1])) && Number(m[3])<=1000000) return complaint(this,Number(m[1]),m[2]==='choose'?null:m[2],Number(m[3]),m[4],m[5]);
     if ((m = /^report:([1-9]\d*)(?::(not_job|duplicate|outdated))?$/.exec(action)) && positive(Number(m[1]))) return complaint(this,Number(m[1]),m[2]);
     if ((m = /^search:(\d+)(?::(\d+))?$/.exec(action))) return this.show(Math.min(Number(m[1]),200000)*5,null,'show','s',m[2] ? Number(m[2]) : null);
     if ((m = /^view:([1-9]\d*):(\d+):(show|next|prev|details|translate|hide):(s|f|rs|rf)$/.exec(action)) && positive(Number(m[1])) && Number(m[2]) <= 1000000) return this.show(Number(m[2]),Number(m[1]),m[3],m[4]);
@@ -219,11 +228,11 @@ export class Bot {
         await this.finishAcceptedInput(key,message,callback);return;
       }
       this.s = settings((await this.store.ensure(this.uid,this.chat)).settings);
-      const ordinary=!(callback && /^(admin(?::|$)|ads(?::|$))/.test(callback.data||'')) && !(this.s.pending_input && !['keywords','exclusions','salary','hour'].includes(this.s.pending_input));
+      const ordinary=!(callback && /^(admin(?::|$)|ads(?::|$))/.test(callback.data||'')) && !(this.s.pending_input && !['keywords','exclusions','salary','hour','search_name'].includes(this.s.pending_input));
       const mutation=callback?inputMutation(callback.data):Boolean(this.s.pending_input);
-      const cleanup=this.s.pending_input || this.s.ban_draft || this.s.staff_draft;
-      if(ordinary && (mutation || cleanup))await this.store.inputEffect(this.uid,key,callback?inputScreen(callback.data):this.s.pending_input && !message.text?.startsWith('/')?'filters':'menu');
-      if(!callback && ['keywords','exclusions','salary','hour','owner_ban','owner_ban_reason','staff_target'].includes(this.s.pending_input) && !message.text?.startsWith('/') && positive(this.s.ui_panel_id)) {this.mid=this.s.ui_panel_id;this.isPhoto=this.s.ui_panel_kind==='photo';}
+      const cleanup=this.s.pending_input || this.s.ban_draft || this.s.staff_draft || this.s.search_operation;
+      if(ordinary && (mutation || cleanup))await this.store.inputEffect(this.uid,key,callback?inputScreen(callback.data):this.s.pending_input && !message.text?.startsWith('/')?this.s.pending_input==='search_name'?'plans':'filters':'menu');
+      if(!callback && ['keywords','exclusions','salary','hour','owner_ban','owner_ban_reason','staff_target','search_name'].includes(this.s.pending_input) && !message.text?.startsWith('/') && positive(this.s.ui_panel_id)) {this.mid=this.s.ui_panel_id;this.isPhoto=this.s.ui_panel_kind==='photo';}
       await this.store.captureUsername(this.uid,user.username);
       await activity(this.store,this.uid);
       if(this.s.bot_blocked) await this.patch({bot_blocked:false});
@@ -231,11 +240,13 @@ export class Bot {
       if (callback) {
         action = typeof callback.data==='string'?callback.data:'';
         const fields={...(this.s.staff_draft&&!action.startsWith('admin:team:confirm:')?{staff_draft:null}:{}),...(this.s.pending_input || this.s.ban_draft && !action.startsWith('admin:bans:confirm:')?{pending_input:null,...(!action.startsWith('admin:bans:confirm:')?{ban_draft:null,ban_target:null}:{})}:{})};
+        if(this.s.search_operation && action!==`plans:${this.s.search_operation.type==='update'?'replace':'remove'}:${this.s.search_operation.id}:${this.s.search_operation.token}`)fields.search_operation=null;
         if(Object.keys(fields).length) {
           if(ordinary && !mutation)await this.patchInput(fields);else await this.patch(fields);
         }
       }
       else {
+        if(await searchInput(this,message)){await this.finishAcceptedInput(key,message,callback);return;}
         if(await staffInput(this,message)){await this.finishAcceptedInput(key,message,callback);return;}
         if(await banInput(this,message)){await this.finishAcceptedInput(key,message,callback);return;}
         if(await adInput(this,message)) {await this.finishAcceptedInput(key,message,callback);return;}
@@ -243,7 +254,7 @@ export class Bot {
         if (typeof text !== 'string' || !text.trim()) { await this.finishAcceptedInput(key,message,callback); return; }
         if ([...text].length > 1000) { await this.panel('Пожалуйста, сократите сообщение до 1000 символов.'); await this.finishAcceptedInput(key,message,callback); return; }
         if (this.s.pending_input && !text.startsWith('/')) { await this.input(text); await this.finishAcceptedInput(key,message,callback); return; }
-        if (this.s.pending_input || this.s.ban_draft || this.s.staff_draft) {const fields={pending_input:null,ban_draft:null,ban_target:null,staff_draft:null};if(ordinary)await this.patchInput(fields);else await this.patch(fields);}
+        if (this.s.pending_input || this.s.ban_draft || this.s.staff_draft || this.s.search_operation) {const fields={pending_input:null,ban_draft:null,ban_target:null,staff_draft:null,search_operation:null};if(ordinary)await this.patchInput(fields);else await this.patch(fields);}
         action = ({ '/start': 'start', '/menu': 'menu', '/cancel': 'menu', '/delete_me': 'delete', '/admin': 'admin' })[text.split(/\s+/)[0].split('@')[0]] || 'menu';
       }
       await this.route(action);

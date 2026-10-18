@@ -112,3 +112,11 @@ Heavy Cloud operations coordinate through the built-in read-only Actions token;
 the independent watchdog has priority. No personal token, paid service, secret
 rotation or new secret is required for this coordination. Scheduled execution
 and management API availability remain best effort.
+
+
+Сохранённые поиски хранят в профиле до трёх названий и снимков фильтров с
+независимыми отметками уведомлений и просмотра. Пользователь может удалить
+отдельный поиск либо весь профиль. Подборки используют до шести сессий
+со сроком действия 24 часа; они содержат фильтры и ID, не историю переписки.
+Предупреждения о подозрительных условиях анализируют только публичный текст
+вакансии локальными правилами и не выносят решений о работодателе.

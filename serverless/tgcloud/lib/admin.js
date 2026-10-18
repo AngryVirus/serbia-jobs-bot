@@ -3,17 +3,18 @@ import { roleNoticeTick } from './staff.js';
 import { banPanel, banNoticeTick, banNoticeText } from './bans.js';
 import { Bot } from './bot.js';
 import { renderImage } from './image-renderer.js';
-import { sourceHistory, analyticsPanel, freshness, deliveryForbidden } from './analytics.js';
+import { sourceHistory, analyticsPanel, freshness, deliveryForbidden, SUBSCRIBED_SQL } from './analytics.js';
 import { backupOperation } from './backup.js';
 import { healthTick } from './health.js';
 import { Store, TABLES, assert, positive } from './store.js';
 import { settings, contains, belgradeDay, validUrl } from './filters.js';
 import { groupJobs, visibleJobs, hiddenGroups } from './catalog.js';
+import { notificationPlans, savedSearches } from './searches.js';
 import { SOURCE_NAMES } from './config.js';
 import { sourceEnabled } from './source-policy.js';
 import { adTick } from './ads.js';
 import { ownerReport, OWNER_ID, notifyReports } from './owner.js';
-import { card, jobButtons, menu, filtersPanel, choicePanel, translatedCard } from './ui.js';
+import { card, jobButtons, menu, filtersPanel, choicePanel, translatedCard, safe } from './ui.js';
 export async function notifyOne(store, api, uid, catalog) {
   assert(positive(uid), 'Invalid subscriber');
   const cooldown = await store.meta('notification_cooldown');
@@ -21,16 +22,33 @@ export async function notifyOne(store, api, uid, catalog) {
   const owner = `${Date.now()}:${Math.random()}`, key = `user:${uid}`;
   if (!await store.lock(key, owner, 180)) return { busy: true, sent: 0 };
   try {
+    if(!await store.meta('active'))return {sent:0,done:true,paused:true};
     if(await store.isBanned(uid))return {sent:0,done:true,banned:true};
     const user = await store.user(uid);
     if (!user) return { sent: 0, done: true };
-    const s = settings(user.settings);
-    if (s.notifications === 'off') return { sent: 0, done: true };
-    if (s.notifications_after_id == null) { await store.patch(uid,{ notifications_after_id: await store.latest() }); return { sent: 0, done: true }; }
+    let plans=notificationPlans(user.settings);
+    if(!plans.length)return {sent:0,done:true};
+    const uninitialized=plans.filter(plan=>plan.after_id==null);
+    if(uninitialized.length){
+      const baseline=await store.latest(),patch={};
+      if(uninitialized.some(plan=>plan.id==='main'))patch.notifications_after_id=baseline;
+      if(uninitialized.some(plan=>plan.id!=='main'))patch.saved_searches=savedSearches(user.settings).map(saved=>uninitialized.some(plan=>plan.id===saved.id)?{...saved,notifications_after_id:baseline}:saved);
+      user.settings=await store.patch(uid,patch);
+      // Initializing one new plan must not suppress another plan's ready jobs.
+      plans=notificationPlans(user.settings).filter(plan=>!uninitialized.some(fresh=>fresh.id===plan.id));
+    }
+    if(!plans.length)return {sent:0,done:true};
     const delivered = new Set((await store.db.all('SELECT job_id FROM sjc_deliveries WHERE user_id=:uid', { ':uid': uid })).map(r => r.job_id));
     const groups = catalog ? await catalog() : groupJobs(await store.jobs());
-    const j = visibleJobs(groups, s).reverse().find(j => j._duplicate_ids.every(id => id > s.notifications_after_id && !delivered.has(id)));
-    if (!j) return { sent: 0, done: true };
+    const eligible=new Map();
+    for(const plan of plans)for(const j of visibleJobs(groups,plan.filters)){
+      if(!j._duplicate_ids.every(id=>id>plan.after_id&&!delivered.has(id)))continue;
+      const groupId=Math.min(...j._duplicate_ids),existing=eligible.get(groupId);
+      if(existing)existing.plans.push(plan);else eligible.set(groupId,{job:j,plans:[plan]});
+    }
+    const next=[...eligible.entries()].sort((a,b)=>a[0]-b[0])[0]?.[1];
+    if(!next)return {sent:0,done:true};
+    const j=next.job,prefix=next.plans.some(plan=>plan.id==='main')?'':`<i>🔔 Поиск: ${next.plans.map(plan=>safe(plan.name||'Сохранённый поиск',40)).join(' · ')}</i>\n\n`;
     // A catalog is shared only within one bounded batch. Moderation remains fresh.
     const moderated=await store.db.get("SELECT 1 AS blocked FROM sjc_records,json_each(sjc_records.payload,'$.ids') AS ids WHERE kind='moderation' AND json_extract(sjc_records.payload,'$.blocked')=1 AND ids.value IN (SELECT value FROM json_each(:ids)) LIMIT 1",{':ids':JSON.stringify(j._duplicate_ids)});
     if(moderated)return {sent:0,done:false};
@@ -38,10 +56,10 @@ export async function notifyOne(store, api, uid, catalog) {
     const result = await store.db.run("INSERT INTO sjc_deliveries(user_id,job_id,state,payload) VALUES(:uid,:jid,'sending',:payload) ON CONFLICT(user_id,job_id) DO NOTHING", { ...params, ':payload': JSON.stringify(payload) });
     if (result.rowsAffected !== 1) return { sent: 0 };
     try {
-      const message = await api.sendMessage({ chat_id: user.chat_id, text: card(j), parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: { inline_keyboard: jobButtons(j) } });
+      const message = await api.sendMessage({ chat_id: user.chat_id, text: prefix+card(j), parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: { inline_keyboard: jobButtons(j) } });
       assert(positive(message?.message_id), 'Unconfirmed delivery');
       await store.db.run("UPDATE sjc_deliveries SET state='sent' WHERE user_id=:uid AND job_id=:jid", params);
-      user.last_notified_at = payload.delivered_at; await store.saveUser(user);
+      await store.db.run("UPDATE sjc_users SET payload=json_set(payload,'$.last_notified_at',:at) WHERE id=:uid",{':uid':uid,':at':payload.delivered_at});
       return { sent: 1 };
     } catch (error) {
       if (error.code === 429) {
@@ -52,7 +70,7 @@ export async function notifyOne(store, api, uid, catalog) {
       }
       if (error.code === 403) {
         await deliveryForbidden(store,uid,error);
-        await store.patch(uid, { notifications: 'off' });
+        await store.patch(uid, { notifications: 'off',saved_searches:savedSearches(user.settings).map(saved=>({...saved,notifications:'off'})) });
         await store.db.run("UPDATE sjc_deliveries SET state='blocked' WHERE user_id=:uid AND job_id=:jid",params);
         return { sent: 0, done: true, blocked: true };
       }
@@ -69,7 +87,7 @@ export async function notifyBatch(store,api,limit=10) {
   try{
     let cursor=await store.meta('notification_cursor')||0,pending=Boolean(await store.meta('notification_round_pending')),groups;
     const catalog=async()=>groups||(groups=groupJobs(await store.jobs()));
-    const ids=await store.db.all("SELECT id FROM sjc_users WHERE id>:cursor AND COALESCE(json_extract(payload,'$.settings.notifications'),'off')!='off' ORDER BY id LIMIT :limit",{':cursor':cursor,':limit':limit});
+    const ids=await store.db.all(`SELECT id FROM sjc_users WHERE id>:cursor AND ${SUBSCRIBED_SQL} ORDER BY id LIMIT :limit`,{':cursor':cursor,':limit':limit});
     let sent=0,uncertain=0;
     for(const {id} of ids){
       if(!await store.meta('active'))return {sent,uncertain,done:true,paused:true};
@@ -81,7 +99,7 @@ export async function notifyBatch(store,api,limit=10) {
       await store.setMeta('notification_round_pending',pending);
       await store.setMeta('notification_cursor',id);cursor=id;
     }
-    const more=await store.db.get("SELECT 1 AS n FROM sjc_users WHERE id>:cursor AND COALESCE(json_extract(payload,'$.settings.notifications'),'off')!='off' LIMIT 1",{':cursor':cursor});
+    const more=await store.db.get(`SELECT 1 AS n FROM sjc_users WHERE id>:cursor AND ${SUBSCRIBED_SQL} LIMIT 1`,{':cursor':cursor});
     if(!more){await store.setMeta('notification_cursor',0);await store.setMeta('notification_round_pending',false);return {sent,uncertain,done:!pending};}
     return {sent,uncertain,done:false};
   }finally{await store.unlock('notification_batch',lease);}
@@ -272,7 +290,7 @@ export async function administer(input, ctx, deps) {
   }
   if (op === 'subscribers') {
     const rows = await store.rows('users',input.offset || 0,50);
-    return { ids: rows.filter(u => settings(u.settings).notifications !== 'off').map(u => u.user_id), next: rows.length === 50 ? (input.offset || 0)+50 : null };
+    return { ids: rows.filter(u => notificationPlans(u.settings).length).map(u => u.user_id), next: rows.length === 50 ? (input.offset || 0)+50 : null };
   }
   if (op === 'notify') return notifyOne(store,deps.api,input.user_id);
   if (op === 'notify_batch') return notifyBatch(store,deps.api,input.limit??10);

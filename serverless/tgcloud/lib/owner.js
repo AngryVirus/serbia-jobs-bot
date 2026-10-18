@@ -57,11 +57,12 @@ export async function notifyReports(store, api) {
   }
 }
 
-export async function complaint(bot, id, reason, index=-1, mode='s') {
+export async function complaint(bot, id, reason, index=-1, mode='s', context=null) {
   const group = groupJobs(await bot.store.jobs()).find(g => includesId(g,id));
   if (!group) return bot.panel('Объявление больше не найдено.');
-  const back=index===-1 ? `job:${id}:${mode.startsWith('r')?'ru_':''}${mode.endsWith('f')?'full':'short'}` : `view:${id}:${index}:show:${mode}`;
-  if (!reason) return bot.panel('<b>🚩 Пожаловаться</b>\n\n' + safe(group.members[0].title,120) + '\n\nВыберите причину. Объявление будет скрыто из вашей подборки, а жалобу проверит владелец.', [...Object.entries(REASONS).map(([key,label])=>[button(label,`report:${id}:${key}:${index}:${mode}`)]), [button('↩️ К объявлению',back)], ...BACK]);
+  const token=context&&/^[a-z0-9]{8}$/.test(context)&&Array.isArray(bot.s.discovery_sessions)&&bot.s.discovery_sessions.some(s=>s.token===context&&s.expires>Date.now())?context:null;
+  const back=token?`discover:${token}:${id}:${index}:show:${mode}`:index===-1 ? `job:${id}:${mode.startsWith('r')?'ru_':''}${mode.endsWith('f')?'full':'short'}` : `view:${id}:${index}:show:${mode}`;
+  if (!reason) return bot.panel('<b>🚩 Пожаловаться</b>\n\n' + safe(group.members[0].title,120) + '\n\nВыберите причину. Объявление будет скрыто из вашей подборки, а жалобу проверит владелец.', [...Object.entries(REASONS).map(([key,label])=>[button(label,`report:${id}:${key}:${index}:${mode}${token?':'+token:''}`)]), [button('↩️ К объявлению',back)], ...BACK]);
   if (!Object.hasOwn(REASONS,reason)) return bot.home();
   const exists = Boolean(await bot.store.db.get("SELECT 1 AS found FROM sjc_records WHERE kind='report' AND record_key LIKE :prefix AND json_extract(payload,'$.user_id')=:uid AND "+REPORT_GROUP+' LIMIT 1',{...groupParams(group),':prefix':bot.uid+':%',':uid':bot.uid}));
   if(!exists) {
@@ -74,7 +75,7 @@ export async function complaint(bot, id, reason, index=-1, mode='s') {
   if (!exists) await bot.store.db.run("INSERT INTO sjc_records(kind,record_key,payload) VALUES('report',:key,:payload) ON CONFLICT(kind,record_key) DO NOTHING", { ':key':key, ':payload':JSON.stringify(record) });
   await bot.patch({ hidden_jobs: [...new Set([...(bot.s.hidden_jobs || []),group.id])] });
   await notifyReports(bot.store,bot.api);
-  return bot.panel('Спасибо. Жалоба сохранена для проверки владельцем. Вакансия и распознанные копии скрыты из вашей подборки.', [[button('🔎 Продолжить поиск',index===-1?'search:0':`view:${id}:${index}:show:s`),button('↩️ Вернуть',`restore:${id}`)], ...BACK]);
+  return bot.panel('Спасибо. Жалоба сохранена для проверки владельцем. Вакансия и распознанные копии скрыты из вашей подборки.', [[button('🔎 Продолжить поиск',token?`discover:${token}:${id}:${index}:show:s`:index===-1?'search:0':`view:${id}:${index}:show:s`),button('↩️ Вернуть',`restore:${id}`)], ...BACK]);
 }
 
 export async function ownerReport(store) {

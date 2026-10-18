@@ -4,6 +4,8 @@ import { SOURCE_NAMES } from './config.js';
 import { sourceEnabled } from './source-policy.js';
 import { safe, button } from './ui.js';
 const BACK=[[button('📊 Админка','admin')]];
+// Count recipients, rather than subscriptions: one user can have several plans.
+export const SUBSCRIBED_SQL="(COALESCE(json_extract(payload,'$.settings.notifications'),'off')!='off' OR EXISTS(SELECT 1 FROM json_each(payload,'$.settings.saved_searches') AS saved WHERE json_extract(CASE WHEN saved.type='object' THEN saved.value ELSE '{}' END,'$.notifications')='instant'))";
 export async function usage(store,field,now=Date.now()) {
  if(!['searches','empty','translations'].includes(field))throw Error('Unknown usage counter');
  const day=new Date(now).toISOString().slice(0,10);
@@ -31,7 +33,7 @@ export async function userStatistics(store,now=Date.now()) {
  COALESCE(SUM(substr(json_extract(payload,'$.created_at'),1,10)>=:today),0) AS new_today,
  COALESCE(SUM(substr(json_extract(payload,'$.created_at'),1,10)>=:week),0) AS new_week,
  COALESCE(SUM(substr(json_extract(payload,'$.created_at'),1,10)>=:month),0) AS new_month,
- COALESCE(SUM(json_extract(payload,'$.settings.notifications') IS NOT NULL AND json_extract(payload,'$.settings.notifications')!='off'),0) AS subscribed,
+ COALESCE(SUM(${SUBSCRIBED_SQL}),0) AS subscribed,
  COALESCE(SUM(COALESCE(json_extract(payload,'$.settings.bot_blocked'),0)!=0),0) AS unavailable,
  COALESCE(SUM(json_extract(payload,'$.delivery_status')='blocked'),0) AS blocked,
  COALESCE(SUM(json_extract(payload,'$.delivery_status')='deactivated'),0) AS deactivated,
@@ -101,7 +103,7 @@ export async function analyticsPanel(bot,action,data) {
   const rows=await bot.store.db.all("SELECT payload FROM sjc_records WHERE kind='usage' AND record_key>=:since",{':since':since});
   const totals={searches:0,empty:0,translations:0};for(const r of rows)for(const key of Object.keys(totals))totals[key]+=JSON.parse(r.payload)[key]||0;
   const active=async day=>(await bot.store.db.get("SELECT COUNT(*) AS n FROM sjc_users WHERE json_extract(payload,'$.last_seen_day')>=:day",{':day':day})).n;
-  const subscriptions=await bot.store.db.get("SELECT COUNT(*) AS n FROM sjc_users WHERE json_extract(payload,'$.settings.notifications') IS NOT NULL AND json_extract(payload,'$.settings.notifications')!='off'");
+  const subscriptions=await bot.store.db.get(`SELECT COUNT(*) AS n FROM sjc_users WHERE ${SUBSCRIBED_SQL}`);
   const sinceMetrics=await bot.store.meta('analytics_started');
   return bot.panel(`<b>📈 Использование бота</b>\n\nАктивных сегодня (UTC): ${await active(today)}\nЗа 7 дней: ${await active(since)}\nЗа 30 дней: ${await active(new Date(now-29*86400000).toISOString().slice(0,10))}\nВключены уведомления: ${subscriptions.n}\n\n<b>Последние 7 дней</b>\nПоисков: ${totals.searches}\nБез результатов: ${totals.empty}${totals.searches?' · '+Math.round(100*totals.empty/totals.searches)+'%':''}\nЗапросов перевода: ${totals.translations}\n\n<i>Учёт с ${safe(sinceMetrics||'первого обращения',30)}. Переходы между карточками не считаются новым поиском. Тексты запросов и значения фильтров не собираются.</i>`,[[button('👥 Пользователи','admin:stats')],...BACK]);
  }
