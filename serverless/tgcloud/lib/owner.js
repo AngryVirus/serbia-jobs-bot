@@ -5,7 +5,8 @@ import { sourceEnabled } from './source-policy.js';
 import { defaults, belgradeOffset } from './filters.js';
 import { groupJobs, visibleJobs, includesId } from './catalog.js';
 import { button, BACK, safe, card, links } from './ui.js';
-export const OWNER_ID = 340780041;
+import { OWNER_ID } from './permissions.js';
+export { OWNER_ID } from './permissions.js';
 export const REASONS = { not_job: 'Не вакансия / реклама', duplicate: 'Повтор объявления', outdated: 'Набор закрыт / устарело' };
 const OWNER_BACK = [[button('📊 Отчёт владельца', 'admin')], ...BACK];
 const date = value => Number.isFinite(Date.parse(value)) ? new Date(Date.parse(value)+belgradeOffset(Date.parse(value))).toISOString().replace('T',' ').slice(0,16) + ' (Белград)' : 'нет данных';
@@ -95,7 +96,7 @@ export async function ownerRoute(bot, action) {
   if(action.startsWith('admin:bans:'))return banPanel(bot,action);
   const data = await ownerReport(bot.store);
   if(action==='admin:stats' || action.startsWith('admin:stats:') || action.startsWith('admin:quality'))return analyticsPanel(bot,action,data);
-  if (action === 'admin') return bot.panel(data.text, [[button('📣 Реклама','ads'),button('🚫 Баны','admin:bans:0')],[button('📈 Статистика','admin:stats'),button('🧹 Качество базы','admin:quality')],[button('📡 Источники','admin:sources:0'),button('🚩 Жалобы','admin:reports:0')],[button('📋 Подробности','admin:details'),button('🙈 Снятые','admin:blocked:0')],[button('🔄 Обновить','admin'),button('🏠 Меню','menu')]]);
+  if (action === 'admin') return bot.panel(data.text, [[button('📣 Реклама','ads'),button('🚫 Баны','admin:bans:0')],[button('👥 Команда','admin:team:0'),button('📋 Журнал команды','admin:audit:0')],[button('📈 Статистика','admin:stats'),button('🧹 Качество базы','admin:quality')],[button('📡 Источники','admin:sources:0'),button('🚩 Жалобы','admin:reports:0')],[button('📋 Подробности','admin:details'),button('🙈 Снятые','admin:blocked:0')],[button('🔄 Обновить','admin'),button('🏠 Меню','menu')]]);
   if (action === 'admin:details') return bot.panel(data.details,OWNER_BACK);
   let m;
   if ((m=/^admin:sources:(\d+)$/.exec(action))) {

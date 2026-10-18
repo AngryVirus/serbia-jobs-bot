@@ -1,3 +1,4 @@
+import { teamPanel,auditPanel,staffHomeDocument } from './staff.js';
 import { banPanel, banNoticeTick, banNoticeText } from './bans.js';
 import { Bot } from './bot.js';
 import { renderImage } from './image-renderer.js';
@@ -123,6 +124,8 @@ export async function administer(input, ctx, deps) {
     const bot={store,uid:OWNER_ID,chat:OWNER_ID,panel:async(text,rows)=>{assert(typeof text==='string' && text.length<4096,'Invalid operations panel');assert(rows.flat().every(b=>!b.callback_data || b.callback_data.length<=64),'Invalid operations callback');const image=renderImage(text);assert(image.width+image.height<=10000 && image.bytes.length<10000000,'Invalid operations image');panels.push(true);}};
     for(const action of ['admin:stats','admin:stats:delivery','admin:stats:usage','admin:quality','admin:quality:sources:0','admin:quality:duplicates:0'])await analyticsPanel(bot,action,report);
     await banPanel(bot,'admin:bans:0');
+    await teamPanel(bot,'admin:team:0');await auditPanel(bot,'admin:audit:0');
+    for(const role of ['moderator','administrator'])await bot.panel(...staffHomeDocument(role));
     for(const active of [true,false])await bot.panel(banNoticeText({active,reason:'Проверка оформления служебного уведомления.',by:OWNER_ID}),[[{text:'Связаться с @AngryVirus',url:'https://t.me/AngryVirus'}]]);
     return {panels:panels.length,freshness_warning:Boolean(await freshness(store)),backup_verified:Boolean((await store.meta('last_backup'))?.verified_at)};
   }

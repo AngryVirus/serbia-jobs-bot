@@ -80,6 +80,20 @@ process.stdout.write(JSON.stringify(rows));
         saved=restored.execute("SELECT payload FROM sjc_records WHERE kind='user_ban'").fetchone()[0]
         self.assertEqual(json.loads(saved),payload)
 
+    def test_staff_roles_and_action_audit_survive_encrypted_recovery(self):
+        rows=json.loads(json.dumps(self.rows))
+        entries=[{'kind':'staff_role','record_key':'1','payload':json.dumps({'uid':1,'role':'moderator','version':'v1'})},
+                 {'kind':'staff_audit','record_key':'staff_role:1:v1','payload':json.dumps({'action':'grant_moderator','actor':{'id':340780041},'target':1,'at':'2026-10-18T00:00:00Z'})}]
+        rows['sjc_records'].extend(entries)
+        db=backup.build_database(rows)
+        encrypted=backup.crypt(gzip.compress(db.serialize()),'encrypt',self.env)
+        report=backup.restore_drill(encrypted,backup.digest(rows),self.env)
+        self.assertTrue(report['offline_bot'])
+        restored=sqlite3.connect(':memory:');restored.deserialize(gzip.decompress(backup.crypt(encrypted,'decrypt',self.env)))
+        for row in entries:
+            saved=restored.execute('SELECT payload FROM sjc_records WHERE kind=? AND record_key=?',(row['kind'],row['record_key'])).fetchone()[0]
+            self.assertEqual(json.loads(saved),json.loads(row['payload']))
+
     def test_wrong_key_and_modified_header_tag_or_ciphertext_are_rejected(self):
         encrypted = backup.crypt(b'private test payload', 'encrypt', self.env)
         other = dict(self.env, TGCLOUD_TOKEN='app8802394224:'+'other_synthetic_key_'*3)
