@@ -36,6 +36,7 @@ test('favorites remain personal across workers/restarts and leave filters and no
 });
 test('legacy saved IDs survive, unavailable favorites stay labelled and cannot bypass moderation',async()=>{
  const f=await fixture();await f.store.putJob(job(1),true);await f.store.importRows('favorites',[{user_id:1,job_id:1},{user_id:1,job_id:999}]);
+ await f.store.ensure(1,1);await f.store.patch(1,{hidden_jobs:[999]});await handle(f,callback(1,'library'));assert.match(last(f).reply_markup.inline_keyboard[1][0].text,/Скрытые · 1/);
  await f.store.record('moderation','1',{ids:[1],blocked:true});
  await handle(f,callback(1,'favorites:0'));assert.match(last(f).text,/недоступна/);
  await handle(f,callback(1,'favorites:show:1'));assert.match(last(f).text,/закрыто, снято/);assert(!last(f).reply_markup.inline_keyboard.flat().some(b=>b.url));

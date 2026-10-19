@@ -1,5 +1,5 @@
 import { defaults, hidden } from './filters.js';
-import { groupJobs, visibleJobs, includesId } from './catalog.js';
+import { groupJobs, visibleJobs, includesId, hiddenGroups } from './catalog.js';
 import { button, BACK, safe, card, jobButtons } from './ui.js';
 const HOME=[[button('📂 Мои вакансии','library')],...BACK];
 export async function hasFavorite(bot,job) {
@@ -11,7 +11,7 @@ export async function libraryRoute(bot,action) {
  const selected=groups.filter(g=>g.members.some(j=>saved.has(j.id)));
  const present=new Set(selected.flatMap(g=>g.members.map(j=>j.id)));
  const missing=[...saved].filter(id=>!present.has(id));
- if(action==='library')return bot.panel('<b>📂 Мои вакансии</b>\n\nИзбранные — объявления, к которым хотите вернуться. Скрытые — убранные из вашего поиска и уведомлений.',[[button(`⭐ Избранные · ${selected.length+missing.length}`,'favorites:0')],[button(`🙈 Скрытые · ${groups.filter(g=>g.members.some(j=>hidden(bot.s).has(j.id))).length}`,'hidden:0')],...BACK]);
+ if(action==='library')return bot.panel('<b>📂 Мои вакансии</b>\n\nИзбранные — объявления, к которым хотите вернуться. Скрытые — убранные из вашего поиска и уведомлений.',[[button(`⭐ Избранные · ${selected.length+missing.length}`,'favorites:0')],[button(`🙈 Скрытые · ${hiddenGroups(groups,bot.s).length}`,'hidden:0')],...BACK]);
  let m;
  if((m=/^favorite:(add|remove):([1-9]\d*)(?::([a-z0-9]{8}):(\d{1,7}):(s|f|rs|rf))?$/.exec(action))) {
   const id=Number(m[2]);if(!Number.isSafeInteger(id))return libraryRoute(bot,'library');
