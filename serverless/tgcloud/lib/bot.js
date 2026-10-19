@@ -3,6 +3,7 @@ import { accessRole,rank } from './permissions.js';
 import { banInput, inboundBanNotice, deliverBanNotice, moderatorSnapshot } from './bans.js';
 import { imagePanel, textPanel } from './image-panel.js';
 import { activity, usage, freshness } from './analytics.js';
+import { notificationState } from './notification-state.js';
 import { OPTIONS } from './config.js';
 import { settings, defaults, choose, hidden, validUrl } from './filters.js';
 import { groupJobs, visibleJobs, hiddenGroups, includesId, decorate } from './catalog.js';
@@ -40,7 +41,16 @@ export class Bot {
   }
   async showPlan(id,newOnly=false) {return openDiscovery(this,id,newOnly?'new':'all');}
   async notifications() {
-    await this.panel('<b>🔔 Уведомления текущего поиска</b>\n\nНовая вакансия по текущим фильтрам придёт после обнаружения. У сохранённых поисков свои переключатели: Фильтры → Мои поиски. Проверка источников запускается примерно каждые 30 минут; запуск может задержаться. Старый каталог при включении не рассылается. Одна вакансия не приходит повторно при совпадении нескольких поисков.', [[button(this.s.notifications === 'off' ? '🔔 Включить' : '🔕 Выключить', this.s.notifications === 'off' ? 'notify:instant' : 'notify:off')], ...BACK]);
+    const state=await notificationState(this.store,this.uid),on=this.s.notifications!=='off';
+    const text='<b>🔔 Уведомления</b>\n\nТекущий поиск: <b>'+(on?'включены':'выключены')+'</b>.'+
+      (state.saved_enabled?'\nСохранённых поисков с уведомлениями: '+state.saved_enabled+'.':'')+
+      (on||state.saved_enabled?'\nОжидают отправки: '+state.pending+'.':'')+
+      (state.cooldown_seconds?'\n⏳ Telegram ограничил отправку. Повторная попытка через '+Math.ceil(state.cooldown_seconds/60)+' мин.':'')+
+      (state.uninitialized_plans?'\nНовая подписка будет подготовлена при следующей фоновой проверке.':'')+
+      '\n\nНовые вакансии по условиям включённого поиска приходят после обнаружения. Старый каталог при включении не рассылается. Одна вакансия не приходит повторно при совпадении нескольких поисков.'+
+      '\n\nКнопка «С прошлого просмотра» в поиске показывает новые для просмотра вакансии, включая уже отправленные уведомлениями.'+
+      '\n\nПроверка источников запускается примерно каждые 30 минут; возможны задержки запуска. У сохранённых поисков свои переключатели: Фильтры → Мои поиски.';
+    await this.panel(text,[[button(on?'🔕 Выключить текущий поиск':'🔔 Включить текущий поиск',on?'notify:off':'notify:instant')],...(state.saved_enabled?[[button('📂 Мои поиски','plans')]]:[]),[button('🔄 Обновить состояние','notifications')],...BACK]);
   }
   async input(text) {
     const field = this.s.pending_input; let patch;

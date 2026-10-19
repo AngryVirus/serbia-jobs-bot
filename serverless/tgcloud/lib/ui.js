@@ -34,7 +34,7 @@ export function menu(s, hiddenCount = hidden(s).size) {
   const on = s.notifications !== 'off';
   const plans = Array.isArray(s.saved_searches) ? s.saved_searches.slice(0,3) : [], enabled = plans.filter(p => p?.notifications && p.notifications !== 'off').length;
   return ['<b>Работа в Сербии</b>\n\n<b>Условия поиска</b>\n<blockquote>' + summary(s, true) + '</blockquote>\n\n<b>Ваши настройки</b>\n' + (plans.length ? 'Уведомления текущего поиска: ' : 'Уведомления: ') + (on ? 'включены' : 'выключены') + (enabled ? `\nУведомления сохранённых поисков: ${enabled}` : '') + `\nСкрытые вакансии: ${hiddenCount}\n\n<i>Откройте вакансии или измените условия поиска.</i>`,
-    [[button('🔎 Найти вакансии', 'search:0')], [button('⚙️ Фильтры', 'filters'), button(on ? '🔔 Уведомления ✓' : '🔕 Уведомления —', on ? 'notify:off' : 'notify:instant')], [button('🙈 Скрытые', 'hidden:0'), button('💬 Помощь', 'help')]]];
+    [[button('🔎 Найти вакансии', 'search:0')], [button('⚙️ Фильтры', 'filters'), button(on ? '🔔 Уведомления ✓' : '🔕 Уведомления —', 'notifications')], [button('🙈 Скрытые', 'hidden:0'), button('💬 Помощь', 'help')]]];
 }
 export function filtersPanel(s) {
   return ['<b>Фильтры поиска</b>\n\n<blockquote>' + summary(s) + '</blockquote>\n\n<i>Условия разных параметров действуют одновременно. Выберите параметр ниже. Изменения сохраняются сразу.</i>',

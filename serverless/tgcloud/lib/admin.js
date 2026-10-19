@@ -10,6 +10,7 @@ import { Store, TABLES, assert, positive } from './store.js';
 import { settings, contains, belgradeDay, validUrl } from './filters.js';
 import { groupJobs, visibleJobs, hiddenGroups } from './catalog.js';
 import { notificationPlans, savedSearches } from './searches.js';
+import { notificationState } from './notification-state.js';
 import { SOURCE_NAMES } from './config.js';
 import { sourceEnabled } from './source-policy.js';
 import { adTick } from './ads.js';
@@ -160,6 +161,7 @@ export async function administer(input, ctx, deps) {
     await store.setMeta('last_backup',{verified_at:new Date().toISOString(),counts:input.counts});return {recorded:true};
   }
   if (op === 'status') return { active: Boolean(await store.meta('active')), ever_active: Boolean(await store.meta('ever_active')), counts: await store.stats(), migration: await store.meta('migration') };
+  if(op==='owner_notification_check')return notificationState(store,OWNER_ID);
   if (op === 'owner_report') {
     const report=await ownerReport(store), jobs=(await store.jobs()).filter(j=>j.source==='halooglasi'), groups=groupJobs(jobs);
     return {text:report.text,halo:{stored:jobs.length,available:visibleJobs(groups,settings()).length,owner_matching:visibleJobs(groups,settings((await store.user(OWNER_ID))?.settings)).length,status:report.sources.find(s=>s.id==='halooglasi')}};
