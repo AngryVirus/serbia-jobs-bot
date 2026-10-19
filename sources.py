@@ -903,6 +903,8 @@ def _collect_serbiahub(source, fetcher, *, include_expired=False, crawl_state=No
                     currency=str(node.get('salaryCurrency') or '').upper()
                     job.salary_currency=currency if currency in ('RSD','EUR','USD') else None
                     job.salary_period='month'
+                    if job.salary_min is not None and job.salary_currency is not None:
+                        job.salary_source='structured'
                 if node.get('salaryText'): job.salary_display=clean_text(node['salaryText'])[:150]
                 parsed_count += 1
                 if not include_expired and not active(job.__dict__):
