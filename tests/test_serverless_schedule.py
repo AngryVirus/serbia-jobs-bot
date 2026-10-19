@@ -1,8 +1,11 @@
 """Delayed cron slots still collect when due; ads remain explicitly confirmed work."""
 import contextlib
 import io
+import os
 from pathlib import Path
+import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -42,6 +45,45 @@ class ScheduledWorkerTests(unittest.TestCase):
         self.assertNotIn("github.event.schedule ==", text)
         deploy = text.split('            deploy)', 1)[1].split('              ;;', 1)[0]
         self.assertIn('python3 serverless/collect.py', deploy)
+
+    def release_trace(self, failed_script):
+        text = (Path(__file__).resolve().parents[1] / '.github/workflows/serverless.yml').read_text()
+        commands = text.split('            deploy)', 1)[1].split('              ;;', 1)[0]
+        # Run the actual release commands with a fake Python entrypoint, never
+        # invoking Cloud or delivering messages. GitHub run steps use bash -e.
+        stub = '''python3() {
+  printf '%s\\n' "$1" >> "$SJC_TEST_TRACE"
+  test "$1" != "$SJC_TEST_FAILURE"
+}
+'''
+        with tempfile.TemporaryDirectory() as temporary:
+            trace = Path(temporary) / 'trace'
+            result = subprocess.run(['bash', '-e', '-c', stub + commands],
+                                    env=dict(os.environ, SJC_TEST_TRACE=str(trace),
+                                             SJC_TEST_FAILURE=failed_script),
+                                    capture_output=True, text=True, timeout=10)
+            return result.returncode, trace.read_text().splitlines()
+
+    def test_screen_diagnostic_failure_does_not_prevent_collection(self):
+        for script in ('health_check.py', 'operations_check.py', 'menu_check.py', 'notification_check.py'):
+            with self.subTest(script=script):
+                code, trace = self.release_trace('serverless/' + script)
+                self.assertNotEqual(code, 0)
+                self.assertEqual(trace.count('serverless/collect.py'), 1)
+                self.assertLess(trace.index('serverless/collect.py'), trace.index('serverless/' + script))
+                self.assertNotIn('serverless/ads_worker.py', trace)
+
+    def test_unsafe_deploy_or_failed_fact_refresh_never_runs_collection(self):
+        for script in ('deploy.py', 'refresh_facts.py'):
+            with self.subTest(script=script):
+                code, trace = self.release_trace('serverless/' + script)
+                self.assertNotEqual(code, 0)
+                self.assertNotIn('serverless/collect.py', trace)
+
+    def test_collection_failure_still_fails_publication(self):
+        code, trace = self.release_trace('serverless/collect.py')
+        self.assertNotEqual(code, 0)
+        self.assertNotIn('serverless/operations_check.py', trace)
 
 
 if __name__ == '__main__': unittest.main()
