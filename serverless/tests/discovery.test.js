@@ -24,10 +24,10 @@ test('first search keeps the home unchanged and introduces new only after a prev
   assert(!JSON.stringify(menu(defaults())).includes('plans'));
   assert.equal(filtersPanel(defaults())[1].flat().filter(b=>b.callback_data==='plans').length,1);
   await openDiscovery(await context(f));
-  assert(!data(f,'Новое'));assert.equal((await f.store.user(1)).settings.last_viewed_id,1);
+  assert(!data(f,'С прошлого просмотра'));assert.equal((await f.store.user(1)).settings.last_viewed_id,1);
   await f.store.putJob(job(2),true);await openDiscovery(await context(f));
-  assert(data(f,'Новое'));assert.match(data(f,'Новое'),/^discover:/);
-  const next=data(f,'Новое');await click(f,next);
+  assert(data(f,'С прошлого просмотра'));assert.match(data(f,'С прошлого просмотра'),/^discover:/);
+  const next=data(f,'С прошлого просмотра');await click(f,next);
   assert.match(panel(f).text,/Новое с прошлого просмотра/);assert.match(panel(f).text,/1 из 1/);
   assert.equal((await f.store.user(1)).settings.last_viewed_id,2);
   await click(f,data(f,'Все подходящие'));assert.match(panel(f).text,/1 из 2/);
@@ -42,7 +42,7 @@ test('new excludes old reposts, hidden, expired, moderated and disabled-source j
   await f.store.putJob(job(5),true);await f.store.record('moderation','5',{blocked:true,ids:[5]});
   await f.store.putJob(job(6,{source:'telegram_python_jobs'}),true);
   await f.store.putJob(job(7,{title:'Новая работа поваром'}),true);await f.store.patch(1,{hidden_jobs:[3]});
-  await openDiscovery(await context(f));await click(f,data(f,'Новое'));
+  await openDiscovery(await context(f));await click(f,data(f,'С прошлого просмотра'));
   assert.match(panel(f).text,/Новая работа поваром/);assert.match(panel(f).text,/1 из 1/);
   // The snapshot does not pull new arrivals into an already-opened session.
   await f.store.putJob(job(8,{title:'Пришло позже'}),true);
@@ -52,10 +52,10 @@ test('new excludes old reposts, hidden, expired, moderated and disabled-source j
 
 test('opening an older snapshot cannot move the last-view marker backwards',async()=>{
   const f=await fixture();await f.store.putJob(job(1),true);await openDiscovery(await context(f));
-  await f.store.putJob(job(2),true);await openDiscovery(await context(f));const oldNew=data(f,'Новое');
+  await f.store.putJob(job(2),true);await openDiscovery(await context(f));const oldNew=data(f,'С прошлого просмотра');
   await f.store.putJob(job(3),true);await openDiscovery(await context(f));assert.equal((await f.store.user(1)).settings.last_viewed_id,3);
   await click(f,oldNew);assert.equal((await f.store.user(1)).settings.last_viewed_id,3);assert.match(panel(f).text,/1 из 1/);
-  await openDiscovery(await context(f));assert(!data(f,'Новое'));
+  await openDiscovery(await context(f));assert(!data(f,'С прошлого просмотра'));
 });
 
 test('saved searches have independent view markers and keep their scope through details, translation and hiding',async()=>{
@@ -65,7 +65,7 @@ test('saved searches have independent view markers and keep their scope through 
   await openDiscovery(await context(f),'chef');assert.match(panel(f).text,/Поиск: Кухня/);assert.match(panel(f).text,/1 из 1/);
   let saved=(await f.store.user(1)).settings.saved_searches;assert.equal(saved[0].last_viewed_id,2);assert.equal(saved[1].last_viewed_id,null);
   await f.store.putJob(job(3,{title:'Повар пиццерии'}),true);
-  await openDiscovery(await context(f),'chef');await click(f,data(f,'Новое'));
+  await openDiscovery(await context(f),'chef');await click(f,data(f,'С прошлого просмотра'));
   assert.match(panel(f).text,/Повар пиццерии/);await click(f,data(f,'Подробнее'));assert.match(panel(f).text,/Поиск: Кухня/);
   await click(f,data(f,'Ещё'));const translation=data(f,'Перевести');assert(translation.startsWith('discover:'));
   await click(f,translation);assert.match(panel(f).text,/Перевод сейчас недоступен/);assert.match(panel(f).text,/Поиск: Кухня/);
@@ -110,7 +110,7 @@ test('committed search and hide render correctly after a failed response without
   await assert.rejects(openDiscovery(bot),e=>e.code===429);
   const committed=await f.store.user(1);assert.equal(committed.settings.last_viewed_id,2);
   const count=committed.settings.discovery_sessions.length;f.api.editMessageText=edit;
-  await replayDiscovery(await context(f));assert(data(f,'Новое'));assert.equal((await f.store.user(1)).settings.discovery_sessions.length,count);
+  await replayDiscovery(await context(f));assert(data(f,'С прошлого просмотра'));assert.equal((await f.store.user(1)).settings.discovery_sessions.length,count);
   const token=await current(f);f.api.editMessageText=async()=>{throw {code:429};};
   await assert.rejects(click(f,`discover:${token}:2:0:hide:s`),e=>e.code===429);
   assert.deepEqual((await f.store.user(1)).settings.hidden_jobs,[2]);f.api.editMessageText=edit;

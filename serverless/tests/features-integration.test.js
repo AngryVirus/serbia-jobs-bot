@@ -22,10 +22,10 @@ test('ordinary entry stays simple and saving a named search survives a failed re
 test('saved result news and complaint navigation keep the saved scope independently from current filters',async()=>{
  const f=await fixture();await handle(f,message(1,'/start'));await f.store.putJob(job(1,{title:'Повар'}),true);await f.store.putJob(job(2,{title:'Водитель',description:'Нужен водитель для доставки'}),true);
  await f.store.patch(1,{keywords:['повар']});const plan=await save(f,'Кухня');await f.store.patch(1,{keywords:['водитель']});
- await handle(f,callback(1,`plans:open:${plan.id}`));assert.match(panel(f).text,/Поиск: Кухня/);assert(!buttons(f).some(b=>b.text.includes('Новое')));
+ await handle(f,callback(1,`plans:open:${plan.id}`));assert.match(panel(f).text,/Поиск: Кухня/);assert(!buttons(f).some(b=>b.text.includes('С прошлого просмотра')));
  await handle(f,callback(1,'search:0'));assert.match(panel(f).text,/Водитель/);
  await f.store.putJob(job(3,{title:'Повар новой кухни'}),true);await f.store.putJob(job(4,{title:'Водитель новой смены',description:'Нужен водитель для доставки'}),true);
- await handle(f,callback(1,`plans:open:${plan.id}`));await handle(f,callback(1,action(f,'Новое')));assert.match(panel(f).text,/Повар новой кухни/);assert.match(panel(f).text,/Новое с прошлого просмотра/);
+ await handle(f,callback(1,`plans:open:${plan.id}`));await handle(f,callback(1,action(f,'С прошлого просмотра')));assert.match(panel(f).text,/Повар новой кухни/);assert.match(panel(f).text,/Новое с прошлого просмотра/);
  await handle(f,callback(1,action(f,'Ещё')));const report=action(f,'Пожаловаться');assert.match(report,/:s:[a-z0-9]{8}$/);
  const token=report.split(':').at(-1);await handle(f,callback(1,report));assert(buttons(f).some(b=>b.callback_data.startsWith(`discover:${token}:`)));
  await handle(f,callback(1,buttons(f).find(b=>b.callback_data.includes(':outdated:')).callback_data));

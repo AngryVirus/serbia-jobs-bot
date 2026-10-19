@@ -87,7 +87,7 @@ function rowsFor(session, job, index, count, mode, failed, newCount, s) {
   if(index)nav.push(b('⬅️','prev'));
   if(index+1<count)nav.push(b('➡️','next'));
   if(nav.length)rows.push(nav);
-  if(session.kind === 'all' && newCount)rows.push([b(`🆕 Новое · ${newCount}`,'new')]);
+  if(session.kind === 'all' && newCount)rows.push([b(`🆕 С прошлого просмотра · ${newCount}`,'new')]);
   if(session.kind === 'new')rows.push([b('🔎 Все подходящие','all')]);
   if(session.kind === 'similar') {
     const parent = session.parent && lookup(s,session.parent);

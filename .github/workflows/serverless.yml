@@ -82,7 +82,9 @@ jobs:
               python3 serverless/health_check.py
               python3 serverless/operations_check.py
               python3 serverless/menu_check.py
+              python3 serverless/notification_check.py
               python3 serverless/collect.py
+              python3 serverless/notification_check.py
               ;;
             scheduled) python3 serverless/scheduled.py ;;
             collect)
