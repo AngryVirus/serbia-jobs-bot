@@ -157,8 +157,9 @@ export class Bot {
     if(action==='ads'||action.startsWith('ads:')) return adRoute(this,action);
     if(/^plans(?::|$)/.test(action))return searchRoute(this,action);
     if(action==='search:0') {
+      const result=await openDiscovery(this);
       try {await requestCollectionWake(this.store,this.fetch);}catch {/* Search remains available during dispatcher or storage failures. */}
-      return openDiscovery(this);
+      return result;
     }
     if(action==='library'||/^(favorite|favorites):/.test(action))return libraryRoute(this,action);
     if(/^(discover:|similar:|risk:)/.test(action))return discoveryRoute(this,action);
