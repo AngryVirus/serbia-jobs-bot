@@ -1,6 +1,6 @@
 import { defaults, hidden } from './filters.js';
 import { groupJobs, visibleJobs, includesId, hiddenGroups } from './catalog.js';
-import { button, BACK, safe, card, jobButtons } from './ui.js';
+import { button, BACK, safe, clip, card, jobButtons } from './ui.js';
 const HOME=[[button('📂 Мои вакансии','library')],...BACK];
 export async function hasFavorite(bot,job) {
  const ids=new Set(await bot.store.favoriteIds(bot.uid));
@@ -37,7 +37,7 @@ export async function libraryRoute(bot,action) {
   const page=Math.min(Number(m[1]),Math.max(0,Math.ceil(entries.length/5)-1)),slice=entries.slice(page*5,page*5+5),rows=[];
   const lines=['<b>⭐ Избранные вакансии</b>','Сохранённые объявления доступны здесь независимо от выбранных фильтров.'];
   if(!entries.length)lines.push('Пока пусто. В карточке вакансии откройте «Ещё» → «В избранное».');
-  for(const [i,e] of slice.entries()){const j=available.find(j=>j._duplicate_ids.includes(e.id));lines.push(`${page*5+i+1}. ${safe(e.title,130)}${j?'':' · недоступна'}`);rows.push([button(`📄 ${page*5+i+1}. ${String(e.title).slice(0,40)}`,`favorites:show:${e.id}`)]);}
+  for(const [i,e] of slice.entries()){const j=available.find(j=>j._duplicate_ids.includes(e.id));lines.push(`${page*5+i+1}. ${safe(e.title,130)}${j?'':' · недоступна'}`);rows.push([button(`📄 ${page*5+i+1}. ${clip(e.title,40)}`,`favorites:show:${e.id}`)]);}
   const nav=[];if(page)nav.push(button('⬅️',`favorites:${page-1}`));if((page+1)*5<entries.length)nav.push(button('➡️',`favorites:${page+1}`));
   return bot.panel(lines.join('\n\n'),[...rows,...(nav.length?[nav]:[]),...HOME]);
  }
