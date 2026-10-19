@@ -38,9 +38,10 @@ test('freshness appears on search only when stale and clears after collection',a
  const f=await fixture();await f.store.putJob(job(1),true);
  await handle(f,callback(1,'search:0'));assert.match(f.api.edited.at(-1).text,/Свежесть базы пока не подтверждена/);
  await f.store.setMeta('last_successful_collection',new Date(Date.now()-3*3600000).toISOString());
- await handle(f,callback(1,'search:0'));assert.match(f.api.edited.at(-1).text,/3 ч назад/);
+ await handle(f,callback(1,'search:0'));assert.match(f.api.edited.at(-1).text,/Последнее обновление — 3 ч назад/);assert(!f.api.edited.at(-1).text.includes('⚠️'));
+ assert.match(await freshness(f.store,Date.now()+22*3600000),/⚠️ База давно не обновлялась/);
  await f.store.setMeta('last_successful_collection',new Date().toISOString());
- assert.equal(await freshness(f.store),'');await handle(f,callback(1,'search:0'));assert(!f.api.edited.at(-1).text.includes('Последний успешный сбор'));
+ assert.equal(await freshness(f.store),'');await handle(f,callback(1,'search:0'));assert(!f.api.edited.at(-1).text.includes('Последнее обновление'));
  const totals=(await f.store.records('usage'))[0];assert.equal(totals.searches,3);assert.equal(totals.empty,undefined);
  await f.store.patch(1,{keywords:['no match']});await handle(f,callback(1,'search:0'));
  assert.equal((await f.store.records('usage'))[0].empty,1);

@@ -12,6 +12,7 @@ import { groupJobs, visibleJobs, hiddenGroups } from './catalog.js';
 import { notificationPlans, savedSearches } from './searches.js';
 import { notificationState } from './notification-state.js';
 import { notifySourceIdeas } from './source-ideas.js';
+import { configureWake,wakeStatus } from './collection-wake.js';
 import { libraryRoute } from './library.js';
 import { SOURCE_NAMES } from './config.js';
 import { sourceEnabled } from './source-policy.js';
@@ -263,6 +264,8 @@ export async function administer(input, ctx, deps) {
     await deps.api.sendMessage({ chat_id: 340780041, text: '<i>Проверка переноса в Telegram Serverless</i>\n\n'+text, parse_mode: 'HTML', reply_markup: { inline_keyboard: rows } });
     return { sent: 1 };
   }
+  if(op==='collection_wake_configure')return configureWake(store,input);
+  if(op==='collection_wake_status')return wakeStatus(store);
   if(op==='collection_due') {
     const active=Boolean(await store.meta('active')),last=await successfulCollection(store),run=await store.meta('collection_run');
     const lease=await store.db.get("SELECT owner,expires FROM sjc_locks WHERE key='collection'");

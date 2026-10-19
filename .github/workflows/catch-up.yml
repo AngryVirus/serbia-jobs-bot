@@ -1,5 +1,6 @@
 name: Catch up overdue collection
 on:
+  workflow_dispatch:
   workflow_run:
     workflows: [Independent bot watchdog]
     types: [completed]
@@ -13,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   catch_up:
-    if: github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch') && github.event.workflow_run.head_sha == github.sha
+    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch') && github.event.workflow_run.head_sha == github.sha)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:

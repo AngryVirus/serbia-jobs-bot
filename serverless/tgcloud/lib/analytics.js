@@ -60,7 +60,8 @@ export async function freshness(store,now=Date.now()) {
  if(!Number.isFinite(stamp))return '<i>⚠️ Свежесть базы пока не подтверждена. Проверяйте актуальность у работодателя.</i>\n\n';
  if(age<=7200000)return '';
  const hours=Math.floor(age/3600000),when=hours<24?`${hours} ч назад`:`${Math.floor(hours/24)} дн назад`;
- return `<i>⚠️ Последний успешный сбор — ${when}. Новые вакансии могут отсутствовать, а часть объявлений — устареть.</i>\n\n`;
+ if(hours<24)return `<i>🕒 Последнее обновление — ${when}.</i>\n\n`;
+ return `<i>⚠️ База давно не обновлялась — ${when}. Проверяйте актуальность вакансии у работодателя.</i>\n\n`;
 }
 // Availability and coverage are independent: a bounded, successful page can
 // leave a backlog without representing an outage. Partial failures stay bad
