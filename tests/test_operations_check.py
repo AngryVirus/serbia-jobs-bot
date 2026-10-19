@@ -33,7 +33,7 @@ class OperationsChecks(unittest.TestCase):
 
     def test_unexpected_error_details_are_not_printed(self):
         output=io.StringIO()
-        with patch.object(operations_check,'invoke',return_value={'failed':True,'reason':'private detail','secret':'private detail','panels':'private detail'}), contextlib.redirect_stdout(output):
+        with patch.object(operations_check,'invoke',return_value={'failed':True,'reason':'private detail','unexpected_field':'private detail','panels':'private detail'}), contextlib.redirect_stdout(output):
             with self.assertRaisesRegex(RuntimeError,'unconfirmed'):operations_check.main()
         self.assertNotIn('private detail',output.getvalue())
 
