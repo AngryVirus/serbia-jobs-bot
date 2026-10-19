@@ -38,8 +38,16 @@ export async function requestCollectionWake(store,fetch,{manual=false,now=Date.n
   // immediately retried by another update or after a runtime restart.
   const wait=await store.rate('collection:wake:cooldown',1,900,now);
   if(wait)return {status:'waiting',wait};
-  const daily=await store.rate('collection:wake:daily',12,86400,now);
-  if(daily)return {status:'daily_limit',wait:daily};
+  const cutoff=now-86400000;
+  await store.db.run("DELETE FROM sjc_records WHERE kind='collection_wake_attempt' AND json_extract(payload,'$.at')<=:cutoff",{':cutoff':cutoff});
+  const daily=await store.db.run(`INSERT INTO sjc_records(kind,record_key,payload)
+    SELECT 'collection_wake_attempt',:key,json_object('at',:now)
+    WHERE (SELECT COUNT(*) FROM sjc_records WHERE kind='collection_wake_attempt' AND json_extract(payload,'$.at')>:cutoff)<12
+    ON CONFLICT(kind,record_key) DO NOTHING`,{':key':String(now),':now':now,':cutoff':cutoff});
+  if(daily.rowsAffected!==1) {
+    const first=await store.db.get("SELECT MIN(json_extract(payload,'$.at')) AS at FROM sjc_records WHERE kind='collection_wake_attempt' AND json_extract(payload,'$.at')>:cutoff",{':cutoff':cutoff});
+    return {status:'daily_limit',wait:Math.max(1,Math.ceil(((first?.at||now)+86400000-now)/1000))};
+  }
   const current=await store.meta(CONFIG);
   if(current?.enabled!==true||current.credential!==config.credential)return {status:'disabled'};
   await store.setMeta(STATE,{status:'unconfirmed',at:now});
