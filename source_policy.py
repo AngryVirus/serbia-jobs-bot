@@ -1,6 +1,5 @@
 """Reviewed collection policy; the full registry remains for historical records."""
-import re
-import unicodedata
+from serbian_geography import has_serbian_location
 from channel_catalog import CHANNELS
 
 # GitHub collector, 2026-10-17: blocked, unreachable, or permission required.
@@ -9,13 +8,7 @@ UNAVAILABLE_CHANNELS = {'telegram_serbia_jobs'}  # No readable public history.
 
 
 def serbian_channel_title(title):
-    text = ''.join(c for c in unicodedata.normalize('NFKD', title.casefold())
-                   if not unicodedata.combining(c))
-    return bool(re.search(
-        r'\b(?:серби[яиюи]|србија|србији|serbia|serbii|srbija|srbiji|'
-        r'белград[аеу]?|београд[ау]?|belgrade|beograd|'
-        r'нови[ -]сад(?:е|у)?|novi[ -]sad|ниш|nis|суботица|subotica|'
-        r'крагуевац|крагујевац|kragujevac)\b', text))
+    return has_serbian_location(title)
 
 
 ACTIVE_TELEGRAM = {'tg_rabotavserbii', 'tg_radim_serbia'} | {

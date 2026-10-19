@@ -144,7 +144,7 @@ test('collection report records completion, counts, sources and uncertain delive
   const failedSource=report.issues.findIndex(s=>s.id==='telegram_youritjob'&&s.state==='error');
   assert(!report.sources.some(s=>s.id==='halooglasi'||s.id==='telegram_python_jobs'));
   assert(failedSource>=0);
-  await handle(f,callback(OWNER_ID,`admin:sources:${Math.floor(failedSource/6)}`));
+  await handle(f,callback(OWNER_ID,`admin:sources:${Math.floor(failedSource/4)}`));
   assert(f.api.edited.at(-1).text.includes('Telegram · IT Работа: Сербия и удалёнка — ошибка.'));
   assert(!report.text.includes(String(OWNER_ID)));
   await assert.rejects(administer({operation:'collection_end',owner:'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'},{ownerRun:true},f),/owner mismatch/);

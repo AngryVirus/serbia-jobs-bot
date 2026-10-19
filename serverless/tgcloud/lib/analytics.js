@@ -56,10 +56,16 @@ export async function freshness(store,now=Date.now()) {
  const hours=Math.floor(age/3600000),when=hours<24?`${hours} ч назад`:`${Math.floor(hours/24)} дн назад`;
  return `<i>⚠️ Последний успешный сбор — ${when}. Новые вакансии могут отсутствовать, а часть объявлений — устареть.</i>\n\n`;
 }
+// Availability and coverage are independent: a bounded, successful page can
+// leave a backlog without representing an outage. Partial failures stay bad
+// unless the collector explicitly confirms the source was error-free.
+export function sourceHealthy(status={}) {
+ return status.healthy!==false&&(['ok','empty'].includes(status.state)||status.state==='partial'&&status.healthy===true);
+}
 export async function sourceHistory(store,owner,started,now=Date.now()) {
  for(const row of await store.records('source_status')) {
   if(!Object.hasOwn(SOURCE_NAMES,row.source) || !sourceEnabled(row.source) || !(Date.parse(row.payload?.checked_at)>=Date.parse(started)))continue;
-  const healthy=['ok','empty'].includes(row.payload.state);
+  const healthy=sourceHealthy(row.payload);
   await store.db.run(`INSERT INTO sjc_records(kind,record_key,payload) VALUES('source_health',:source,json_object('checks',1,'failures',:bad,'streak',:bad,'last_run',:owner,'last_ok',:ok,'state',:state))
    ON CONFLICT(kind,record_key) DO UPDATE SET payload=json_object('checks',json_extract(payload,'$.checks')+1,'failures',json_extract(payload,'$.failures')+:bad,'streak',CASE WHEN :bad=0 THEN 0 ELSE json_extract(payload,'$.streak')+1 END,'last_run',:owner,'last_ok',CASE WHEN :bad=0 THEN :ok ELSE json_extract(payload,'$.last_ok') END,'state',:state)
    WHERE json_extract(payload,'$.last_run')!=:owner`,{':source':row.source,':bad':healthy?0:1,':owner':owner,':ok':healthy?new Date(now).toISOString():null,':state':row.payload.state});
@@ -88,6 +94,19 @@ export function qualitySummary(jobs,groups=groupJobs(jobs),now=Date.now()) {
  const candidates=[...buckets.values()].filter(v=>v.length>1).slice(0,50);
  return {total:jobs.length,groups:groups.length,visible:available.size,merged:jobs.length-groups.length,expired:jobs.filter(expired).length,old:jobs.filter(old).length,undated:jobs.filter(j=>j._cloud?.published_ms==null).length,reasons,sources,candidates};
 }
+// Aggregate source counters are owner-only diagnostics, never user-menu filters.
+export function collectionMetrics(status={}) {
+ const n=value=>Number.isSafeInteger(value)&&value>=0&&value<=1000000000?value:null;
+ const metrics=['discovered','inspected','parsed_count','skipped_known','backlog','listing_pages'];
+ if(!metrics.some(key=>n(status[key])!==null)&&!status.truncated)return '';
+ const count=key=>n(status[key])??'—',parts=[`Обнаружено: ${count('discovered')} · проверено: ${count('inspected')} · разобрано: ${count('parsed_count')}`];
+ const labels={not_job:'не вакансия',not_serbia:'не Сербия',outside_serbia:'не Сербия',foreign:'другая страна',unrecognized:'не распознано',unrecognized_or_non_serbian:'не распознано / не Сербия',outdated:'устарело',missing:'недостаточно данных',seeker:'поиск работы',services:'услуги',digest:'подборка',promotion:'реклама',geography:'география',expired:'истёк срок',closed:'закрыто',quality:'качество',parse_error:'ошибка разбора',fetch_error:'ошибка загрузки',empty:'пустой текст',duplicate:'повтор',invalid:'некорректно',missing_title:'нет должности',missing_description:'нет описания',missing_url:'нет ссылки',unknown:'прочее'};
+ const rejected=status.rejected&&typeof status.rejected==='object'&&!Array.isArray(status.rejected)?Object.entries(status.rejected).filter(([key,value])=>/^[a-z_]{1,40}$/.test(key)&&n(value)!==null&&value>0):[];
+ if(rejected.length)parts.push('Отклонено: '+rejected.slice(0,4).map(([key,value])=>`${safe(labels[key]||'прочее',40)} ${value}`).join(' · ')+(rejected.length>4?' · …':''));
+ parts.push(`Известных пропущено: ${count('skipped_known')} · страниц: ${count('listing_pages')}`);
+ parts.push(`В очереди: ${count('backlog')}${status.truncated||n(status.backlog)>0?' · обход продолжится':''}`);
+ return parts.join('\n');
+}
 export async function analyticsPanel(bot,action,data) {
  if(action==='admin:stats') {
   const banned=(await bot.store.db.get("SELECT COUNT(*) AS n FROM sjc_records WHERE kind='user_ban' AND COALESCE(json_extract(payload,'$.active'),1)!=0")).n;
@@ -115,9 +134,10 @@ export async function analyticsPanel(bot,action,data) {
  let m;if((m=/^admin:quality:sources:(\d+)$/.exec(action))) {
   const page=Math.min(Number(m[1]),Math.max(0,Math.ceil(q.sources.length/4)-1));
   const history=Object.fromEntries((await bot.store.db.all("SELECT record_key,payload FROM sjc_records WHERE kind='source_health'")).map(r=>[r.record_key,JSON.parse(r.payload)]));
-  const text=q.sources.slice(page*4,page*4+4).map(s=>{const h=history[s.source];return `<b>${safe(SOURCE_NAMES[s.source],70)}</b>\nВ выдаче: ${s.visible} · только здесь: ${s.exclusive}\nЗаписей: ${s.stored} · копий внутри источника: ${s.duplicates}\nЗакрытых / просроченных: ${s.expired}\nСбоев: ${h?.failures??0}/${h?.checks??0} · подряд: ${h?.streak??0}`;}).join('\n\n');
+  const statuses=new Map((await bot.store.records('source_status')).map(s=>[s.source,s.payload]));
+  const text=q.sources.slice(page*4,page*4+4).map(s=>{const h=history[s.source],status=statuses.get(s.source),metrics=collectionMetrics(status);return `<b>${safe(SOURCE_NAMES[s.source],70)}</b>\nДоступ: ${sourceHealthy(status)?'работает':'требует внимания'}${status?.truncated?' · обход не завершён':''}\nВ выдаче: ${s.visible} · только здесь: ${s.exclusive}\nЗаписей: ${s.stored} · копий внутри источника: ${s.duplicates}\nЗакрытых / просроченных: ${s.expired}\nСбоев: ${h?.failures??0}/${h?.checks??0} · подряд: ${h?.streak??0}${metrics?'\n'+metrics:''}`;}).join('\n\n');
   const nav=[];if(page)nav.push(button('⬅️',`admin:quality:sources:${page-1}`));if((page+1)*4<q.sources.length)nav.push(button('➡️',`admin:quality:sources:${page+1}`));
-  return bot.panel('<b>📡 Польза и стабильность источников</b>\n\n'+text,[...(nav.length?[nav]:[]),...BACK]);
+  return bot.panel('<b>📡 Польза и стабильность источников</b>\n<i>Успешный ответ источника не означает полный обход каталога. Счётчики — за последнюю проверку.</i>\n\n'+text,[...(nav.length?[nav]:[]),...BACK]);
  }
  if((m=/^admin:quality:duplicates:(\d+)$/.exec(action))) {
   const page=Math.min(Number(m[1]),Math.max(0,q.candidates.length-1)),v=q.candidates[page];

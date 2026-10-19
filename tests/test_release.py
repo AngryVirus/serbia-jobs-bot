@@ -38,6 +38,8 @@ class SourceReleaseTests(unittest.TestCase):
                 self.assertTrue(release.REQUIRED <= names)
                 current_modules = {p.relative_to(ROOT).as_posix() for p in (ROOT / 'serverless/tgcloud').rglob('*.js')}
                 self.assertTrue(current_modules <= names)
+                fixtures = {p.relative_to(ROOT).as_posix() for p in (ROOT / 'tests/fixtures').rglob('*') if p.is_file()}
+                self.assertTrue(fixtures <= names)
                 self.assertNotIn('.github/workflows/collect.yml', names)
                 archive.extractall(temporary / 'unpacked')
             unpacked = temporary / 'unpacked/serbia-jobs-bot'
@@ -64,6 +66,7 @@ if(!(await f.store.user(12345)))throw new Error('Profile was not saved');
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             permitted = ['bot.py', '.env.example', 'serverless/new_worker.py',
+                         'tests/fixtures/example.html', 'tests/fixtures/sitemap.xml',
                          'serverless/tgcloud/lib/new-feature.js', 'tools/licenses/new.txt']
             forbidden = ['.env', 'serverless/.env.local', 'serverless/private/secret.py',
                          'serverless/node_modules/example/index.js', 'work/scratch.py',

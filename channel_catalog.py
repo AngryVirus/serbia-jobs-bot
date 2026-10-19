@@ -7,6 +7,9 @@ Private invite links, bots, and country-specific channels outside Serbia omitted
 CHANNELS = {
     'serbia_jobs': 'Serbia IT Jobs',
     'youritjob': 'IT Работа: Сербия и удалёнка',
+    'serbiawork': 'Работа в Сербии | Вакансии',
+    'serbia_vacancies': 'Поиск: Работа в Сербии',
+    'serbiarabotavacancies': 'Работа в Сербии для хороших людей',
     'jobstobefound': 'Jobs To Be Found',
     'product_jobs': 'Products Jobs',
     'projects_jobs': 'Projects Jobs',

@@ -105,8 +105,9 @@ test('emergency during campaign creation also cancels the launch before its firs
 });
 
 test('only a completed collection with a healthy source advances the success heartbeat',async()=>{
- const f=await fixture(),owner='00000000-0000-0000-0000-000000000001';
+ const f=await fixture();let run=0;
  for(const [failed,healthy] of [[true,1],[false,0],[false,1]]) {
+  const owner='00000000-0000-0000-0000-'+String(++run).padStart(12,'0');
   await administer({operation:'collection_begin',owner},{ownerRun:true},f);
   await administer({operation:'collection_end',owner,failed,totals:{sources:1,healthy_sources:healthy}},{ownerRun:true},f);
   assert.equal(Boolean(await f.store.meta('last_successful_collection')),!failed && healthy>0);

@@ -3,6 +3,7 @@
 No Telegram account, Bot API history access, private channels or media downloads.
 Only observed single-vacancy templates are accepted; unknown posts stay out.
 """
+from datetime import datetime, timedelta, timezone
 from html import unescape
 from html.parser import HTMLParser
 import re
@@ -14,6 +15,7 @@ from location_links import google_maps_url
 from sources import FetchError, Job, PageParser, _status, canonical_url
 from job_quality import quality_reason
 from source_policy import validate_channel_page
+from telegram_sources import MAX_HISTORY_DAYS, MAX_POSTS, PostHistory, _preview_url
 
 
 VOID = {'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'}
@@ -171,25 +173,19 @@ def _job(source, post):
     return job
 
 
-def _preview_url(source, value):
-    try:
-        parts = urlsplit(value)
-        params = parse_qsl(parts.query, keep_blank_values=True)
-        valid = (parts.scheme == 'https' and parts.hostname == 't.me' and not parts.username
-                 and parts.port in (None, 443) and parts.path == '/s/' + source.telegram_channel
-                 and not parts.fragment and (not params or
-                 len(params) == 1 and params[0][0] == 'before' and re.fullmatch(r'[1-9]\d*', params[0][1])))
-        return value if valid else ''
-    except ValueError:
-        return ''
-
-
-def collect_telegram(source, fetcher, *, include_expired=False):
+def collect_telegram(source, fetcher, *, include_expired=False, crawl_state=None, page_limit=2):
     jobs, seen_posts, seen_pages = {}, set(), set()
-    withdrawn = []
+    withdrawn, rejected = [], {}
+    history = PostHistory(source, crawl_state)
     url = source.listing_url
+    skipped = parsed = 0
+    limit = max(1, min(int(page_limit), 4))
+    # Production imports expired records to correct existing jobs; it must
+    # still stop the durable initial traversal at the advertised age bound.
+    bounded_history = crawl_state is not None or not include_expired
+    truncated, state, detail = False, None, None
     try:
-        while url and len(seen_pages) < 2 and url not in seen_pages:
+        while url and len(seen_pages) < limit and url not in seen_pages:
             if not _preview_url(source, url):
                 raise FetchError('unsupported', 'Неподдерживаемая ссылка публичной ленты Telegram.')
             html, final_url = fetcher.get(url)
@@ -202,24 +198,51 @@ def collect_telegram(source, fetcher, *, include_expired=False):
             page.feed(html)
             page.close()
             if not page.posts:
+                if seen_posts:
+                    history.next_page(None, head=False, overlap=False)
+                    break
                 raise FetchError('unsupported', 'Посты публичного канала не доступны или изменилась разметка.')
+            overlap = any(history.known(post_id.split('/')[1]) for post_id in page.posts)
+            dated = [parse_datetime(post.get('date')) for post in page.posts.values()]
+            cutoff = datetime.now(timezone.utc) - timedelta(days=MAX_HISTORY_DAYS)
+            stale = bool(bounded_history and dated and all(stamp and stamp < cutoff for stamp in dated))
             for post_id, post in page.posts.items():
                 if post_id in seen_posts:
                     continue
+                if len(seen_posts) >= MAX_POSTS:
+                    truncated = True
+                    break
                 seen_posts.add(post_id)
-                if post.get('body') and quality_reason('\n'.join(post['body'].lines)) == 'closed':
+                number = post_id.split('/')[1]
+                if len(seen_pages) > 1 and not history.due(number):
+                    skipped += 1
+                    continue
+                reason = quality_reason('\n'.join(post['body'].lines)) if post.get('body') else 'unrecognized'
+                if reason == 'closed':
                     withdrawn.append('https://t.me/' + post_id)
                 job = _job(source, post)
-                if job and (include_expired or active(job.__dict__)) and serbia_eligible(job.__dict__):
+                history.mark(number)
+                recent = not (bounded_history and (stamp := parse_datetime(post.get('date'))) and stamp < cutoff)
+                if job and recent and (include_expired or active(job.__dict__)) and serbia_eligible(job.__dict__):
                     jobs[job.url] = job
+                    parsed += 1
+                else:
+                    key = reason or ('outdated' if not recent else 'unrecognized_or_non_serbian')
+                    rejected[key] = rejected.get(key, 0) + 1
             oldest = min(int(post.split('/')[1]) for post in page.posts)
-            url = next((candidate for href in page.older
+            older = next((candidate for href in page.older
                         if (candidate := _preview_url(source, urljoin(final_url, href)))
                         and (params := dict(parse_qsl(urlsplit(candidate).query)))
                         and int(params.get('before', '0')) <= oldest), None)
+            url = history.next_page(older, head=len(seen_pages) == 1, overlap=overlap, stale=stale)
+            if len(seen_posts) >= MAX_POSTS:
+                truncated = truncated or bool(url)
+                break
+        truncated = truncated or bool(url and len(seen_pages) >= limit)
     except FetchError as exc:
-        return list(jobs.values()), _status(source, 'partial' if jobs else exc.state,
-                                           len(jobs), exc.detail, listing_pages=len(seen_pages), inspected=len(seen_posts), withdrawn_urls=withdrawn)
-    return list(jobs.values()), _status(source, 'ok' if jobs else 'empty', len(jobs),
-        'Публичная Telegram-лента: до двух страниц. Только распознанные вакансии; реклама и подборки исключаются.',
-        listing_pages=len(seen_pages), inspected=len(seen_posts), withdrawn_urls=withdrawn)
+        state, detail = ('partial' if jobs else exc.state), exc.detail
+    return list(jobs.values()), _status(source, state or ('ok' if jobs or skipped else 'empty'), len(jobs),
+        detail or 'Публичная Telegram-лента: новые посты и ограниченный обход истории до 90 дней. Только распознанные вакансии; реклама и подборки исключаются.',
+        discovered=len(seen_posts), inspected=len(seen_posts) - skipped, parsed_count=parsed,
+        rejected=rejected, skipped_known=skipped, listing_pages=len(seen_pages), truncated=truncated,
+        withdrawn_urls=withdrawn, **history.metrics())
