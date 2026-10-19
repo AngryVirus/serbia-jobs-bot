@@ -9,7 +9,8 @@ import time
 import math
 from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parent
-HEAVY_WORKFLOWS = {'.github/workflows/serverless.yml', '.github/workflows/backup.yml'}
+HEAVY_WORKFLOWS = {'.github/workflows/serverless.yml', '.github/workflows/backup.yml',
+                   '.github/workflows/catch-up.yml'}
 
 
 class CloudRequestError(RuntimeError):

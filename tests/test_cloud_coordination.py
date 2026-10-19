@@ -36,6 +36,15 @@ class CoordinationTests(unittest.TestCase):
             cloud.management_turn(dict(self.env,CLOUD_MANAGEMENT_PRIORITY='watchdog'))
         reads.assert_not_called()
 
+    def test_catch_up_uses_ordinary_run_order_without_watchdog_priority(self):
+        earlier = {'id': 100, 'path': '.github/workflows/catch-up.yml'}
+        safe = [{'id': 200, 'path': '.github/workflows/catch-up.yml'},
+                {'id': 300, 'path': '.github/workflows/catch-up.yml'}]
+        with patch.object(cloud, 'running_workflows', side_effect=[[earlier, *safe], safe]), \
+             patch.object(cloud.time, 'sleep') as sleep, contextlib.redirect_stderr(io.StringIO()):
+            cloud.management_turn(self.env)
+        sleep.assert_called_once_with(15)
+
     def test_gate_has_finite_budget_and_never_contacts_cloud_while_waiting(self):
         earlier={'id':100,'path':'.github/workflows/serverless.yml'}
         with patch.object(cloud,'environment',return_value=self.env),patch.object(cloud,'running_workflows',return_value=[earlier]),patch.object(cloud.time,'monotonic',side_effect=[0,601]),patch.object(cloud.subprocess,'run') as runner:

@@ -63,6 +63,7 @@ def serbian_cities(text):
 
     Nis and Bor need capitalisation or a location label: Russian «ниша рынка»
     and generic lower-case words must not turn a foreign/remote ad Serbian.
+    Unaccented Raci needs location context to distinguish it from business RACI.
     """
     value = _normalize(text)
     found = []
@@ -75,6 +76,11 @@ def serbian_cities(text):
                 r'(?<!\w)(?:Bor|BOR|Бор(?:е|у)?)(?!\w)|'
                 r'(?i:(?:location|lokacija|локация|город|г\.|📍)\s*:?\s*(?:bor|бор)(?!\w))', str(text)):
             continue
+        if city == 'Raca' and not re.search(
+                r'(?i:(?<!\w)rači(?!\w))|'
+                r'(?<!\w)(?i:u|iz|kod|prema)\s+(?:Raci|raci)(?!\w)|'
+                r'(?i:(?<!\w)(?:location|lokacija|локация|город|г\.|📍)\s*[:—-]?\s*raci(?!\w))', str(text)):
+            names = tuple(name for name in names if name != 'raci')
         if any(re.search(r'(?<!\w)' + re.escape(_normalize(name)) + r'(?!\w)', value) for name in names):
             found.append(city)
     return found

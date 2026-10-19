@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'serverless'))
 import collect
+from cloud import CloudRequestError
 from sources import Job
 
 
@@ -65,6 +66,7 @@ class CollectionWorkerTests(unittest.TestCase):
                     self.assertEqual(fields['jobs'][0]['expires_at'], '2020-01-01')
                     self.assertLess(fields['jobs'][0]['_cloud']['expires_ms'], 1600000000000)
                 return {'added': 0}
+            if operation == 'collection_end': return {'released': True}
             return {}
 
         with patch.object(collect, 'collect_all', side_effect=collect_all), \
@@ -72,8 +74,9 @@ class CollectionWorkerTests(unittest.TestCase):
              patch.object(collect, 'notify', return_value=(0, 0)), \
              contextlib.redirect_stdout(io.StringIO()):
             collect.main()
-        self.assertEqual(calls.call_args.args, ('collection_end',))
-        self.assertFalse(calls.call_args.kwargs['failed'])
+        completed = next(call for call in calls.call_args_list if call.args == ('collection_end',))
+        self.assertFalse(completed.kwargs['failed'])
+        self.assertEqual(calls.call_args.args, ('health_tick',))
 
     def test_source_checkpoint_is_uploaded_only_with_the_last_confirmed_batch(self):
         jobs = [Job('radim', f'https://radim.rs/jobs/{i}', 'Support') for i in range(30)]
@@ -90,6 +93,7 @@ class CollectionWorkerTests(unittest.TestCase):
             if operation == 'collect':
                 batches.append(fields)
                 return {'added': len(fields['jobs'])}
+            if operation == 'collection_end': return {'released': True}
             return {}
 
         def collect_all(**fields):
@@ -104,7 +108,7 @@ class CollectionWorkerTests(unittest.TestCase):
         self.assertNotIn('status', batches[0])
         self.assertNotIn('status', batches[1])
         self.assertEqual(batches[2]['status'], status)
-        totals = calls.call_args.kwargs['totals']
+        totals = next(call.kwargs['totals'] for call in calls.call_args_list if call.args == ('collection_end',))
         self.assertEqual(totals['healthy_sources'], 1)
         self.assertEqual((totals['added'], totals['inspected'], totals['rejected'], totals['truncated_sources']), (30, 30, 2, 1))
 
@@ -119,6 +123,7 @@ class CollectionWorkerTests(unittest.TestCase):
                 writes.append(fields)
                 if len(writes) == 2: raise RuntimeError('Synthetic upload failure')
                 return {'added': len(fields['jobs'])}
+            if operation == 'collection_end': return {'released': True}
             return {}
 
         with patch.object(collect, 'invoke', side_effect=invoke) as calls, \
@@ -128,6 +133,95 @@ class CollectionWorkerTests(unittest.TestCase):
         self.assertTrue(all('status' not in fields for fields in writes))
         self.assertTrue(calls.call_args.kwargs['failed'])
         self.assertEqual(calls.call_args.kwargs['totals']['added'], 25)
+
+    def test_recovery_check_follows_only_confirmed_healthy_completion(self):
+        for status, healthy in (({'state': 'ok'}, True), ({'state': 'empty'}, True),
+                                ({'state': 'partial', 'healthy': True}, True),
+                                ({'state': 'error'}, False),
+                                ({'state': 'partial', 'healthy': False}, False)):
+            with self.subTest(status=status):
+                operations, completed = [], []
+
+                def invoke(operation, **fields):
+                    operations.append(operation)
+                    if operation == 'init': return {'active': True}
+                    if operation == 'collect': return {'added': 0}
+                    if operation == 'collection_end':
+                        completed.append(fields)
+                        return {'released': True}
+                    if operation == 'health_tick':
+                        self.assertEqual(len(completed), 1)
+                        self.assertFalse(completed[0]['failed'])
+                        self.assertEqual(completed[0]['totals']['healthy_sources'], 1)
+                    return {}
+
+                with patch.object(collect, 'invoke', side_effect=invoke), \
+                     patch.object(collect, 'collect_all', side_effect=lambda **fields: fields['on_source']('radim', [], status)), \
+                     patch.object(collect, 'notify', return_value=(0, 0)), contextlib.redirect_stdout(io.StringIO()):
+                    collect.main()
+                self.assertEqual(operations.count('health_tick'), int(healthy))
+                self.assertEqual(operations[-2:] if healthy else operations[-1:],
+                                 ['collection_end', 'health_tick'] if healthy else ['collection_end'])
+
+    def test_failed_or_unconfirmed_completion_never_requests_recovery(self):
+        for failure in ('collection', 'finalization', 'unconfirmed'):
+            with self.subTest(failure=failure):
+                completed = []
+
+                def invoke(operation, **fields):
+                    if operation == 'init': return {'active': True}
+                    if operation == 'collect': return {'added': 0}
+                    if operation == 'collection_end':
+                        completed.append(fields)
+                        if failure == 'finalization': raise RuntimeError('Synthetic finalization failure')
+                        return {} if failure == 'unconfirmed' else {'released': True}
+                    if operation == 'health_tick': self.fail('Recovery before a confirmed healthy completion')
+                    return {}
+
+                def collect_all(**fields):
+                    fields['on_source']('radim', [], {'state': 'ok'})
+                    if failure == 'collection': raise RuntimeError('Synthetic collection failure')
+
+                expected = {'collection': 'Synthetic collection failure', 'finalization': 'Synthetic finalization failure',
+                            'unconfirmed': 'Collection completion not confirmed'}[failure]
+                output = io.StringIO()
+                with patch.object(collect, 'invoke', side_effect=invoke), \
+                     patch.object(collect, 'collect_all', side_effect=collect_all), \
+                     patch.object(collect, 'notify', return_value=(0, 0)), contextlib.redirect_stdout(output):
+                    with self.assertRaisesRegex(RuntimeError, expected): collect.main()
+                self.assertEqual(len(completed), 1)
+                self.assertEqual(completed[0]['failed'], failure == 'collection')
+                self.assertNotIn('Collection complete:', output.getvalue())
+
+    def test_health_request_failure_preserves_confirmed_collection_and_hides_details(self):
+        errors = (CloudRequestError('private gateway detail', transient=True),
+                  ValueError('private response detail'), OSError('private transport detail'))
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                completed = []
+
+                def invoke(operation, **fields):
+                    if operation == 'init': return {'active': True}
+                    if operation == 'collect': return {'added': 0}
+                    if operation == 'collection_end':
+                        completed.append(fields)
+                        return {'released': True}
+                    if operation == 'health_tick': raise error
+                    return {}
+
+                output, warnings = io.StringIO(), io.StringIO()
+                with patch.object(collect, 'invoke', side_effect=invoke) as calls, \
+                     patch.object(collect, 'collect_all', side_effect=lambda **fields: fields['on_source']('radim', [], {'state': 'ok'})), \
+                     patch.object(collect, 'notify', return_value=(0, 0)), \
+                     contextlib.redirect_stdout(output), contextlib.redirect_stderr(warnings):
+                    collect.main()
+                self.assertEqual(len(completed), 1)
+                self.assertFalse(completed[0]['failed'])
+                self.assertEqual(completed[0]['totals']['healthy_sources'], 1)
+                self.assertEqual(calls.call_args.args, ('health_tick',))
+                self.assertIn('Collection complete:', output.getvalue())
+                self.assertIn('Independent watchdog will retry.', warnings.getvalue())
+                self.assertNotIn('private', output.getvalue() + warnings.getvalue())
 
     def test_upload_bytes_are_bounded_for_full_multilingual_descriptions(self):
         jobs = [{'description': 'я' * 16000, 'id': i} for i in range(12)]

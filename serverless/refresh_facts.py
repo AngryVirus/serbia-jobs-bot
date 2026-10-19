@@ -11,7 +11,8 @@ def facts_version():
     root = Path(__file__).resolve().parents[1]
     files = ['serverless/enrich_jobs.py', 'job_metadata.py', 'job_quality.py',
              'residence_permit.py', 'filters.py', 'addresses.py', 'location_links.py',
-             'salary_facts.py', 'filter_vocabulary.py']
+             'salary_facts.py', 'filter_vocabulary.py', 'serbian_geography.py',
+             'telegram_sources.py']
     digest = hashlib.sha256()
     for name in files:
         digest.update(name.encode())

@@ -24,11 +24,18 @@ def enrich_job(raw):
     remote = job.get('remote')
     if type(remote) is not bool:
         remote = remote_fact(text)
+    serbia = serbia_eligible(job)
+    if str(job.get('source') or '').startswith('telegram_'):
+        # Generic channel admission requires geography in the vacancy itself.
+        # Older cached country/location values may come from an ambiguous word.
+        from telegram_sources import _ad_text
+        from serbian_geography import has_serbian_location
+        serbia = serbia and has_serbian_location(_ad_text(text))
     reason = 'closed' if job.get('_withdrawn_at') else quality_reason(text)
     job['_cloud'] = {
         'version': 1, 'languages': languages, 'required_languages': required,
         'remote': remote, 'salary': salary_facts(job),
-        'permit': job_residence_permit_requirement(job), 'serbia': serbia_eligible(job),
+        'permit': job_residence_permit_requirement(job), 'serbia': serbia,
         'published_ms': int(published.timestamp()*1000) if published else None,
         'published_day': (published.astimezone(BELGRADE).date()-datetime(1970, 1, 1).date()).days if published else None,
         'date_only': bool(job.get('publication_date_only') or len(str(job.get('published_at'))) == 10),
