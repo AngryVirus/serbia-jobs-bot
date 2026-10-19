@@ -1,4 +1,4 @@
-import { OPTIONS, CITIES, DEFAULTS } from './config.js';
+import { OPTIONS, CITIES, DEFAULTS, KEYWORD_FORMS } from './config.js';
 import { sourceEnabled } from './source-policy.js';
 export const defaults = () => JSON.parse(JSON.stringify(DEFAULTS));
 export function settings(raw = {}) {
@@ -37,6 +37,12 @@ export function contains(text, term) {
   const escaped = normalize(term).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp('(?<![\\p{L}\\p{N}_])' + escaped + '(?![\\p{L}\\p{N}_])', 'u').test(normalize(text));
 }
+const keywordPatterns = new Map(Object.entries(KEYWORD_FORMS).map(([word,forms])=>[word,
+  new RegExp('(?<![\\p{L}\\p{N}_])(?:'+forms.join('|')+')(?![\\p{L}\\p{N}_])','u')]));
+export function keywordContains(text,term) {
+  const value=normalize(term),pattern=keywordPatterns.get(value);
+  return pattern?pattern.test(normalize(text)):contains(text,value);
+}
 // EU daylight-saving transitions, 01:00 UTC on the last Sunday of March/October.
 // No dependency on Intl/time-zone data in the platform's JavaScript isolate.
 export function belgradeOffset(ms) {
@@ -55,18 +61,33 @@ export function matches(j, s, now = Date.now()) {
   if (age !== null && (age < 0 || (!f.date_only && f.published_ms > now))) return false;
   if (!periods.some(p => p === 'any' || age !== null && ({ today: age === 0, yesterday: age === 1, 7: age >= 0 && age < 7, 30: age >= 0 && age < 30 })[p])) return false;
   const text = `${j.title || ''} ${j.description || ''}`;
-  if (s.keywords?.length && !s.keywords.some(x => contains(text, x))) return false;
+  if (s.keywords?.length && !s.keywords.some(x => keywordContains(text, x))) return false;
   if (s.exclusions?.some(x => contains(text, x))) return false;
   const cities = selected(s, 'city');
   if (!cities.includes('any') && !cities.some(c => (CITIES[c] || [c]).some(x => contains(j.location, x)))) return false;
   const remote = selected(s, 'remote');
-  if (!remote.includes('any') && !(remote.includes('only') && j.remote === true || remote.includes('office') && j.remote === false)) return false;
-  const languages = { any: true, russian: j.languages?.includes('ru') || j.languages == null && j.russian === true,
-    serbian: j.languages?.includes('sr') || j.languages == null && j.serbian_required === true,
-    english: f.languages.includes('en'), no_serbian: j.serbian_required === false };
+  const workFormat = Object.hasOwn(f, 'remote') ? f.remote : j.remote;
+  if (!remote.includes('any') && !(remote.includes('only') && workFormat === true || remote.includes('office') && workFormat === false)) return false;
+  const facts = Array.isArray(f.languages) ? f.languages : j.languages;
+  const languages = { any: true, russian: facts?.includes('ru') || facts == null && j.russian === true,
+    serbian: facts?.includes('sr') || facts == null && j.serbian_required === true,
+    english: facts?.includes('en'), no_serbian: j.serbian_required === false };
   if (!selected(s, 'language').some(x => languages[x])) return false;
   const permits = selected(s, 'residence_permit');
   if (!permits.includes('any') && (f.permit == null || !permits.includes(f.permit ? 'yes' : 'no'))) return false;
+  const salary = f.salary;
+  if (salary && typeof salary.known === 'boolean') {
+    const unknown = s.include_unknown_salary !== false;
+    if (!salary.known) return unknown;
+    if (s.min_salary == null) return true;
+    if (salary.period !== 'month') return false;
+    if (salary.currency == null) return unknown;
+    if (salary.currency !== (s.currency || 'EUR')) return false;
+    if (salary.max != null && salary.max < s.min_salary) return false;
+    return salary.min != null ? salary.min >= s.min_salary : unknown;
+  }
+  // Old fixture/import records without facts retain their previous contract
+  // until the additive facts refresh has prepared the public salary data.
   if (j.salary_min == null && s.include_unknown_salary === false) return false;
   if (s.min_salary != null) {
     if (j.salary_min == null || j.salary_currency == null) return s.include_unknown_salary !== false;

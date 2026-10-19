@@ -41,7 +41,7 @@ class MultiSelectionTests(unittest.TestCase):
                     for date in ('2026-10-14', '2026-10-13'):
                         job = vacancy(location=city, languages=[language], remote=remote, published_at=date)
                         self.assertTrue(matches(job, settings, now))
-        for change in ({'location': 'Niš'}, {'languages': ['en']}, {'remote': None},
+        for change in ({'location': 'Niš'}, {'languages': ['en']}, {'remote': None, 'description': 'Vacancy with unstated work format'},
                        {'published_at': '2026-10-12'}, {'published_at': None},
                        {'published_at': '2026-10-15'}, {'title': 'Cook', 'description': 'Kitchen'}):
             self.assertFalse(matches(vacancy(published_at='2026-10-14', **change) if 'published_at' not in change

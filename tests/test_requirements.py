@@ -69,7 +69,7 @@ class CalendarTests(unittest.TestCase):
         self.settings.update(keywords=['python','kuvar'],exclusions=['senior'],city='belgrade',remote='only',language='russian',freshness='7',min_salary=1000)
         self.job.update(location='Београд',languages=['ru','en'],published_at='2026-10-14')
         self.assertTrue(matches(self.job,self.settings,self.now))
-        for change in [{'description':'Senior Python'}, {'location':'Novi Sad'}, {'remote':None}, {'languages':[]}, {'salary_min':900}, {'published_at':None}]:
+        for change in [{'description':'Senior Python'}, {'location':'Novi Sad'}, {'remote':None,'description':'Russian speakers welcome'}, {'languages':[],'description':'Remote role'}, {'salary_min':900}, {'published_at':None}]:
             self.assertFalse(matches(dict(self.job,**change),self.settings,self.now),change)
 
 

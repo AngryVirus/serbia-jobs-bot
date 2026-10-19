@@ -50,6 +50,7 @@ class FilterTests(unittest.TestCase):
     def test_unknown_remote_excluded(self):
         self.settings["remote"] = "only"
         self.job["remote"] = None
+        self.job["description"] = "Russian speakers welcome."
         self.assertFalse(matches(self.job, self.settings))
 
     def test_source_and_expiry(self):

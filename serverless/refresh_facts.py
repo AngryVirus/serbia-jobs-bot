@@ -10,7 +10,8 @@ from enrich_jobs import enrich_job
 def facts_version():
     root = Path(__file__).resolve().parents[1]
     files = ['serverless/enrich_jobs.py', 'job_metadata.py', 'job_quality.py',
-             'residence_permit.py', 'filters.py', 'addresses.py', 'location_links.py']
+             'residence_permit.py', 'filters.py', 'addresses.py', 'location_links.py',
+             'salary_facts.py', 'filter_vocabulary.py']
     digest = hashlib.sha256()
     for name in files:
         digest.update(name.encode())

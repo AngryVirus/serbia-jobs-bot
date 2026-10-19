@@ -4,14 +4,10 @@ import re
 import unicodedata
 from zoneinfo import ZoneInfo
 from source_policy import source_enabled
+from filter_vocabulary import CITY_ALIASES, keyword_contains
 
 BELGRADE = ZoneInfo('Europe/Belgrade')
-CITY_NAMES = {
-    'belgrade': ('beograd', 'belgrade', 'белград', 'београд'),
-    'novi_sad': ('novi sad', 'novi-sad', 'нови сад', 'нови-сад'),
-    'nis': ('nis', 'ниш'), 'subotica': ('subotica', 'суботица'),
-    'kragujevac': ('kragujevac', 'крагуевац', 'крагујевац'),
-}
+CITY_NAMES = CITY_ALIASES
 CITY_LABELS = {'any': 'Вся Сербия', 'belgrade': 'Белград', 'novi_sad': 'Нови-Сад',
                'nis': 'Ниш', 'subotica': 'Суботица', 'kragujevac': 'Крагуевац'}
 FRESHNESS_LABELS = {'today': '📅 Сегодня', 'yesterday': '⏮ Вчера', '7': '🗓 За 7 дней',
@@ -19,7 +15,7 @@ FRESHNESS_LABELS = {'today': '📅 Сегодня', 'yesterday': '⏮ Вчера
 LANGUAGE_LABELS = {'russian': '🇷🇺 Русский', 'serbian': '🇷🇸 Сербский',
                    'english': '🇬🇧 Английский', 'any': '🌍 Не важно'}
 REMOTE_LABELS = {'any': 'Любой формат', 'only': 'Удалённо', 'office': 'На месте / гибрид'}
-RESIDENCE_PERMIT_LABELS = {'yes': 'Да', 'no': 'Нет', 'any': 'Не важно'}
+RESIDENCE_PERMIT_LABELS = {'yes': 'Обязателен', 'no': 'Не требуется', 'any': 'Не важно'}
 FILTER_OPTIONS = {'city': CITY_LABELS, 'remote': REMOTE_LABELS,
                   'language': LANGUAGE_LABELS, 'freshness': FRESHNESS_LABELS,
                   'residence_permit': RESIDENCE_PERMIT_LABELS}
@@ -116,26 +112,26 @@ def matches(job, settings, now=None):
     if not active(job, now) or not serbia_eligible(job): return False
     if not any(freshness_matches(job, period, now) for period in selected_values(settings, 'freshness')): return False
     text = normalize(' '.join(str(job.get(k) or '') for k in ('title', 'description')))
-    if settings.get('keywords') and not any(contains(text, x) for x in settings['keywords']): return False
+    if settings.get('keywords') and not any(keyword_contains(text, x) for x in settings['keywords']): return False
     if any(contains(text, x) for x in settings.get('exclusions', [])): return False
     cities = selected_values(settings, 'city')
     if 'any' not in cities and not any(contains(job.get('location') or '', x)
                                       for city in cities for x in CITY_NAMES.get(city, (city,))): return False
     remote = selected_values(settings, 'remote')
-    if 'any' not in remote and not (('only' in remote and job.get('remote') is True)
-                                   or ('office' in remote and job.get('remote') is False)): return False
+    work_format = job.get('remote')
+    if type(work_format) is not bool:
+        from job_metadata import remote_fact
+        work_format = remote_fact('\n'.join(str(job.get(key) or '') for key in ('title', 'description')))
+    if 'any' not in remote and not (('only' in remote and work_format is True)
+                                   or ('office' in remote and work_format is False)): return False
     selected_languages = selected_values(settings, 'language')
-    languages = job.get('languages')
-    english = 'en' in (languages or [])
-    if 'english' in selected_languages and not english:
-        # Read older cached descriptions too; metadata extraction uses normalize above.
-        from job_metadata import job_language_facts
-        english = 'en' in job_language_facts(job)[0]
+    from job_metadata import job_language_facts
+    languages = job_language_facts(job)[0]
     language_matches = {
         'any': True,
-        'russian': 'ru' in (languages or []) or (languages is None and job.get('russian') is True),
-        'serbian': 'sr' in (languages or []) or (languages is None and job.get('serbian_required') is True),
-        'english': english,
+        'russian': 'ru' in languages,
+        'serbian': 'sr' in languages,
+        'english': 'en' in languages,
         'no_serbian': job.get('serbian_required') is False,
     }
     if not any(language_matches.get(value, False) for value in selected_languages): return False
@@ -144,14 +140,8 @@ def matches(job, settings, now=None):
         from residence_permit import job_residence_permit_requirement
         required = job_residence_permit_requirement(job)
         if required is None or ('yes' if required else 'no') not in permits: return False
-    salary = job.get('salary_min')
-    if salary is None and not settings.get('include_unknown_salary', True): return False
-    minimum = settings.get('min_salary')
-    if minimum is not None:
-        currency = job.get('salary_currency')
-        if salary is None or currency is None: return bool(settings.get('include_unknown_salary', True))
-        if job.get('salary_period', 'month') != 'month' or currency != settings.get('currency', 'EUR') or salary < minimum: return False
-    return True
+    from salary_facts import salary_facts, salary_matches
+    return salary_matches(salary_facts(job), settings)
 
 
 def search_diagnostics(jobs, settings, now=None):

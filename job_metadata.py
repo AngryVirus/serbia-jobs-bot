@@ -3,26 +3,42 @@ import re
 from urllib.parse import urlsplit
 from filters import normalize
 
-LANGUAGE_NAMES = {'ru': ('russian', 'ruski', 'русск'), 'sr': ('serbian', 'srpsk', 'сербск'),
-                  'en': ('english', 'englesk', 'английск'), 'de': ('german', 'nemack', 'немецк')}
+LANGUAGE_NAMES = {'ru': ('russian', 'ruski', 'русск', 'руск'), 'sr': ('serbian', 'srpsk', 'сербск', 'српск'),
+                  'en': ('english', 'englesk', 'английск', 'енглеск'),
+                  'de': ('german', 'nemack', 'немецк', 'немачк')}
 _LANGUAGE_WORD = re.compile(r'\b(?:' + '|'.join(re.escape(normalize(root)) for roots in LANGUAGE_NAMES.values() for root in roots) + r')\w*')
-_LANGUAGE_POSITIVE = re.compile(r'requir|mandatory|must|fluency|fluent|knowledge|proficien|welcome|speak|work(?:ing)? (?:in|language)|znanje|poznavanje|obavez|знани|владени|треб|обязател|говорящ|приветств|работ.{0,20} на')
-_LANGUAGE_NEGATIVE = re.compile(r'not (?:required|mandatory|necessary)|no .{0,25} required|не (?:нужен|нужно|требуется|обязател)|необязател|bez znanja|nije (?:potreb|obavez)')
-_LANGUAGE_OPTIONAL = re.compile(r'optional|preferred|nice to have|желател|преимуществ|pozeljn|prednost')
-_LANGUAGE_REQUIRED = re.compile(r'requir|mandatory|must|obavez|треб|обязател')
+_LANGUAGE_POSITIVE = re.compile(r'requir|mandatory|must|fluency|fluent|knowledge|proficien|welcome|speak|native|conversational|work(?:ing)? (?:in|language)|znanje|poznavanje|obavez|знањ|познавањ|обавез|знани|владени|треб|обязател|говорящ|разговорн|грамотн|родно|приветств|рабоч\w* язык|работ.{0,20} на')
+_LANGUAGE_NEGATIVE = re.compile(r'not (?:required|mandatory|necessary|needed)|no .{0,25} (?:required|necessary|needed)|не (?:нуж\w*|требу\w*|обязател\w*)|необязател|bez znanja|без знања|без знани\w*|nije (?:potreb|obavez)|није (?:потреб|обавез)')
+_LANGUAGE_OPTIONAL = re.compile(r'optional|preferred|nice to have|желател|преимуществ|pozeljn|prednost|пожељн|предност')
+_LANGUAGE_REQUIRED = re.compile(r'requir|mandatory|must|obavez|обавез|треб|обязател')
+_LANGUAGE_LEVEL = re.compile(r'\b[abc][12](?:\+)?\b|\b(?:upper[- ]intermediate|intermediate|advanced|beginner)\b')
+_LANGUAGE_HEADER = re.compile(r'^[^\w]*(?:languages?|языки?|jezici|jezik|језици|језик)\s*[:—–-]\s*')
+_LANGUAGE_BACKGROUND = re.compile(r'^\s*(?:[- ]speaking\s+)?(?:[abc][12]\+?\s+)?(?:compan\w*|citizenship|passport|market|textbooks?|компани\w*|гражданств\w*|паспорт\w*|рын\w*|учебник\w*|kompanij\w*|drzavljan\w*|држављан\w*)\b')
+
+
+def _language_cue(value):
+    return (_LANGUAGE_POSITIVE.search(value) or _LANGUAGE_NEGATIVE.search(value)
+            or _LANGUAGE_OPTIONAL.search(value) or _LANGUAGE_LEVEL.search(value))
 
 
 def _language_clauses(text):
     """Keep shared language lists, but separate independent requirements."""
     for raw in re.split(r'[\n.!?;]|\b(?:but|however|whereas|но|однако|а|ali|dok)\b', text, flags=re.I):
+        raw = normalize(raw)
+        header = _LANGUAGE_HEADER.match(raw)
+        if header:
+            raw = raw[header.end():]
         pending = ''
         for item in raw.split(','):
             item = normalize(item)
             # "Russian, English required" is one list; "Russian company,
             # English required" must not invent Russian as a job language.
             remainder = _LANGUAGE_WORD.sub('', item)
-            remainder = re.sub(r'\b(?:languages?|язык\w*|jezik\w*|and|or|и|или|i)\b|[\s:/&-]', '', remainder)
+            remainder = re.sub(r'\b(?:languages?|язык\w*|jezik\w*|језик\w*|and|or|и|или|i)\b|[\s:/&-]', '', remainder)
             if _LANGUAGE_WORD.search(item) and not remainder:
+                if header:
+                    yield 'languages: ' + item
+                    continue
                 pending += item + ' '
                 continue
             item = pending + item
@@ -30,12 +46,10 @@ def _language_clauses(text):
             start = 0
             for conjunction in re.finditer(r'\b(?:and|и|i)\b', item):
                 left, right = item[start:conjunction.start()], item[conjunction.end():]
-                def has_cue(value):
-                    return _LANGUAGE_POSITIVE.search(value) or _LANGUAGE_NEGATIVE.search(value) or _LANGUAGE_OPTIONAL.search(value)
-                if has_cue(left) and has_cue(right):
+                if _language_cue(left) and _language_cue(right):
                     yield left
                     start = conjunction.end()
-            yield item[start:]
+            yield ('languages: ' if header else '') + item[start:]
 
 
 def language_facts(text):
@@ -43,51 +57,52 @@ def language_facts(text):
     clauses = list(_language_clauses(text))
     for code, roots in LANGUAGE_NAMES.items():
         for clause in clauses:
-            if not any(re.search(r'\b' + re.escape(normalize(root)) + r'\w*', clause) for root in roots): continue
+            mentions = [match for root in roots for match in re.finditer(r'\b' + re.escape(normalize(root)) + r'\w*', clause)]
+            if not any(not _LANGUAGE_BACKGROUND.match(clause[match.end():]) for match in mentions): continue
             if _LANGUAGE_NEGATIVE.search(clause): continue
-            if (_LANGUAGE_POSITIVE.search(clause) or _LANGUAGE_OPTIONAL.search(clause)) and not re.search(r'datasets?|corpora|training data|учебн.{0,15}данн|обучающ.{0,15}данн',clause):
+            if (_LANGUAGE_POSITIVE.search(clause) or _LANGUAGE_OPTIONAL.search(clause) or _LANGUAGE_LEVEL.search(clause) or _LANGUAGE_HEADER.match(clause)) and not re.search(r'datasets?|corpora|training data|учебн.{0,15}данн|обучающ.{0,15}данн',clause):
                 if code not in accepted: accepted.append(code)
                 if _LANGUAGE_REQUIRED.search(clause) and not _LANGUAGE_OPTIONAL.search(clause) and code not in required: required.append(code)
     return accepted, required
 
 
 def job_language_facts(job):
-    """Keep explicit metadata and recover English missed by older collectors."""
+    """Keep explicit metadata and recover every language from older descriptions."""
     languages = job.get('languages')
     if languages is None:
         languages = (['ru'] if job.get('russian') is True else []) + (['sr'] if job.get('serbian_required') is True else [])
     languages = list(languages)
     required = list(job.get('required_languages') or [])
-    if 'en' not in languages:
-        extracted, mandatory = language_facts('\n'.join(str(job.get(key) or '') for key in ('title', 'description')))
-        if 'en' in extracted:
-            languages.append('en')
-            if 'en' in mandatory and 'en' not in required:
-                required.append('en')
+    extracted, mandatory = language_facts('\n'.join(str(job.get(key) or '') for key in ('title', 'description')))
+    for code in extracted:
+        if code not in languages:
+            languages.append(code)
+    for code in mandatory:
+        if code not in required:
+            required.append(code)
     return languages, required
 
 
 def remote_fact(text):
     raw = text
     text = normalize(text)
-    if re.search(r'not remote|non[- ]remote|no remote(?: work)?|remote work (?:is )?not|on[- ]site only|nije remote|без удал|удален\w*\s+работ\w*\s+нет|nije rad od kuce',text): return False
-    if re.search(r'\bhybrid\b|\bhibrid\w*|гибрид',text): return False
-    if re.search(r'\bremote (?:work|job|role|position|opportunity|working)|\b(?:fully|100%|work) remote\b|rad od kuce|work from home|удален\w* (?:работ|ваканс|формат)|работ\w* удаленно',text): return True
+    if re.search(r'not remote|non[- ]remote|no remote(?: work)?|remote work (?:is )?not|on[- ]site only|nije remote|без удал|удален\w*\s+работ\w*\s+нет|\bnije rad od kuce\b|\brad od kuce (?:nije|ne)\b|\bније рад од куће\b|\bрад од куће (?:није|не)\b|work from home (?:is )?not|(?:формат(?: работы)?\s*[:—–-]\s*)не удален',text): return False
+    if re.search(r'\bhybrid\b|\bhibrid\w*|гибрид|хибрид',text): return False
+    if re.search(r'\bremote (?:work|job|role|position|opportunity|working)|\b(?:fully|100%|work) remote\b|rad od kuce|рад од куће|work from home|удален\w* (?:работ|ваканс|формат)|работ\w* удаленно|(?:формат(?: работы)?|format|nacin rada|начин рада)\s*[:—–-]\s*(?:remote|удален\w*)',text): return True
     if text.strip() == 'remote' or re.search(r'(?im)^\s*(?:remote|удаленно|rad od kuće)\s*$', raw): return True
     if re.search(r'on[- ]site|in[- ]office|office based|работ\w* в офис|rad iz kancelarije',text): return False
     return None
 
 
 def text_salary(text):
-    from sources import parse_money_amount
-    # A stated maximum is never treated as a guaranteed minimum.
-    pattern=r'(?:(up to|do|до)\s+)?([\d][\d \t.,]*)\s*(?:[-–]\s*[\d \t.,]+\s*)?(EUR|RSD|USD)\s*(?:/\s*(month|hour|year|месяц|час|год|mesec|mesecu|sat|satu|godina)|\b(mesecno|mesečno|monthly|hourly|annually)|(в месяц|в час|в год|мес\.))'
-    match=re.search(pattern,text,re.I)
-    if not match: return None,None,None
-    period=(match[4] or match[5] or match[6] or '').casefold()
-    period='month' if period in {'month','месяц','mesec','mesecu','mesecno','mesečno','monthly','в месяц','мес.'} else 'hour' if period in {'hour','час','sat','satu','hourly','в час'} else 'year'
-    amount=None if match[1] or period!='month' else parse_money_amount(match[2].strip())
-    return amount,match[3].upper(),period
+    from salary_facts import salary_text
+    # Callers may supply a dedicated salary line or a full job description.
+    # A monetary line alone is valid; unrelated amounts in prose require an
+    # explicit salary label and must not describe accommodation or other costs.
+    facts, _ = salary_text(text, allow_bare=True)
+    if not facts or not facts['period']:
+        return None, None, None
+    return facts['min'] if facts['period'] == 'month' else None, facts['currency'], facts['period']
 
 
 def valid_job_url(url):
@@ -143,11 +158,7 @@ def enrich(job, node=None):
         if found: job.country=found.group(0)
     restriction=re.search(r'(?:remote|work from home).{0,45}(?:only (?:in|from)|must be (?:based|located) in|residents of)\s+([A-Za-z ]{2,40})',text,re.I)
     if restriction and not job.eligible_countries: job.eligible_countries=[restriction[1].strip().rstrip('.')]
-    amount,currency,period=text_salary(job.description)
-    if period:
-        job.salary_min,job.salary_currency,job.salary_period=amount,currency,period
-    else:
-        job.salary_period='month' if job.salary_min is not None else None
+    from salary_facts import salary_facts, salary_text
     salary = node.get('baseSalary')
     if isinstance(salary,dict) and isinstance(salary.get('value'),dict):
         value=salary['value']; unit=str(value.get('unitText','')).casefold()
@@ -158,7 +169,25 @@ def enrich(job, node=None):
             job.salary_display=str(amount)+(('–'+str(maximum)) if maximum is not None else '')+' '+str(salary.get('currency',''))+' / '+period
         elif maximum is not None:
             job.salary_display='до '+str(maximum)+' '+str(salary.get('currency',''))+' / '+period
-    if not job.salary_display:
-        label=re.search(r'(?i)(?:(?:up to|do|до|от|from)\s+)?\d[\d \t.,]*(?:[-–]\s*\d[\d \t.,]*)?\s*(?:EUR|RSD|USD)\s*(?:/\s*(?:month|hour|year|day)|mesecno|mesečno|monthly|hourly|annually|в месяц|в час|в год|мес\.)',job.description)
-        if label: job.salary_display=label[0].strip()[:150]
+        if amount is not None or maximum is not None:
+            job.salary_source = 'structured'
+    raw = {key: getattr(job, key, None) for key in ('salary_min', 'salary_currency', 'salary_period', 'salary_display', 'salary_source', 'description')}
+    # A source minimum without its own unit keeps the historical monthly
+    # contract; a text excerpt never receives an assumed pay period.
+    if raw['salary_min'] is not None and raw['salary_period'] is None and not raw['salary_display']:
+        raw['salary_period'] = 'month'
+    facts = salary_facts(raw)
+    if facts['known']:
+        job.salary_min = facts['min'] if facts['period'] == 'month' else None
+        job.salary_currency, job.salary_period = facts['currency'], facts['period']
+        _, label = salary_text(job.description, allow_bare=True)
+        display_facts = salary_facts({**raw, 'description': ''})
+        if label and (not job.salary_display or job.salary_source != 'structured' and display_facts != facts):
+            job.salary_display = label[:150]
+    else:
+        job.salary_min = job.salary_currency = job.salary_period = None
+        # Keep non-numeric source wording such as "negotiable", but clear a
+        # stale monetary excerpt that was actually a rent, fee or insurance.
+        if job.salary_display and re.search(r'\d', job.salary_display):
+            job.salary_display = None
     return job

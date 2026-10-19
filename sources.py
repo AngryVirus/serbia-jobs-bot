@@ -58,6 +58,7 @@ class Job:
     salary_display: str | None = None
     publication_date_only: bool = False
     expires_date_only: bool = False
+    salary_source: str | None = None
 
 
 @dataclass(frozen=True)

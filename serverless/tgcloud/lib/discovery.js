@@ -13,9 +13,20 @@ const nonnegative = value => Number.isSafeInteger(value) && value >= 0;
 const sessions = (s, now = Date.now()) => (Array.isArray(s.discovery_sessions) ? s.discovery_sessions : [])
   .filter(x => x && /^[a-z0-9]{8}$/.test(x.token) && ['all','new','similar'].includes(x.kind) && x.expires > now && nonnegative(x.upper_id))
   .slice(-MAX_SESSIONS);
-const lookup = (s, token) => sessions(s).find(x => x.token === token);
 const scopePlan = (s, scope) => scope === 'main' ? null : savedSearches(s).find(p => p.id === scope);
 const scopeExists = (s, scope) => scope === 'main' || Boolean(scopePlan(s,scope));
+// Array order does not change OR filters or keyword/exclusion matching. Compare
+// only public preferences, so notification switches, hidden jobs and renaming
+// a saved search do not invalidate its still-correct browsing context.
+const filterKey = raw => JSON.stringify(Object.fromEntries(Object.entries(snapshotFilters(raw)).map(([key,value]) =>
+  [key,Array.isArray(value) ? [...new Set(value.map(normalize))].sort() : value])));
+const currentFilters = (s, session) => session.scope === 'main' ? s : scopePlan(s,session.scope)?.filters;
+const currentSession = (s, session) => {
+  const filters=currentFilters(s,session);
+  return Boolean(filters && filterKey(filters) === filterKey(session.filters));
+};
+export const discoverySession = (s, token) => sessions(s).find(x => x.token === token && currentSession(s,x));
+const lookup = discoverySession;
 const callback = (session, job, index, action, mode = 's') => `discover:${session.token}:${job.id}:${index}:${action}:${mode}`;
 const backRows = session => [[button('⚙️ Фильтры',session.scope === 'main' ? 'filters' : 'plans'),button('🏠 Меню','menu')]];
 const scopedSettings = (s, session) => ({ ...s, ...session.filters, hidden_jobs: s.hidden_jobs });
@@ -90,11 +101,12 @@ function reasons(job, back) {
     ? warnings.map(w => '• '+safe(w.reason,350)+'\n'+safe(w.advice,500)).join('\n\n')+'\n\nЭто автоматическая подсказка по тексту объявления. Она не подтверждает мошенничество; отсутствие предупреждения не гарантирует безопасность.'
     : 'В тексте не найдено признаков, для которых бот показывает предупреждения. Это не гарантирует безопасность работодателя.'),[[button('↩️ К вакансии',back)]]];
 }
-async function expired(bot) {
-  return bot.panel('Эта подборка устарела. Откройте поиск заново — ваши фильтры сохранены.',[[button('🔎 Найти вакансии','search:0'),button('📂 Мои поиски','plans')],...BACK]);
+export async function expiredDiscovery(bot) {
+  return bot.panel('Эта подборка устарела или условия поиска изменились. Откройте поиск заново — будут использованы ваши сохранённые фильтры.',[[button('🔎 Найти вакансии','search:0'),button('📂 Мои поиски','plans')],...BACK]);
 }
+const expired=expiredDiscovery;
 async function render(bot, original, {action='show',jobId=null,index=0,mode='s',persist=true,catalog=null}={}) {
-  if(!scopeExists(bot.s,original.scope))return expired(bot);
+  if(!scopeExists(bot.s,original.scope) || !currentSession(bot.s,original))return expired(bot);
   const session={...original}, groups=catalog || groupJobs(await bot.store.jobs());
   let s=bot.s, jobs=eligible(groups,s,session),notice='';
   let current=jobs.findIndex(j=>j._duplicate_ids.includes(jobId));
@@ -137,6 +149,7 @@ async function render(bot, original, {action='show',jobId=null,index=0,mode='s',
 }
 export async function openDiscovery(bot, scope='main',kind='all',seedId=null, parent=null) {
   if(!scopeExists(bot.s,scope))return expired(bot);
+  if(parent && (parent.scope!==scope || !currentSession(bot.s,parent)))return expired(bot);
   const plan=scopePlan(bot.s,scope), all=await bot.store.jobs();
   const upper=all.reduce((max,j)=>Math.max(max,j.id),0), previous=scope==='main'?bot.s.last_viewed_id:plan.last_viewed_id;
   const retained=sessions(bot.s),taken=new Set(retained.map(x=>x.token));let token;
