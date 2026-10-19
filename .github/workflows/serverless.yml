@@ -22,6 +22,7 @@ permissions:
   actions: read
 concurrency:
   group: serbia-jobs-collection
+  queue: max
   cancel-in-progress: false
 jobs:
   cloud:
