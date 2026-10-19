@@ -112,9 +112,21 @@ def main():
         sent, uncertain = notify(deadline)
         totals['sent'] += sent; totals['uncertain'] += uncertain
         failed = False
-        print('Collection complete:', json.dumps(totals))
     finally:
-        invoke('collection_end',owner=owner,failed=failed,totals=totals)
+        completed = invoke('collection_end',owner=owner,failed=failed,totals=totals)
+        if completed.get('released') is not True:
+            raise RuntimeError('Collection completion not confirmed; inspect state before retrying')
+    print('Collection complete:', json.dumps(totals))
+    if not failed and totals['healthy_sources'] > 0:
+        # The success heartbeat is committed first. Reuse the watchdog's durable
+        # transition claims so recovery is prompt without duplicate notices.
+        try:
+            invoke('health_tick')
+        except (ValueError, RuntimeError, OSError):
+            # A separate health request cannot undo the confirmed collection.
+            # Private gateway errors stay out of logs; the watchdog can retry.
+            print('Collection saved; immediate health check unavailable. Independent watchdog will retry.',
+                  file=sys.stderr)
 
 
 if __name__ == '__main__':

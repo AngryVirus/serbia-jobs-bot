@@ -102,6 +102,34 @@ class TelegramExpansionTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIsNone(post_job(self.source, {'id': 10, 'text': text, 'date': DATE}))
 
+    def test_raci_business_acronym_does_not_supply_a_serbian_city(self):
+        duties = 'Establish project governance, RACI, reporting cadence, decision mechanisms, and escalation paths;'
+        # Reduced public youritjob/8525: Serbia is stated, but no city is given.
+        text = ('Senior Project Manager (AI Hackathon Event)\n'
+                'NTT DATA Europe & Latam, Serbia\nResponsibilities:\n' + duties +
+                '\nRequirements:\nRelevant experience.')
+        self.assertEqual(serbian_cities(text), [])
+        job = post_job(self.source, {'id': 8525, 'text': text, 'date': DATE})
+        self.assertIsNotNone(job)
+        self.assertEqual(job.location, 'Serbia')
+        for business_text in [duties, 'Experience with RACI matrices.', 'Define the raci matrix.',
+                              'Iskustvo u RACI matrici.', 'Rad u RACI modelu.']:
+            with self.subTest(text=business_text):
+                text = 'Hiring engineer\n' + business_text
+                self.assertFalse(has_serbian_location(text))
+                self.assertIsNone(post_job(self.source, {'id': 10, 'text': text, 'date': DATE}))
+
+    def test_raca_and_raci_location_spellings_remain_supported(self):
+        for place in ['Rača', 'Rači', 'RAČI', 'Raca', 'Рача', 'Раче', 'Рачи',
+                      'u Raci', 'u raci', 'Location: Raci', 'Lokacija — RACI', '📍 Raci',
+                      'RACI governance; lokacija: Rača']:
+            with self.subTest(place=place):
+                text = 'Tražimo radnika\n' + place
+                self.assertEqual(serbian_cities(text), ['Raca'])
+                job = post_job(self.source, {'id': 10, 'text': text, 'date': DATE})
+                self.assertIsNotNone(job)
+                self.assertEqual(job.location, 'Raca')
+
     def test_labelled_public_links_keep_original_application_for_deduplication(self):
         from telegram_sources import ChannelPage
         html = preview(self.source, [12], text='Требуется инженер в Сербии')
