@@ -13,7 +13,7 @@ HELP_URL = 'https://t.me/AngryVirus'
 LANGUAGE_NAMES = {'ru': 'Русский', 'sr': 'Сербский', 'en': 'Английский', 'de': 'Немецкий'}
 FILTER_TITLES = {'city': '📍 Города', 'remote': '💻 Формат работы',
                  'language': '🗣 Языки', 'freshness': '🕒 Свежесть',
-                 'residence_permit': '🪪 Наличие ВНЖ'}
+                 'residence_permit': '🪪 Требование ВНЖ'}
 
 
 def button(label, data):
@@ -107,8 +107,8 @@ def choice_panel(settings, field):
         text += '\nЕсли формат не указан, объявление доступно при выборе «Любой формат».'
     elif field == 'residence_permit':
         text += ('\n\nУчитывается требование работодателя в объявлении.\n'
-                 '<b>Да</b> — наличие ВНЖ обязательно.\n'
-                 '<b>Нет</b> — явно указано, что ВНЖ не требуется.\n'
+                 '<b>Обязателен</b> — наличие ВНЖ обязательно.\n'
+                 '<b>Не требуется</b> — явно указано, что можно без ВНЖ.\n'
                  '<b>Не важно</b> — все вакансии, в том числе без информации о ВНЖ.\n\n'
                  'Помощь с оформлением ВНЖ сама по себе не означает, что можно работать без него.')
     rows = [[button(('✅ ' if value in selected else '▫️ ') + label,
@@ -131,7 +131,7 @@ def empty_search_text(jobs, settings, now=None):
     text += f'\n\nБез ограничений ваших фильтров доступно: {diagnostics["available"]}.'
     labels = {'freshness': 'Свежесть', 'language': 'Языки', 'remote': 'Формат работы',
               'city': 'Города', 'keywords': 'Ключевые слова', 'exclusions': 'Исключения',
-              'salary': 'Зарплата', 'residence_permit': 'Наличие ВНЖ'}
+              'salary': 'Зарплата', 'residence_permit': 'Требование ВНЖ'}
     if diagnostics['relaxed']:
         text += '\nМожно изменить в фильтрах:'
         for item in diagnostics['relaxed'][:2]:

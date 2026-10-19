@@ -5,7 +5,8 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from filters import BELGRADE, parse_datetime, serbia_eligible
-from job_metadata import job_language_facts
+from job_metadata import job_language_facts, remote_fact
+from salary_facts import salary_facts
 from residence_permit import job_residence_permit_requirement
 from addresses import job_address, maps_url
 from location_links import job_map_url
@@ -20,9 +21,13 @@ def enrich_job(raw):
         expires = datetime.combine(expires.astimezone(BELGRADE).date() + timedelta(days=1), datetime.min.time(), BELGRADE)
     languages, required = job_language_facts(job)
     text = '\n'.join(str(job.get(key) or '') for key in ('title', 'description'))
+    remote = job.get('remote')
+    if type(remote) is not bool:
+        remote = remote_fact(text)
     reason = 'closed' if job.get('_withdrawn_at') else quality_reason(text)
     job['_cloud'] = {
         'version': 1, 'languages': languages, 'required_languages': required,
+        'remote': remote, 'salary': salary_facts(job),
         'permit': job_residence_permit_requirement(job), 'serbia': serbia_eligible(job),
         'published_ms': int(published.timestamp()*1000) if published else None,
         'published_day': (published.astimezone(BELGRADE).date()-datetime(1970, 1, 1).date()).days if published else None,

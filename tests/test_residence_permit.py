@@ -93,7 +93,7 @@ class ResidencePermitFactsTests(unittest.TestCase):
         self.assertEqual(search_diagnostics(jobs, selected),
                          {'available': 1, 'relaxed': [{'field': 'residence_permit', 'count': 1}]})
         text = empty_search_text(jobs, selected)
-        self.assertIn('Наличие ВНЖ', text)
+        self.assertIn('Требование ВНЖ', text)
         self.assertIn('Не важно', text)
         self.assertEqual(selected, before)
 
@@ -132,8 +132,8 @@ class ResidencePermitJourneyTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(store.get_settings(2)['residence_permit'], 'any')
                     text, rows = choice_panel(store.get_settings(1), 'residence_permit')
                     self.assertIn('один вариант', text)
-                    self.assertEqual([b['text'] for row in rows for b in row if b['text'].startswith('✅')], ['✅ Нет'])
-                    self.assertIn('Наличие ВНЖ: Нет', filter_summary(store.get_settings(1)))
+                    self.assertEqual([b['text'] for row in rows for b in row if b['text'].startswith('✅')], ['✅ Не требуется'])
+                    self.assertIn('Требование ВНЖ: Не требуется', filter_summary(store.get_settings(1)))
                     if isinstance(store, Store):
                         store = Store(path)
                     bot = Bot(api, store)

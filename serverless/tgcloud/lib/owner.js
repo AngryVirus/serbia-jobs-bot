@@ -4,6 +4,7 @@ import { SOURCE_NAMES } from './config.js';
 import { sourceEnabled } from './source-policy.js';
 import { defaults, belgradeOffset } from './filters.js';
 import { groupJobs, visibleJobs, includesId } from './catalog.js';
+import { discoverySession, expiredDiscovery } from './discovery.js';
 import { button, BACK, safe, card, links } from './ui.js';
 import { OWNER_ID } from './permissions.js';
 export { OWNER_ID } from './permissions.js';
@@ -59,9 +60,10 @@ export async function notifyReports(store, api) {
 }
 
 export async function complaint(bot, id, reason, index=-1, mode='s', context=null) {
+  if(context && !discoverySession(bot.s,context))return expiredDiscovery(bot);
   const group = groupJobs(await bot.store.jobs()).find(g => includesId(g,id));
   if (!group) return bot.panel('Объявление больше не найдено.');
-  const token=context&&/^[a-z0-9]{8}$/.test(context)&&Array.isArray(bot.s.discovery_sessions)&&bot.s.discovery_sessions.some(s=>s.token===context&&s.expires>Date.now())?context:null;
+  const token=context || null;
   const back=token?`discover:${token}:${id}:${index}:show:${mode}`:index===-1 ? `job:${id}:${mode.startsWith('r')?'ru_':''}${mode.endsWith('f')?'full':'short'}` : `view:${id}:${index}:show:${mode}`;
   if (!reason) return bot.panel('<b>🚩 Пожаловаться</b>\n\n' + safe(group.members[0].title,120) + '\n\nВыберите причину. Объявление будет скрыто из вашей подборки, а жалобу проверит владелец.', [...Object.entries(REASONS).map(([key,label])=>[button(label,`report:${id}:${key}:${index}:${mode}${token?':'+token:''}`)]), [button('↩️ К объявлению',back)], ...BACK]);
   if (!Object.hasOwn(REASONS,reason)) return bot.home();

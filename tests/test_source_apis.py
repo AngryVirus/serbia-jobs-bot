@@ -22,6 +22,21 @@ class PublicAPITests(unittest.TestCase):
         self.assertTrue(all('/detail/jobs/' in job.url for job in jobs))
         self.assertTrue(all(job.remote is True for job in jobs))
 
+    def test_serbiahub_explicit_salary_survives_equal_housing_cost(self):
+        from serverless.enrich_jobs import enrich_job
+        body = {'total': 1, 'items': [{
+            'id': 1, 'title': 'Support', 'city': 'Beograd',
+            'description': 'Housing: 1000 EUR per month.',
+            'salaryMin': 1000, 'salaryCurrency': 'EUR', 'salaryPeriod': 'month',
+        }]}
+        fetcher = FakeFetcher({'https://serbiahub.com/api/jobs?limit=50&offset=0': json.dumps(body)})
+        jobs, _ = collect_source(SOURCES['serbiahub'], fetcher=fetcher)
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0].salary_source, 'structured')
+        facts = enrich_job(jobs[0])['_cloud']['salary']
+        self.assertTrue(facts['known'])
+        self.assertEqual(facts['min'], 1000)
+
     def test_serbiahub_foreign_and_expired_jobs_are_removed(self):
         body={'total':2,'items':[{'id':1,'title':'Support','city':'Berlin, Germany'},
                                  {'id':2,'title':'Support','expirationDate':'2001-01-01'}]}

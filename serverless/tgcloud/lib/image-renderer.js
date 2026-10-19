@@ -24,7 +24,7 @@ export function imageHash(text) {
 const decode=s=>s.replace(/&#(x[0-9a-f]+|\d+);/gi,(_,n)=>{const c=n[0].toLowerCase()==='x'?parseInt(n.slice(1),16):Number(n);return c>=0&&c<=0x10ffff?String.fromCodePoint(c):'□';}).replace(/&(lt|gt|amp|quot|apos|#x27);/g,(_,n)=>({lt:'<',gt:'>',amp:'&',quot:'"',apos:"'",'#x27':"'"})[n]);
 export function categoryIcon(text) {
  const label=text.split(':')[0].trim();
- return {'Города':'pin','Формат работы':'laptop','Языки':'chat','Возраст вакансии':'clock','Наличие ВНЖ':'id','ВНЖ':'id','Ключевые слова':'search','Исключения':'exclude','Зарплата':'coins','Без зарплаты':'coins','Уведомления':'bell','Скрытые вакансии':'eye'}[label] || null;
+ return {'Города':'pin','Формат работы':'laptop','Языки':'chat','Возраст вакансии':'clock','Наличие ВНЖ':'id','Требование ВНЖ':'id','ВНЖ':'id','Ключевые слова':'search','Исключения':'exclude','Зарплата':'coins','Без зарплаты':'coins','Уведомления':'bell','Скрытые вакансии':'eye'}[label] || null;
 }
 // Small antialiased vector glyphs, drawn locally without emoji fonts or requests.
 function drawIcon(pixel,kind,cx,cy) {

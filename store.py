@@ -53,7 +53,7 @@ class Store:
         "source", "url", "title", "company", "location", "description",
         "salary_min", "salary_currency", "remote", "russian",
         "serbian_required", "published_at", "expires_at",
-        "languages", "required_languages", "country", "eligible_countries", "contacts", "salary_period", "salary_display", "publication_date_only", "expires_date_only",
+        "languages", "required_languages", "country", "eligible_countries", "contacts", "salary_period", "salary_display", "publication_date_only", "expires_date_only", "salary_source",
     )
     BOOL_FIELDS = ("remote", "russian", "serbian_required", "publication_date_only", "expires_date_only")
     JSON_FIELDS = ("languages", "required_languages", "eligible_countries", "contacts")
@@ -115,7 +115,7 @@ class Store:
             )
 
             existing = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
-            for name in self.JSON_FIELDS + ("country", "salary_period", "salary_display", "publication_date_only", "expires_date_only"):
+            for name in self.JSON_FIELDS + ("country", "salary_period", "salary_display", "publication_date_only", "expires_date_only", "salary_source"):
                 if name not in existing:
                     conn.execute(f"ALTER TABLE jobs ADD COLUMN {name} {'INTEGER' if name in self.BOOL_FIELDS else 'TEXT'}")
             conn.executescript("""
