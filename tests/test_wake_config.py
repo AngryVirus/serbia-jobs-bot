@@ -23,11 +23,34 @@ class WakeConfigurationTests(unittest.TestCase):
             output = io.StringIO()
             with patch.dict(os.environ, {'SJC_WAKE_ENABLED': str(enabled).lower(), 'SJC_GITHUB_WAKE_TOKEN': value}), \
                  patch.object(wake_config, 'invoke', return_value={'enabled': enabled}) as invoke, \
+                 patch.object(wake_config, 'verify_wake_access') as verify, \
                  contextlib.redirect_stdout(output):
                 wake_config.main()
+            self.assertEqual(verify.call_count, int(enabled))
             self.assertNotIn(value, output.getvalue())
             expected = {'enabled': enabled, **({'credential': value} if enabled else {})}
             invoke.assert_called_once_with('collection_wake_configure', **expected)
+
+    def test_setup_probe_uses_dedicated_key_and_fixed_main_without_reading_response_body(self):
+        from unittest.mock import MagicMock
+        response = MagicMock(status=204)
+        response.__enter__.return_value = response
+        with patch.object(wake_config, 'urlopen', return_value=response) as urlopen:
+            wake_config.verify_wake_access('x' * 80)
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.get_method(), 'POST')
+        self.assertEqual(request.full_url, 'https://api.github.com/repos/AngryVirus/serbia-jobs-bot/actions/workflows/catch-up.yml/dispatches')
+        self.assertEqual(request.data, b'{"ref": "main"}')
+        response.read.assert_not_called()
+
+    def test_failed_probe_does_not_install_credential_or_expose_error_details(self):
+        value = 'x' * 80
+        with patch.dict(os.environ, {'SJC_WAKE_ENABLED': 'true', 'SJC_GITHUB_WAKE_TOKEN': value}), \
+             patch.object(wake_config, 'urlopen', side_effect=OSError(value)), \
+             patch.object(wake_config, 'invoke') as invoke:
+            with self.assertRaises(RuntimeError) as error: wake_config.main()
+            self.assertNotIn(value, str(error.exception))
+            invoke.assert_not_called()
 
     def test_configuration_is_only_explicit_main_dispatch_with_step_scoped_credentials(self):
         root = Path(__file__).resolve().parents[1]
