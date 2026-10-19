@@ -20,8 +20,9 @@ test('role-specific panels hide every unavailable owner, team and unban function
  await handle(f,callback(1,'admin:bans:0'));assert(!callbacks(last(f)).some(x=>x.includes('remove')||x.includes('team')||x.includes('audit')));
  await handle(f,callback(2,'admin'));assert.deepEqual(callbacks(last(f)),['admin:bans:new','admin:bans:0','admin:team:0','menu']);
  await handle(f,callback(2,'admin:team:0'));assert(callbacks(last(f)).includes('admin:team:add:moderator'));assert(!JSON.stringify(last(f)).includes('admin:team:add:administrator'));
- for(const uid of [1,2])for(const action of ['admin:stats','admin:quality','admin:details','admin:reports:0','admin:audit:0','ads']){await handle(f,callback(uid,action));assert(!callbacks(last(f)).some(x=>/^ads:(new|start)|admin:(stats|quality|reports|audit)/.test(x)));}
- await handle(f,callback(OWNER_ID,'admin'));assert(callbacks(last(f)).includes('admin:team:0'));assert(callbacks(last(f)).includes('admin:audit:0'));
+ for(const uid of [1,2])for(const action of ['admin:stats','admin:quality','admin:details','admin:reports:0','admin:audit:0','admin:vacancies','admin:users','admin:staff','admin:collection','admin:refresh','admin:details:refresh','ads']){await handle(f,callback(uid,action));assert(!callbacks(last(f)).some(x=>/^ads:(new|start)|admin:(stats|quality|reports|audit|vacancies|users|staff|collection|refresh|details)/.test(x)));}
+ await handle(f,callback(OWNER_ID,'admin'));assert(callbacks(last(f)).includes('admin:staff'));
+ await handle(f,callback(OWNER_ID,'admin:staff'));assert(callbacks(last(f)).includes('admin:team:0'));assert(callbacks(last(f)).includes('admin:audit:0'));
 });
 test('owner assigns administrators, administrators manage only moderators; roles survive restart',async()=>{
  const f=await fixture();await grant(f,OWNER_ID,2,'administrator');assert.equal(await rawRole(new Store(f.db),2),'administrator');

@@ -219,7 +219,10 @@ export class Bot {
         return;
       }
       if(this.uid!==OWNER_ID && await this.store.isBanned(this.uid)){if(this.uid===this.chat)await deliverBanNotice(this.store,this.api,this.InputFile,this.uid,{contact:true});await this.store.finishUpdate(key);return;}
-      if(callback){try{await this.api.answerCallbackQuery({callback_query_id:callback.id});}catch{}}
+      if(callback){
+        const refreshing=this.uid===OWNER_ID && this.chat===OWNER_ID && /^admin:(?:refresh|details:refresh|(?:stats|quality)(?::[a-z0-9]+)*:refresh)$/.test(callback.data||'');
+        try{await this.api.answerCallbackQuery({callback_query_id:callback.id,...(refreshing?{text:'Обновляю сохранённые данные…'}:{})});}catch{}
+      }
       if(!await this.store.meta('active')){await this.panel('⏳ Бот обновляется. Попробуйте через несколько минут.');await this.finishAcceptedInput(key,message,callback);return;}
       const replay=await this.store.inputEffectStatus(this.uid,key);
       if(replay && replay.status!=='planned'){

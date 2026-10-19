@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture,job,handle,message,callback } from './fixtures.js';
-import { OWNER_ID,ownerReport,notifyReports } from '../tgcloud/lib/owner.js';
+import { OWNER_ID,ownerReport,ownerRoute,notifyReports } from '../tgcloud/lib/owner.js';
 import { groupJobs,visibleJobs } from '../tgcloud/lib/catalog.js';
 import { defaults } from '../tgcloud/lib/filters.js';
 import { administer,notifyOne } from '../tgcloud/lib/admin.js';
@@ -51,6 +51,117 @@ test('owner-only reports and moderation enforce authorization even for forged ca
   assert(f.api.sent.at(-1).text.length < 1000);
   await handle(f,callback(OWNER_ID,'admin:details')); assert(f.api.edited.at(-1).text.includes('Каталог:'));
   await handle(f,callback(2,'admin:details')); assert(f.api.edited.at(-1).text.includes('только владельцу'));
+});
+
+test('owner dashboard groups existing tools into readable sections with a route back',async()=>{
+  const f=await fixture();
+  await handle(f,callback(OWNER_ID,'admin'));
+  const dashboard=f.api.edited.at(-1),rows=dashboard.reply_markup.inline_keyboard;
+  assert(rows.every(row=>row.length===1));
+  assert.deepEqual(rows.flat().map(b=>[b.text,b.callback_data]),[
+    ['📋 Вакансии','admin:vacancies'],['👥 Пользователи','admin:users'],['🛡 Команда','admin:staff'],['📡 Сбор вакансий','admin:collection'],['📣 Реклама','ads'],['🔄 Обновить отчёт','admin:refresh'],['🏠 Главное меню','menu']
+  ]);
+  for(const [action,purpose,targets] of [
+    ['admin:vacancies','жалобы',['admin:reports:0','admin:blocked:0']],
+    ['admin:users','блокировками доступа',['admin:stats','admin:bans:0']],
+    ['admin:staff','изменения прав',['admin:team:0','admin:audit:0']],
+    ['admin:collection','сохранённые данные',['admin:sources:0','admin:quality:sources:0','admin:quality','admin:details']]
+  ]) {
+    await handle(f,callback(OWNER_ID,action));
+    const panel=f.api.edited.at(-1),buttons=panel.reply_markup.inline_keyboard;
+    assert(panel.text.includes(purpose)); assert(buttons.every(row=>row.length===1));
+    assert.deepEqual(buttons.flat().map(b=>b.callback_data),[...targets,'admin','menu']);
+    for(const target of targets) {
+      await handle(f,callback(OWNER_ID,target));
+      assert(!f.api.edited.at(-1).text.includes('Действие устарело'));
+      assert(f.api.edited.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data==='admin'));
+    }
+    await handle(f,callback(OWNER_ID,'admin'));
+    assert.deepEqual(f.api.edited.at(-1).reply_markup.inline_keyboard,rows);
+  }
+  assert(f.api.sent.every(p=>p.chat_id===OWNER_ID));
+  assert.equal(await f.store.meta('collection_run'),null);
+  assert.equal((await f.store.records('ad_campaign')).length,0);
+});
+
+test('owner sections need no catalog read and reject numeric-string or mismatched identities before reading',async()=>{
+  const sections=['admin:vacancies','admin:users','admin:staff','admin:collection'];
+  const actions=[...sections,'admin:refresh','admin:details:refresh'];
+  const panels=[],panel=async(text,rows)=>panels.push({text,rows});
+  for(const action of sections) {
+    await ownerRoute({uid:OWNER_ID,chat:OWNER_ID,panel},action);
+    assert(panels.at(-1).rows.flat().some(b=>b.callback_data==='admin'));
+  }
+  for(const [uid,chat] of [[String(OWNER_ID),OWNER_ID],[OWNER_ID,String(OWNER_ID)],[2,2],[OWNER_ID,2],[2,OWNER_ID]]) {
+    for(const action of actions) {
+      await ownerRoute({uid,chat,panel},action);
+      assert.match(panels.at(-1).text,/только владельцу/);
+      assert.equal(panels.at(-1).rows,undefined);
+    }
+  }
+});
+
+test('new owner callbacks cannot expose panels outside the owner private chat',async()=>{
+  const f=await fixture(),actions=['admin:vacancies','admin:users','admin:staff','admin:collection','admin:refresh','admin:details:refresh'];
+  for(const action of actions) {
+    await handle(f,callback(2,action));
+    assert.match(f.api.edited.at(-1).text,/только владельцу/);
+    assert.deepEqual(f.api.edited.at(-1).reply_markup.inline_keyboard.flat().map(b=>b.callback_data),['menu']);
+    for(const alter of [u=>{u.callback_query.message.chat.type='group';},u=>{u.callback_query.message.chat.id=2;},u=>{u.callback_query.from.id=String(OWNER_ID);}]) {
+      const u=callback(OWNER_ID,action),before=f.api.edited.length;
+      alter(u); await handle(f,u); assert.equal(f.api.edited.length,before);
+    }
+  }
+  assert.equal(f.api.sent.length,0);
+});
+
+test('summary and detailed refresh reread saved data and show report time without starting work',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:new Date('2026-07-01T12:34:56Z')});
+  const f=await fixture(),last={finished_at:'2026-07-01T11:00:00Z',totals:{sources:1,healthy_sources:1,sent:0},new_unique:1};
+  await f.store.setMeta('last_collection',last);
+  await f.store.setMeta('collection_run',{state:'done',finished_at:last.finished_at});
+  await f.store.putJob(job(1),true);
+  await handle(f,callback(OWNER_ID,'admin'));
+  const first=f.api.edited.at(-1).text;
+  assert.match(first,/В поиске: <b>1<\/b>/);
+  assert.match(first,/Последний сбор завершён: 2026-07-01 13:00 \(Белград\)/);
+  assert.match(first,/Время отчёта: 2026-07-01 14:34:56 \(Белград\)/);
+  assert(!first.includes('Обновление:'));
+  assert(!first.includes('✅ Отчёт обновлён из сохранённых данных.'));
+  await f.store.putJob(job(2,{url:'https://example.rs/second'}),true);
+  const snapshot=async()=>({meta:await f.db.all('SELECT key,payload FROM sjc_meta ORDER BY key'),records:await f.db.all('SELECT kind,record_key,payload FROM sjc_records ORDER BY kind,record_key')});
+  const before=await snapshot();
+  t.mock.timers.tick(2000);
+  await handle(f,callback(OWNER_ID,'admin:refresh'));
+  const summary=f.api.edited.at(-1).text;
+  assert(summary.startsWith('✅ Отчёт обновлён из сохранённых данных.'));
+  assert.match(summary,/В поиске: <b>2<\/b>/);
+  assert.match(summary,/Время отчёта: 2026-07-01 14:34:58 \(Белград\)/);
+  for(const action of ['admin:details','admin:details:refresh']) {
+    t.mock.timers.tick(1000); await handle(f,callback(OWNER_ID,action));
+    const detail=f.api.edited.at(-1);
+    assert.equal(detail.text.startsWith('✅ Отчёт обновлён из сохранённых данных.'),action==='admin:details:refresh');
+    assert.match(detail.text,/Подробный отчёт/); assert.match(detail.text,/Каталог: 2 публикаций/);
+    assert.match(detail.text,/Последний сбор завершён: 2026-07-01 13:00 \(Белград\)/);
+    assert(detail.reply_markup.inline_keyboard.flat().some(b=>b.callback_data==='admin:details:refresh'));
+  }
+  assert.match(f.api.edited.at(-1).text,/Время отчёта: 2026-07-01 14:35:00 \(Белград\)/);
+  for(const text of [summary,f.api.edited.at(-1).text]) {
+    assert(text.includes('актуальные сохранённые данные'));
+    assert(text.includes('Сбор вакансий выполняется автоматически'));
+  }
+  assert.deepEqual(await snapshot(),before);
+  assert.equal(f.api.sent.length,0);
+  assert(f.api.edited.every(p=>p.chat_id===OWNER_ID));
+});
+
+test('an uninitialized report separates its winter report time from unknown collection time',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:new Date('2026-01-01T23:59:58Z')});
+  const f=await fixture(),report=await ownerReport(f.store);
+  for(const text of [report.text,report.details]) {
+    assert.match(text,/Последний сбор завершён: нет данных/);
+    assert.match(text,/Время отчёта: 2026-01-02 00:59:58 \(Белград\)/);
+  }
 });
 
 test('moderation removes every copy from search and notifications; restore retains delivery history',async()=>{
@@ -140,12 +251,13 @@ test('collection report records completion, counts, sources and uncertain delive
   assert(report.text.includes('новых за сбор: <b>1</b>'));
   assert(report.details.includes('повторов за сбор: 1'));
   assert(report.details.includes('Ошибки доставки за сбор: 1 блокировок, 1 неопределённых отправок'));
-  assert(report.details.includes('Последний завершённый сбор:'));
+  assert(report.details.includes('Последний сбор завершён:'));
   const failedSource=report.issues.findIndex(s=>s.id==='telegram_youritjob'&&s.state==='error');
   assert(!report.sources.some(s=>s.id==='halooglasi'||s.id==='telegram_python_jobs'));
   assert(failedSource>=0);
   await handle(f,callback(OWNER_ID,`admin:sources:${Math.floor(failedSource/4)}`));
   assert(f.api.edited.at(-1).text.includes('Telegram · IT Работа: Сербия и удалёнка — ошибка.'));
+  assert.equal(f.api.edited.at(-1).reply_markup.inline_keyboard.flat().find(b=>b.callback_data==='admin:quality:sources:0').text,'📡 Все источники');
   assert(!report.text.includes(String(OWNER_ID)));
   await assert.rejects(administer({operation:'collection_end',owner:'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'},{ownerRun:true},f),/owner mismatch/);
 });

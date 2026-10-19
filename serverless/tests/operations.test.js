@@ -69,7 +69,7 @@ test('new panels reject forged owner identity and contain no individual usage de
  }
  await f.store.record('staff_audit','expired',{at:new Date(Date.now()-11*86400000).toISOString(),actor:{id:OWNER_ID},actor_role:'owner',action:'ban',target:77});
  const before=await f.db.all('SELECT * FROM sjc_records ORDER BY kind,record_key');
- const result=await administer({operation:'operations_check'},{ownerRun:true},f);assert.equal(result.panels,13);
+ const result=await administer({operation:'operations_check'},{ownerRun:true},f);assert.equal(result.panels,20);
  assert.deepEqual(await f.db.all('SELECT * FROM sjc_records ORDER BY kind,record_key'),before);
 });
 test('missing backups alert independently after 36 hours and recover without repeat spam',async()=>{
