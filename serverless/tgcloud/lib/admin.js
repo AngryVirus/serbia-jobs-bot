@@ -193,17 +193,30 @@ export async function administer(input, ctx, deps) {
     return { records: jobs.length, unique: groups.length, duplicates: jobs.length-groups.length, visible: visible.length, elapsed_ms: Date.now()-start };
   }
   if(op==='operations_check') {
-    const report=await ownerReport(store), panels=[];
+    const section=input.section||'all';
+    assert(['all','owner','analytics','personal','staff'].includes(section),'Unknown operations section');
+    const panels=[];
+    try {
+    const report=section==='staff'?null:await ownerReport(store);
     const bot={store,readOnly:true,uid:OWNER_ID,chat:OWNER_ID,s:settings((await store.user(OWNER_ID))?.settings),panel:async(text,rows)=>{assert(typeof text==='string' && text.length<4096,'Invalid operations panel');assert(rows.flat().every(b=>!b.callback_data || b.callback_data.length<=64),'Invalid operations callback');const image=renderImage(text);assert(image.width+image.height<=10000 && image.bytes.length<10000000,'Invalid operations image');panels.push(true);}};
-    for(const action of ['admin','admin:refresh','admin:vacancies','admin:users','admin:staff','admin:collection','admin:details:refresh'])await ownerRoute(bot,action);
-    for(const action of ['admin:ideas:pending:0','admin:ideas:reviewed:0'])await ownerRoute(bot,action);
-    for(const action of ['library','favorites:0'])await libraryRoute(bot,action);
-    for(const action of ['admin:stats:refresh','admin:stats:delivery:refresh','admin:stats:usage:refresh','admin:quality:refresh','admin:quality:sources:0:refresh','admin:quality:duplicates:0'])await analyticsPanel(bot,action,report);
+    if(section==='all'||section==='owner')for(const action of ['admin','admin:refresh','admin:vacancies','admin:users','admin:staff','admin:collection','admin:details:refresh'])await ownerRoute(bot,action,report);
+    if(section==='all'||section==='personal') {
+      for(const action of ['admin:ideas:pending:0','admin:ideas:reviewed:0'])await ownerRoute(bot,action,report);
+      for(const action of ['library','favorites:0'])await libraryRoute(bot,action,report.groups);
+    }
+    if(section==='all'||section==='analytics')for(const action of ['admin:stats:refresh','admin:stats:delivery:refresh','admin:stats:usage:refresh','admin:quality:refresh','admin:quality:sources:0:refresh','admin:quality:duplicates:0'])await analyticsPanel(bot,action,report);
+    if(section==='all'||section==='staff') {
     await banPanel(bot,'admin:bans:0');
     await teamPanel(bot,'admin:team:0');await auditPanel(bot,'admin:audit:0');
     for(const role of ['moderator','administrator'])await bot.panel(...staffHomeDocument(role));
     for(const active of [true,false])await bot.panel(banNoticeText({active,reason:'Проверка оформления служебного уведомления.',by:OWNER_ID}),[[{text:'Связаться с @AngryVirus',url:'https://t.me/AngryVirus'}]]);
-    return {panels:panels.length,freshness_warning:Boolean(await freshness(store)),backup_verified:Boolean((await store.meta('last_backup'))?.verified_at)};
+    }
+    return {section,panels:panels.length,failed:false,freshness_warning:Boolean(await freshness(store)),backup_verified:Boolean((await store.meta('last_backup'))?.verified_at)};
+    } catch(error) {
+      const message=String(error?.message||'');
+      const reason=message==='Invalid operations panel'?'panel_size':message==='Invalid operations callback'?'callback_size':message==='Invalid operations image'?'image_size':/limit|budget|memory|timeout/i.test(message)?'execution_limit':'execution_error';
+      return {section,panels:panels.length,failed:true,reason};
+    }
   }
   if (op === 'export') return { rows: await store.rows(input.table,input.offset,input.limit) };
   if (op === 'refresh_facts') {
