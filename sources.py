@@ -80,7 +80,7 @@ SOURCES: dict[str, Source] = {
     "tg_rabotavserbii": Source("tg_rabotavserbii", "Telegram · Работа в Сербии", "https://t.me/rabotavserbii", "https://t.me/s/rabotavserbii", (r"^/rabotavserbii/\d+/?$",), "Публичная лента канала Ovde Jobs: до двух страниц, без авторизации.", telegram_channel="rabotavserbii"),
     "tg_radim_serbia": Source("tg_radim_serbia", "Telegram · Radim Serbia", "https://t.me/radim_serbia", "https://t.me/s/radim_serbia", (r"^/radim_serbia/\d+/?$",), "Публичная лента Radim.rs: до двух страниц, без авторизации.", telegram_channel="radim_serbia"),
     "infostud": Source("infostud", "Poslovi Infostud", "https://poslovi.infostud.com/", "https://rss.infostud.com/poslovi/", (r"^/posao/.+",), api_hosts=("rss.infostud.com",), rss_feed=True),
-    "poslovi": Source("poslovi", "Poslovi.rs", "https://www.poslovi.rs/", "https://www.poslovi.rs/", (r"^/job/[^/]+/[^/]+-\d+/?$",), observed_links=True),
+    "poslovi": Source("poslovi", "Poslovi.rs", "https://www.poslovi.rs/", "https://www.poslovi.rs/jobs", (r"^/job/[^/]+/[^/]+-\d+/?$",), observed_links=True),
     "workforce": Source("workforce", "Workforce", "https://www.workforce.rs/", "https://www.workforce.rs/oglasi-za-posao/", (r"^/oglas/[^/]+/?$",), observed_links=True),
     "halooglasi": Source("halooglasi", "Halo oglasi", "https://www.halooglasi.com/posao", "https://www.halooglasi.com/posao/ponuda-poslova-pretraga", (r"^/posao/ponuda-poslova-[^/]+/[^/]+/\d+/?$",), observed_links=True),
     "careerjet": Source("careerjet", "Careerjet", "https://www.careerjet.rs/", "https://www.careerjet.rs/", (r"^/jobad/[^/]+/?$",), "При проверке сайт показывал защитную проверку; бот её не обходит."),
@@ -95,6 +95,17 @@ SOURCES: dict[str, Source] = {
     "startit": Source("startit", "Startit Poslovi", "https://startit.rs/poslovi/", "https://startit.rs/poslovi/", (r"^/poslovi/[^/]+/?$",), "IT-вакансии: только ссылки заголовков объявлений, без страниц тегов.", observed_links=True),
     "bulevar": Source("bulevar", "Omladinska zadruga Bulevar", "https://www.omladinskabulevar.rs/", "https://www.omladinskabulevar.rs/za-zadrugare-omladinske-zadruge/poslovi-omladinska-zadruga-beograd/", (r"^/za-zadrugare-omladinske-zadruge/poslovi-omladinska-zadruga-beograd/\d+-[^/]+\.html$",), "Вакансии молодёжного и студенческого кооператива; условия участия указаны в объявлении.", observed_links=True),
 }
+
+SOURCES.update({
+    'nsz': Source('nsz', 'NSZ · Национальная служба занятости', 'https://nsz.gov.rs/', 'https://nsz.gov.rs/employee/jobs/search', (r'^/employee/jobs/preview/\d+/?$',), observed_links=True),
+    'manpower': Source('manpower', 'Manpower Serbia', 'https://www.manpower.rs/', 'https://www.manpower.rs/sr/job-posts', (r'^/sr/job-posts/\d+/?$',), observed_links=True),
+    'boxposlovi': Source('boxposlovi', 'BOX Poslovi', 'https://www.boxposlovi.com/', 'https://www.boxposlovi.com/studenti/', (r'^/posao/[a-z0-9-]+/?$',), observed_links=True),
+    'delhaize': Source('delhaize', 'Delhaize Serbia / Maxi', 'https://karijera.delhaizeserbia.rs/', 'https://karijera.delhaizeserbia.rs/sitemap.vacancy.xml', (r'^/radne-pozicija/\d+/[a-z0-9-]+/?$',), observed_links=True, rss_feed=True),
+    'gh_wolt': Source('gh_wolt', 'Wolt · Serbia', 'https://job-boards.greenhouse.io/wolt', 'https://boards-api.greenhouse.io/v1/boards/wolt/jobs', (r'^/wolt/jobs/\d+/?$',), observed_links=True, api_hosts=('boards-api.greenhouse.io',)),
+    'gh_jetbrains': Source('gh_jetbrains', 'JetBrains · Serbia', 'https://job-boards.eu.greenhouse.io/jetbrains', 'https://boards-api.greenhouse.io/v1/boards/jetbrains/jobs', (r'^/jetbrains/jobs/\d+/?$',), observed_links=True, api_hosts=('boards-api.greenhouse.io',)),
+    'gh_nordeus': Source('gh_nordeus', 'Nordeus · Serbia', 'https://www.nordeus.com/', 'https://boards-api.greenhouse.io/v1/boards/nordeus/jobs', (r'^/careers/?$',), observed_links=True, api_hosts=('boards-api.greenhouse.io',)),
+    'gh_epicgames': Source('gh_epicgames', 'Epic Games · Serbia', 'https://epicgames.com/', 'https://boards-api.greenhouse.io/v1/boards/epicgames/jobs', (r'^/careers/jobs/\d+/?$',), observed_links=True, api_hosts=('boards-api.greenhouse.io',)),
+})
 
 for _channel, _name in CHANNELS.items():
     _source_id = 'telegram_' + _channel
@@ -212,12 +223,20 @@ def canonical_url(url: str) -> str:
 
 
 def _same_site(source: Source, url: str) -> bool:
-    origin_host = (urlsplit(source.url).hostname or "").removeprefix("www.")
-    candidate = urlsplit(url)
-    if source.telegram_channel and candidate.path != '/robots.txt':
-        if not re.fullmatch(r'/(?:s/)?' + re.escape(source.telegram_channel) + r'(?:/\d+)?/?', candidate.path, re.I):
+    if not isinstance(url, str) or any(ord(c) < 33 for c in url) or '\\' in url:
+        return False
+    try:
+        origin_host = (urlsplit(source.url).hostname or "").removeprefix("www.")
+        candidate = urlsplit(url)
+        if (candidate.scheme not in {"http", "https"} or candidate.username or candidate.password
+                or candidate.port not in (None, 443 if candidate.scheme == 'https' else 80)):
             return False
-    return candidate.scheme in {"http", "https"} and (candidate.hostname or "").removeprefix("www.") == origin_host and not candidate.username
+        if source.telegram_channel and candidate.path != '/robots.txt':
+            if not re.fullmatch(r'/(?:s/)?' + re.escape(source.telegram_channel) + r'(?:/\d+)?/?', candidate.path, re.I):
+                return False
+        return (candidate.hostname or "").removeprefix("www.") == origin_host
+    except ValueError:
+        return False
 
 
 def is_detail_url(source: Source, url: str) -> bool:
@@ -230,7 +249,10 @@ def discover_links(source: Source, page: PageParser, base_url: str) -> list[str]
     for href, label in page.links:
         if source.id == 'startit' and label not in titles:
             continue
-        url = canonical_url(urljoin(base_url, href))
+        try:
+            url = canonical_url(urljoin(base_url, href))
+        except ValueError:
+            continue
         if is_detail_url(source, url) and url not in result:
             result.append(url)
     return result
@@ -398,7 +420,10 @@ def _structured_job(source: Source, node: dict, page_url: str) -> Job | None:
     if not title:
         return None
     raw_url = node.get("url")
-    url = canonical_url(urljoin(page_url, raw_url)) if isinstance(raw_url, str) else canonical_url(page_url)
+    try:
+        url = canonical_url(urljoin(page_url, raw_url)) if isinstance(raw_url, str) else canonical_url(page_url)
+    except ValueError:
+        return None
     if not _same_site(source, url) or not is_detail_url(source, url):
         return None
     # A listing with several postings must supply individual URLs. Otherwise the
@@ -574,9 +599,13 @@ class Fetcher:
         self.last_request[origin] = time.monotonic()
 
     def _raw(self, url: str, *, robot_file: bool = False, redirects: int = 0) -> tuple[str, str]:
-        candidate = urlsplit(url)
-        api_allowed = (candidate.scheme == 'https' and candidate.hostname in self.source.api_hosts
-                       and not candidate.username and candidate.port in (None, 443))
+        try:
+            candidate = urlsplit(url)
+            api_allowed = (candidate.scheme == 'https' and candidate.hostname in self.source.api_hosts
+                           and not candidate.username and not candidate.password and candidate.port in (None, 443)
+                           and not any(ord(c) < 33 for c in url) and '\\' not in url)
+        except (ValueError, TypeError):
+            raise FetchError('error', 'Источник содержит некорректный URL.') from None
         if redirects > 4 or not (_same_site(self.source, url) or api_allowed):
             raise FetchError("error", "Перенаправление за пределы источника или слишком много перенаправлений.")
         origin = urlunsplit((*urlsplit(url)[:2], "", "", ""))
@@ -647,29 +676,41 @@ class Fetcher:
 def _status(source: Source, state: str, count: int = 0, detail: str = "", **extra) -> dict:
     return {"state": state, "count": count, "detail": detail, "url": source.url,
             "checked_at": datetime.now(timezone.utc).isoformat(), "experimental": True,
-            "observed_links": source.observed_links, **extra}
+            "healthy": state in {'ok', 'empty'},
+            "observed_links": source.observed_links, "discovered": 0, "inspected": 0,
+            "parsed_count": count, "rejected": {}, "skipped_known": 0, "truncated": False,
+            "backlog": 0, "listing_pages": 0, **extra}
 
 
-def collect_source(source: Source, *, detail_limit: int = DEFAULT_DETAIL_LIMIT, fetcher: Fetcher | None = None, include_expired: bool = False) -> tuple[list[Job], dict]:
+def collect_source(source: Source, *, detail_limit: int = DEFAULT_DETAIL_LIMIT, fetcher: Fetcher | None = None, include_expired: bool = False, crawl_state: dict | None = None, page_limit: int = 2) -> tuple[list[Job], dict]:
     if source.requires_permission:
         return [], _status(source, "requires_permission", detail=source.note)
     fetcher = fetcher or Fetcher(source)
+    crawl_options = {'crawl_state': crawl_state, 'page_limit': page_limit} if crawl_state is not None else {}
+    if source.id in {'nsz', 'manpower', 'boxposlovi', 'delhaize'}:
+        from additional_sources import collect_additional
+        return collect_additional(source, fetcher, detail_limit=detail_limit, include_expired=include_expired, **crawl_options)
+    if source.id.startswith('gh_'):
+        from employer_sources import collect_employer
+        return collect_employer(source, fetcher, detail_limit=detail_limit, include_expired=include_expired, **crawl_options)
     if source.rss_feed:
         from rss_sources import collect_rss
         return collect_rss(source, fetcher, include_expired=include_expired)
     if source.id in {'tg_rabotavserbii', 'tg_radim_serbia'}:
         from telegram_templates import collect_telegram
-        return collect_telegram(source, fetcher, include_expired=include_expired)
+        return collect_telegram(source, fetcher, include_expired=include_expired, **crawl_options)
     if source.telegram_channel:
         from telegram_sources import collect_channel
-        return collect_channel(source, fetcher, include_expired=include_expired)
+        return collect_channel(source, fetcher, include_expired=include_expired, **crawl_options)
     if source.id == 'serbiahub':
-        return _collect_serbiahub(source, fetcher, include_expired=include_expired)
+        return _collect_serbiahub(source, fetcher, include_expired=include_expired, **crawl_options)
     if source.id == 'lakodoposla':
         from source_adapters import collect_lako
-        return collect_lako(source, fetcher, detail_limit, include_expired=include_expired)
+        return collect_lako(source, fetcher, detail_limit, include_expired=include_expired, **crawl_options)
     if source.feed_url:
-        return _collect_feed(source, fetcher, include_expired=include_expired)
+        return _collect_feed(source, fetcher, include_expired=include_expired, **crawl_options)
+    if crawl_state is not None:
+        return _collect_html_state(source, fetcher, detail_limit, page_limit, crawl_state, include_expired)
     jobs: dict[str, Job] = {}
     errors: list[str] = []
     error_states: list[str] = []
@@ -729,10 +770,13 @@ def collect_source(source: Source, *, detail_limit: int = DEFAULT_DETAIL_LIMIT, 
     jobs = {url: job for url,job in jobs.items() if (include_expired or active(job.__dict__)) and serbia_eligible(job.__dict__)}
     if parsed_count > len(jobs):
         detail += f' Отсеяно {parsed_count-len(jobs)} истёкших или явно не подходящих по стране объявлений.'
-    return list(jobs.values()), _status(source, state if jobs or state not in {'ok','partial'} else 'empty', len(jobs), detail, discovered=len(links), inspected=inspected, listing_pages=listing_pages, parsed_count=parsed_count)
+    return list(jobs.values()), _status(source, state if jobs or state not in {'ok','partial'} else 'empty', len(jobs), detail, discovered=len(links), inspected=inspected, listing_pages=listing_pages, parsed_count=parsed_count,
+                                      healthy=not errors and state in {'ok', 'empty'})
 
 
-def _collect_feed(source: Source, fetcher: Fetcher, *, include_expired: bool = False) -> tuple[list[Job], dict]:
+def _collect_feed(source: Source, fetcher: Fetcher, *, include_expired: bool = False, crawl_state=None, page_limit=2) -> tuple[list[Job], dict]:
+    if crawl_state is not None:
+        return _collect_feed_state(source, fetcher, page_limit, crawl_state, include_expired)
     jobs: dict[str, Job] = {}
     seen: set[str] = set()
     url = source.feed_url
@@ -754,11 +798,12 @@ def _collect_feed(source: Source, fetcher: Fetcher, *, include_expired: bool = F
     return list(jobs.values()), _status(source, state, len(jobs), detail, feed=True, inspected=len(seen))
 
 
-def collect_all(enabled: Iterable[str] | None = None, *, on_source=None, include_expired: bool = False) -> tuple[list[Job], dict[str, dict]]:
+def collect_all(enabled: Iterable[str] | None = None, *, on_source=None, include_expired: bool = False, crawl_states=None, detail_limit=DEFAULT_DETAIL_LIMIT, page_limit=2) -> tuple[list[Job], dict[str, dict]]:
     """Collect selected source IDs synchronously; use asyncio.to_thread in a bot.
 
-    HTML crawl visits one listing and at most eight detail pages per source. The
-    official KlikDoPosla feed is limited to four pages. Selection is explicit:
+    Legacy callers retain their existing bounded crawl. Cloud callers provide
+    per-source checkpoints and explicit detail/page budgets to resume backfill.
+    Selection is explicit:
     an empty iterable means collect nothing, not every source.
     Cloud callers may include expiry corrections for their existing-only upsert
     path; ordinary callers continue to receive active vacancies only.
@@ -772,7 +817,13 @@ def collect_all(enabled: Iterable[str] | None = None, *, on_source=None, include
             statuses[source_id] = {"state": "error", "count": 0, "detail": "Неизвестный источник.", "experimental": True}
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         options = {'include_expired': True} if include_expired else {}
-        futures = {executor.submit(collect_source, source, **options): source for source in selected}
+        if crawl_states is not None or detail_limit != DEFAULT_DETAIL_LIMIT:
+            options['detail_limit'] = detail_limit
+        if crawl_states is not None or page_limit != 2:
+            options['page_limit'] = page_limit
+        futures = {executor.submit(collect_source, source,
+                   **({'crawl_state': crawl_states.get(source.id, {})} if crawl_states is not None else {}),
+                   **options): source for source in selected}
         for future in concurrent.futures.as_completed(futures):
             source = futures[future]
             try:
@@ -792,15 +843,28 @@ def collect_all(enabled: Iterable[str] | None = None, *, on_source=None, include
     return list(jobs.values()), statuses
 
 
-def _collect_serbiahub(source, fetcher, *, include_expired=False):
+def _collect_serbiahub(source, fetcher, *, include_expired=False, crawl_state=None, page_limit=2):
     """Public anonymous API used by the site's frontend (not a private API)."""
     from job_metadata import enrich, text_salary, valid_job_url
     from filters import active, serbia_eligible
-    jobs = {}
-    pages = 0
+    from crawl_state import CrawlState
+    def cursor_valid(value):
+        parsed = urlsplit(value)
+        params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        return (parsed.hostname == 'serbiahub.com' and parsed.path == '/api/jobs' and set(params) == {'limit', 'offset'}
+                and params['limit'] == '50' and bool(re.fullmatch(r'\d{1,7}', params['offset']))
+                and int(params['offset']) % 50 == 0)
+    crawl = CrawlState(source, crawl_state, cursor_validator=cursor_valid) if crawl_state is not None else None
+    jobs, rejected = {}, {}
+    pages = inspected = parsed_count = skipped = 0
+    discovered = set()
+    resume = int(dict(parse_qsl(urlsplit(crawl.cursor).query))['offset']) if crawl and crawl.cursor else 50
+    offsets = [0] + [resume + index * 50 for index in range(max(0, min(page_limit, 4) - 1))] if crawl else [0, 50]
+    next_url = None
     try:
-        for offset in (0, 50):
-            body, _ = fetcher.get(f'https://serbiahub.com/api/jobs?limit=50&offset={offset}')
+        for offset in dict.fromkeys(offsets):
+            current_url = f'https://serbiahub.com/api/jobs?limit=50&offset={offset}'
+            body, _ = fetcher.get(current_url)
             data = json.loads(body)
             if not isinstance(data,dict) or not isinstance(data.get('items'),list):
                 raise FetchError('error','Изменился формат публичного API SerbiaHub.')
@@ -811,6 +875,11 @@ def _collect_serbiahub(source, fetcher, *, include_expired=False):
                 identity = str(node.get('id',''))
                 if not title or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',identity): continue
                 url = 'https://serbiahub.com/detail/jobs/' + identity
+                discovered.add(url)
+                if crawl and not crawl.due(url):
+                    skipped += 1
+                    continue
+                inspected += 1
                 job = Job(source.id,url,title,clean_text(node.get('company')),
                           clean_text(node.get('city')),clean_text(node.get('description'))[:16000],
                           published_at=safe_date(node.get('published_at') or node.get('datePosted')),
@@ -834,13 +903,193 @@ def _collect_serbiahub(source, fetcher, *, include_expired=False):
                     job.salary_currency=currency if currency in ('RSD','EUR','USD') else None
                     job.salary_period='month'
                 if node.get('salaryText'): job.salary_display=clean_text(node['salaryText'])[:150]
-                if (include_expired or active(job.__dict__)) and serbia_eligible(job.__dict__) and valid_job_url(url): jobs[url]=job
+                parsed_count += 1
+                if not include_expired and not active(job.__dict__):
+                    rejected['expired'] = rejected.get('expired', 0) + 1
+                elif not serbia_eligible(job.__dict__):
+                    rejected['outside_serbia'] = rejected.get('outside_serbia', 0) + 1
+                elif valid_job_url(url):
+                    jobs[url] = job
+                if crawl:
+                    crawl.mark(url)
             total=data.get('total')
-            if len(data['items'])<50 or isinstance(total,int) and offset+50>=total: break
+            more = not (len(data['items']) < 50 or isinstance(total, int) and offset + 50 >= total)
+            next_url = f'https://serbiahub.com/api/jobs?limit=50&offset={offset + 50}' if more else None
+            if crawl:
+                crawl.cursor = (f'https://serbiahub.com/api/jobs?limit=50&offset={resume}'
+                                if pages == 1 and resume > 50 else next_url)
+            if not more and not (crawl and pages == 1 and resume > 50):
+                break
     except (FetchError,ValueError) as error:
         detail=error.detail if isinstance(error,FetchError) else 'Некорректный JSON публичного API.'
         state='partial' if jobs else error.state if isinstance(error,FetchError) else 'error'
-        return list(jobs.values()),_status(source,state,len(jobs),detail,inspected=pages,public_api=True)
-    return list(jobs.values()),_status(source,'ok' if jobs else 'empty',len(jobs),
-        'Публичный API SerbiaHub: не более двух страниц по 50 объявлений; firstSeen не используется как дата публикации.',
-        inspected=pages,public_api=True)
+        if crawl and pages:
+            crawl.cursor = current_url
+        return list(jobs.values()),_status(source,state,len(jobs),detail,inspected=inspected,public_api=True,
+            discovered=len(discovered), parsed_count=parsed_count, rejected=rejected, skipped_known=skipped,
+            truncated=bool(next_url or crawl and crawl.cursor), backlog=0, listing_pages=pages,
+            **({'crawl_state': crawl.checkpoint()} if crawl else {}))
+    return list(jobs.values()),_status(source,('partial' if crawl and crawl.cursor else 'ok') if jobs or skipped else 'empty',len(jobs),
+        'Публичный API SerbiaHub: ограниченный возобновляемый обход; firstSeen не используется как дата публикации.',
+        inspected=inspected,public_api=True,discovered=len(discovered),parsed_count=parsed_count,healthy=True,
+        rejected=rejected,skipped_known=skipped,truncated=bool(next_url or crawl and crawl.cursor),
+        backlog=0,listing_pages=pages,**({'crawl_state': crawl.checkpoint()} if crawl else {}))
+
+
+def _next_listing(source, page, base_url):
+    from crawl_state import listing_cursor
+    for href, label in page.links:
+        try:
+            url = canonical_url(urljoin(base_url, href))
+        except ValueError:
+            continue
+        if (re.fullmatch(r'next(?: page)?|sledeća|sledeca|следующая|→|»', label.strip(), re.I)
+                and listing_cursor(source, url) and not is_detail_url(source, url) and url != base_url):
+            return url
+    return None
+
+
+def _collect_html_state(source, fetcher, detail_limit, page_limit, raw, include_expired):
+    from crawl_state import CrawlState
+    from filters import active, serbia_eligible
+    crawl = CrawlState(source, raw)
+    jobs, errors, rejected = {}, [], {}
+    discovered, inspected, parsed_count, pages = set(), 0, 0, 0
+    visited = set()
+    first_html = ''
+    resume = crawl.cursor
+    url = source.listing_url
+
+    def accept(job):
+        nonlocal parsed_count
+        parsed_count += 1
+        if not include_expired and not active(job.__dict__):
+            rejected['expired'] = rejected.get('expired', 0) + 1
+        elif not serbia_eligible(job.__dict__):
+            rejected['outside_serbia'] = rejected.get('outside_serbia', 0) + 1
+        else:
+            jobs[job.url] = job
+
+    while url and url not in visited and pages < max(1, min(page_limit, 4)):
+        visited.add(url)
+        try:
+            html, final_url = fetcher.get(url)
+            pages += 1
+            if pages == 1:
+                first_html = html
+            page = parse_page(html)
+            inline = extract_jobs(source, html, final_url, allow_fallback=False)
+            inline_urls = {job.url for job in inline}
+            for job in inline:
+                discovered.add(job.url)
+                if crawl.due(job.url):
+                    accept(job)
+                    crawl.mark(job.url)
+                else:
+                    crawl.skipped_known += 1
+            links = [link for link in discover_links(source, page, final_url) if link not in inline_urls]
+            discovered.update(links)
+            overflow = crawl.enqueue(links, priority=pages == 1)
+            next_url = _next_listing(source, page, final_url)
+            if overflow:
+                # Revisit this page after draining its bounded queue. Links not
+                # stored in the checkpoint are rediscovered rather than lost.
+                crawl.cursor = url
+                break
+            if pages == 1 and resume and resume != source.listing_url:
+                next_url = resume
+            crawl.cursor = next_url
+            url = next_url
+        except FetchError as error:
+            errors.append(error)
+            # Retain the failed continuation and do not advance past it.
+            if pages:
+                crawl.cursor = url
+            break
+
+    blocked = errors and errors[0].state in {'blocked', 'robots_unavailable', 'robots_disallowed', 'timeout'}
+    for url in ([] if blocked else crawl.take(detail_limit)):
+        inspected += 1
+        try:
+            html, final_url = fetcher.get(url)
+            parsed = extract_jobs(source, html, final_url)
+            if not parsed:
+                rejected['unrecognized'] = rejected.get('unrecognized', 0) + 1
+            for job in parsed:
+                accept(job)
+            crawl.mark(url)
+        except FetchError as error:
+            errors.append(error)
+            crawl.defer(url)
+            if error.state in {'blocked', 'robots_unavailable', 'robots_disallowed', 'timeout'}:
+                break
+    truncated = bool(crawl.pending or crawl.cursor)
+    state = 'partial' if errors or truncated else 'ok' if jobs or crawl.skipped_known else 'empty'
+    if errors and not jobs:
+        state = errors[0].state
+    if not jobs and not discovered and first_html and re.search(r'<script[^>]*src=', first_html, re.I) and len(parse_page(first_html).lines) < 5:
+        state = 'unsupported'
+    detail = 'Возобновляемый обход: свежая страница и продолжение сохранённого списка; полное покрытие не гарантируется.'
+    if errors:
+        detail += ' ' + errors[0].detail
+    return list(jobs.values()), _status(source, state, len(jobs), detail,
+        discovered=len(discovered), inspected=inspected, parsed_count=parsed_count,
+        rejected=rejected, skipped_known=crawl.skipped_known, truncated=truncated,
+        backlog=len(crawl.pending), listing_pages=pages, crawl_state=crawl.checkpoint(),
+        healthy=not errors and state != 'unsupported')
+
+
+def _feed_cursor(source, value):
+    parsed, base = urlsplit(value), urlsplit(source.feed_url or source.listing_url)
+    return parsed.hostname == base.hostname and parsed.path == base.path and all(key == 'page' and re.fullmatch(r'[1-9]\d{0,5}', val)
+        for key, val in parse_qsl(parsed.query, keep_blank_values=True))
+
+
+def _collect_feed_state(source, fetcher, page_limit, raw, include_expired):
+    from crawl_state import CrawlState
+    from filters import active, serbia_eligible
+    crawl = CrawlState(source, raw, cursor_validator=lambda value: _feed_cursor(source, value))
+    jobs, rejected, visited, discovered = {}, {}, set(), set()
+    pages = inspected = parsed_count = 0
+    error = None
+    resume, url = crawl.cursor, source.feed_url
+    while url and url not in visited and pages < max(1, min(page_limit, 4)):
+        visited.add(url)
+        try:
+            body, final_url = fetcher.get(url)
+            page_jobs, next_url = parse_feed_jobs(source, body)
+            pages += 1
+            for job in page_jobs:
+                discovered.add(job.url)
+                if not crawl.due(job.url):
+                    crawl.skipped_known += 1
+                    continue
+                inspected += 1
+                parsed_count += 1
+                if not include_expired and not active(job.__dict__):
+                    rejected['expired'] = rejected.get('expired', 0) + 1
+                elif not serbia_eligible(job.__dict__):
+                    rejected['outside_serbia'] = rejected.get('outside_serbia', 0) + 1
+                else:
+                    jobs[job.url] = job
+                crawl.mark(job.url)
+            if next_url and not crawl.valid_cursor(next_url):
+                raise FetchError('error', 'Официальная лента содержит неподдерживаемую пагинацию.')
+            if pages == 1 and resume and resume != source.feed_url:
+                next_url = resume
+            crawl.cursor = next_url
+            url = next_url
+        except FetchError as exc:
+            error = exc
+            if pages:
+                crawl.cursor = url
+            break
+    truncated = bool(crawl.cursor)
+    state = 'partial' if truncated or error else 'ok' if jobs or crawl.skipped_known else 'empty'
+    if error and not jobs:
+        state = error.state
+    return list(jobs.values()), _status(source, state, len(jobs),
+        error.detail if error else 'Официальная JSON-лента: свежая страница и сохранённое продолжение; обход ограничен бюджетом.',
+        feed=True, discovered=len(discovered), inspected=inspected, parsed_count=parsed_count,
+        rejected=rejected, skipped_known=crawl.skipped_known, truncated=truncated,
+        backlog=0, listing_pages=pages, crawl_state=crawl.checkpoint(), healthy=error is None)

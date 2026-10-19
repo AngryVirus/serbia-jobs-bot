@@ -51,16 +51,19 @@ class CollectionWorkerTests(unittest.TestCase):
     def test_collection_opt_in_uploads_expiry_correction_as_enriched_facts(self):
         job = Job('radim', 'https://radim.rs/jobs/known', 'Support', expires_at='2020-01-01')
 
-        def collect_all(*, on_source, include_expired):
+        def collect_all(*, on_source, include_expired, crawl_states, detail_limit, page_limit):
             self.assertTrue(include_expired)
+            self.assertTrue(all(isinstance(state, dict) for state in crawl_states.values()))
+            self.assertEqual((detail_limit, page_limit), (24, 4))
             on_source('radim', [job], {'state': 'ok'})
 
         def invoke(operation, **fields):
             if operation == 'init':
                 return {'active': True}
             if operation == 'collect':
-                self.assertEqual(fields['jobs'][0]['expires_at'], '2020-01-01')
-                self.assertLess(fields['jobs'][0]['_cloud']['expires_ms'], 1600000000000)
+                if fields['jobs']:
+                    self.assertEqual(fields['jobs'][0]['expires_at'], '2020-01-01')
+                    self.assertLess(fields['jobs'][0]['_cloud']['expires_ms'], 1600000000000)
                 return {'added': 0}
             return {}
 
@@ -71,6 +74,71 @@ class CollectionWorkerTests(unittest.TestCase):
             collect.main()
         self.assertEqual(calls.call_args.args, ('collection_end',))
         self.assertFalse(calls.call_args.kwargs['failed'])
+
+    def test_source_checkpoint_is_uploaded_only_with_the_last_confirmed_batch(self):
+        jobs = [Job('radim', f'https://radim.rs/jobs/{i}', 'Support') for i in range(30)]
+        checkpoint = {'version': 1, 'pending': [], 'seen': {}}
+        status = {'state': 'partial', 'healthy': True, 'crawl_state': checkpoint, 'discovered': 30, 'inspected': 30,
+                  'parsed_count': 30, 'rejected': {'foreign': 2}, 'truncated': True, 'backlog': 4}
+        batches, states = [], []
+
+        def invoke(operation, **fields):
+            if operation == 'init': return {'active': True}
+            if operation == 'collection_state':
+                states.append(fields['source'])
+                return {'state': {'version': 1}}
+            if operation == 'collect':
+                batches.append(fields)
+                return {'added': len(fields['jobs'])}
+            return {}
+
+        def collect_all(**fields):
+            self.assertEqual(set(fields['crawl_states']), set(states))
+            fields['on_source']('radim', jobs, status)
+
+        with patch.object(collect, 'invoke', side_effect=invoke) as calls, \
+             patch.object(collect, 'collect_all', side_effect=collect_all), \
+             patch.object(collect, 'notify', return_value=(0, 0)), contextlib.redirect_stdout(io.StringIO()):
+            collect.main()
+        self.assertEqual([len(batch['jobs']) for batch in batches], [25, 5, 0])
+        self.assertNotIn('status', batches[0])
+        self.assertNotIn('status', batches[1])
+        self.assertEqual(batches[2]['status'], status)
+        totals = calls.call_args.kwargs['totals']
+        self.assertEqual(totals['healthy_sources'], 1)
+        self.assertEqual((totals['added'], totals['inspected'], totals['rejected'], totals['truncated_sources']), (30, 30, 2, 1))
+
+    def test_failed_upload_never_commits_a_source_checkpoint(self):
+        jobs = [Job('radim', f'https://radim.rs/jobs/{i}', 'Support') for i in range(51)]
+        writes = []
+
+        def invoke(operation, **fields):
+            if operation == 'init': return {'active': True}
+            if operation == 'collection_state': return {'state': {}}
+            if operation == 'collect':
+                writes.append(fields)
+                if len(writes) == 2: raise RuntimeError('Synthetic upload failure')
+                return {'added': len(fields['jobs'])}
+            return {}
+
+        with patch.object(collect, 'invoke', side_effect=invoke) as calls, \
+             patch.object(collect, 'collect_all', side_effect=lambda **fields: fields['on_source']('radim', jobs, {'state': 'ok', 'crawl_state': {'version': 1}})), \
+             patch.object(collect, 'notify', return_value=(0, 0)), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, 'Synthetic upload failure'): collect.main()
+        self.assertTrue(all('status' not in fields for fields in writes))
+        self.assertTrue(calls.call_args.kwargs['failed'])
+        self.assertEqual(calls.call_args.kwargs['totals']['added'], 25)
+
+    def test_upload_bytes_are_bounded_for_full_multilingual_descriptions(self):
+        jobs = [{'description': 'я' * 16000, 'id': i} for i in range(12)]
+        batches = list(collect.upload_batches(jobs))
+        self.assertGreater(len(batches), 1)
+        import json
+        for batch in batches:
+            self.assertLessEqual(len(json.dumps(batch, ensure_ascii=False, separators=(',', ':')).encode()), collect.MAX_BATCH_BYTES)
+        self.assertEqual(sum(map(len, batches)), 12)
+        with self.assertRaisesRegex(RuntimeError, 'safe collection batch size'):
+            list(collect.upload_batches([{'description': 'x' * collect.MAX_BATCH_BYTES}]))
 
 
 if __name__ == '__main__':

@@ -1,5 +1,5 @@
 import { banPanel } from './bans.js';
-import { analyticsPanel,successfulCollection } from './analytics.js';
+import { analyticsPanel,successfulCollection,collectionMetrics,sourceHealthy } from './analytics.js';
 import { SOURCE_NAMES } from './config.js';
 import { sourceEnabled } from './source-policy.js';
 import { defaults, belgradeOffset } from './filters.js';
@@ -8,6 +8,7 @@ import { button, BACK, safe, card, links } from './ui.js';
 import { OWNER_ID } from './permissions.js';
 export { OWNER_ID } from './permissions.js';
 export const REASONS = { not_job: 'Не вакансия / реклама', duplicate: 'Повтор объявления', outdated: 'Набор закрыт / устарело' };
+const SOURCE_PAGE=4;
 const OWNER_BACK = [[button('📊 Отчёт владельца', 'admin')], ...BACK];
 const date = value => Number.isFinite(Date.parse(value)) ? new Date(Date.parse(value)+belgradeOffset(Date.parse(value))).toISOString().replace('T',' ').slice(0,16) + ' (Белград)' : 'нет данных';
 const STATES = { ok:'работает', empty:'нет подходящих объявлений', partial:'частичный сбор', blocked:'доступ заблокирован', robots_disallowed:'автосбор запрещён', unsupported:'нет доступной ленты', requires_permission:'нужно разрешение', excluded:'не подходит название канала', error:'ошибка', unknown:'не проверен' };
@@ -86,8 +87,8 @@ export async function ownerReport(store) {
   const successful=Date.parse(await successfulCollection(store)),stale=!Number.isFinite(successful)||Date.now()-successful>7200000;
   const bySource = new Map(statuses.map(s=>[s.source,s.payload]));
   const sources = Object.keys(SOURCE_NAMES).filter(sourceEnabled).map(id=>({id,...(bySource.get(id) || {state:'unknown'})}));
-  const issues = sources.filter(s=>!['ok','empty'].includes(s.state));
-  const totals = Object.fromEntries(Object.keys(STATES).map(s=>[s,sources.filter(x=>x.state===s).length]));
+  const healthy=sources.filter(sourceHealthy),continuing=healthy.filter(s=>s.state==='partial'||s.truncated||s.backlog>0);
+  const issues = sources.filter(s=>!sourceHealthy(s));
   const deliveryStates = await store.db.all('SELECT state,COUNT(*) AS n FROM sjc_deliveries GROUP BY state');
   const delivery = Object.fromEntries(deliveryStates.map(r=>[r.state,r.n]));
   const cooldown = await store.meta('notification_cooldown');
@@ -97,14 +98,14 @@ export async function ownerReport(store) {
   if (last) text += `Результат: ${last.failed ? 'завершился с ошибкой' : 'успешно'}. Источников: ${last.totals?.sources ?? '—'}/${sources.length}.\nНовых доступных вакансий: ${last.new_unique ?? '—'}; повторов за сбор: ${last.new_duplicates ?? '—'}; новых записей: ${last.totals?.added ?? '—'}.\nУведомлений за сбор: ${last.totals?.sent ?? '—'}. Ошибки доставки за сбор: ${last.totals?.blocked ?? '—'} блокировок, ${last.totals?.uncertain ?? '—'} неопределённых отправок.\n`;
   if (running?.state === 'running') text += `Сбор начат: ${date(running.started_at)}${Date.now()-Date.parse(running.started_at)>1800000 ? ' — проверьте зависший запуск' : ''}.\n`;
   if (stale) text += '⚠️ Нет подтверждения успешного свежего сбора за последние 2 часа.\n';
-  text += `\nИсточники: ${totals.ok} работают, ${totals.empty} без подходящих объявлений, ${issues.length} требуют внимания.\nОшибки доставки за всё время: ${delivery.blocked || 0} блокировок, ${counts.uncertain} неопределённых.\nЖалоб ожидает проверки: ${pending}.`;
+  text += `\nИсточники: ${healthy.length} доступны, ${healthy.filter(s=>s.state==='empty').length} без подходящих объявлений, ${issues.length} требуют внимания.${continuing.length?' '+continuing.length+' продолжают обход каталога.':''}\nОшибки доставки за всё время: ${delivery.blocked || 0} блокировок, ${counts.uncertain} неопределённых.\nЖалоб ожидает проверки: ${pending}.`;
   if (cooldown>Date.now()) text += `\nTelegram ограничил отправку до ${date(new Date(cooldown).toISOString())}.`;
   const details = text;
   const stuck = running?.state==='running' && Date.now()-Date.parse(running.started_at)>1800000;
   const health = stuck ? '⚠️ Сбор затянулся' : running?.state==='running' ? '🔄 Идёт сбор вакансий' : last?.failed ? '⚠️ Последний сбор с ошибкой' : stale ? '⚠️ Данные давно не обновлялись' : '✅ Сбор работает';
   text = `<b>📊 Отчёт владельца</b>\n${health}\n\n`;
   text += `<b>💼 Вакансии</b>\nВ поиске: <b>${visibleJobs(groups,defaults()).length}</b> · новых за сбор: <b>${last?.new_unique ?? '—'}</b>\n`;
-  text += `<b>📡 Источники</b>\nРаботают: ${totals.ok + totals.empty}/${sources.length} · требуют внимания: ${issues.length}\n\n`;
+  text += `<b>📡 Источники</b>\nДоступны: ${healthy.length}/${sources.length} · требуют внимания: ${issues.length}${continuing.length?'\nПродолжают обход каталога: '+continuing.length:''}\n\n`;
   text += `<b>🔔 Последний сбор</b>\nУведомлений: ${last?.totals?.sent ?? '—'} · повторов: ${last?.new_duplicates ?? '—'}\n`;
   text += `<b>🚩 Жалобы</b> · ${pending} ожидают проверки\n`;
   if (last?.totals?.blocked || last?.totals?.uncertain) text += `\n⚠️ Доставка: ${last.totals.blocked || 0} блокировок · ${last.totals.uncertain || 0} неподтверждённых\n`;
@@ -122,12 +123,12 @@ export async function ownerRoute(bot, action) {
   if (action === 'admin:details') return bot.panel(data.details,OWNER_BACK);
   let m;
   if ((m=/^admin:sources:(\d+)$/.exec(action))) {
-    const page=Math.min(Number(m[1]),Math.max(0,Math.ceil(data.issues.length/6)-1));
-    const text='<b>⚠️ Источники, требующие внимания</b>\n\n'+(data.issues.slice(page*6,page*6+6).map(s=>`${safe(SOURCE_NAMES[s.id],80)} — ${STATES[s.state] || 'ошибка'}.\n${safe(s.detail,150)}\nПроверка: ${date(s.checked_at)}`).join('\n\n') || 'Проблем по последней диагностике нет.');
+    const page=Math.min(Number(m[1]),Math.max(0,Math.ceil(data.issues.length/SOURCE_PAGE)-1));
+    const text='<b>⚠️ Источники, требующие внимания</b>\n\n'+(data.issues.slice(page*SOURCE_PAGE,(page+1)*SOURCE_PAGE).map(s=>`${safe(SOURCE_NAMES[s.id],80)} — ${STATES[s.state] || 'ошибка'}.\n${safe(s.detail,150)}\nПроверка: ${date(s.checked_at)}${collectionMetrics(s)?'\n'+collectionMetrics(s):''}`).join('\n\n') || 'Проблем по последней диагностике нет.');
     const rows=[];
     if(page) rows.push(button('⬅️',`admin:sources:${page-1}`));
-    if((page+1)*6<data.issues.length) rows.push(button('➡️',`admin:sources:${page+1}`));
-    return bot.panel(text,[...(rows.length?[rows]:[]),...OWNER_BACK]);
+    if((page+1)*SOURCE_PAGE<data.issues.length) rows.push(button('➡️',`admin:sources:${page+1}`));
+    return bot.panel(text,[...(rows.length?[rows]:[]),[button('📡 Польза всех источников','admin:quality:sources:0')],...OWNER_BACK]);
   }
   if ((m=/^admin:(reports|blocked|review):(\d+)$/.exec(action))) {
     const blocked=m[1]==='blocked';

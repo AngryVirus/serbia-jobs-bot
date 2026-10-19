@@ -13,14 +13,10 @@ import json
 from pathlib import Path
 import sqlite3
 from typing import Any, Iterable, Mapping
-from channel_catalog import CHANNELS
+from sources import SOURCES
 
 
-SOURCE_IDS = (
-    "poslovi", "workforce", "halooglasi", "careerjet", "sale_me",
-    "helloworld", "lakodoposla", "klikdoposla", "jooble", "radim",
-    "serbiahub", "ovdejobs", "startit", "bulevar", "infostud", "tg_rabotavserbii", "tg_radim_serbia",
-) + tuple('telegram_' + channel for channel in CHANNELS)
+SOURCE_IDS = tuple(SOURCES)
 
 
 def default_settings() -> dict[str, Any]:

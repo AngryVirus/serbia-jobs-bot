@@ -42,6 +42,7 @@ def source_files(root):
         name = relative.as_posix()
         allowed = (path.suffix in SOURCE_SUFFIXES or name in ROOT_CONFIG
                    or path.name in {'package.json', 'package-lock.json', 'tgcloud.jsonc'}
+                   or (relative.parts[:2] == ('tests', 'fixtures') and path.suffix in {'.html', '.xml', '.json'})
                    or (relative.parts[:2] == ('tools', 'licenses') and path.suffix == '.txt'))
         if not allowed or (name != '.env.example' and any(part.startswith('.env') for part in relative.parts)):
             continue

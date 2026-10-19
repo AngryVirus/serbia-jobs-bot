@@ -16,8 +16,7 @@ on:
     types: [completed]
     branches: [main]
   schedule:
-    - cron: '7,37 * * * *'
-    - cron: '2,12,17,22,27,32,42,47,52,57 * * * *'
+    - cron: '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'
 permissions:
   contents: read
   actions: read
@@ -71,7 +70,7 @@ jobs:
         if: inputs.action != 'stage' && inputs.action != 'cutover'
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_PROBE_TOKEN }}
-          CLOUD_ACTION: ${{ (github.event_name == 'workflow_run' && 'deploy') || inputs.action || (github.event.schedule == '7,37 * * * *' && 'collect' || 'ads') }}
+          CLOUD_ACTION: ${{ (github.event_name == 'workflow_run' && 'deploy') || inputs.action || 'scheduled' }}
           LEGACY_STOPPED: ${{ inputs.legacy_stopped }}
         run: |
           case "$CLOUD_ACTION" in
@@ -82,7 +81,9 @@ jobs:
               python3 serverless/health_check.py
               python3 serverless/operations_check.py
               python3 serverless/menu_check.py
+              python3 serverless/collect.py
               ;;
+            scheduled) python3 serverless/scheduled.py ;;
             collect)
               python3 serverless/collect.py
               python3 serverless/ads_worker.py

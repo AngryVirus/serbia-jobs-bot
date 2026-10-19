@@ -3,7 +3,7 @@ import { roleNoticeTick } from './staff.js';
 import { banPanel, banNoticeTick, banNoticeText } from './bans.js';
 import { Bot } from './bot.js';
 import { renderImage } from './image-renderer.js';
-import { sourceHistory, analyticsPanel, freshness, deliveryForbidden, SUBSCRIBED_SQL } from './analytics.js';
+import { sourceHistory, analyticsPanel, freshness, successfulCollection, deliveryForbidden, SUBSCRIBED_SQL } from './analytics.js';
 import { backupOperation } from './backup.js';
 import { healthTick } from './health.js';
 import { Store, TABLES, assert, positive } from './store.js';
@@ -15,6 +15,27 @@ import { sourceEnabled } from './source-policy.js';
 import { adTick } from './ads.js';
 import { ownerReport, OWNER_ID, notifyReports } from './owner.js';
 import { card, jobButtons, menu, filtersPanel, choicePanel, translatedCard, safe } from './ui.js';
+// Crawl checkpoints contain only public source URLs and URL digests, never jobs or users.
+function publicCrawlUrl(value) {
+  if(typeof value!=='string'||value.length>1000||!/^https:\/\/[^\s/@<>"\\]+\/[^\s<>"\\]*$/i.test(value)||/[#\u0000-\u0020\u007f]/.test(value)||/%(?:0[0-9a-f]|1[0-9a-f]|7f)/i.test(value))return false;
+  const host=/^https:\/\/([a-z0-9.-]+)(?::443)?\//i.exec(value)?.[1];
+  return Boolean(host&&/\.[a-z]{2,}$/i.test(host)&&!/(?:^|\.)(?:localhost|local|internal|invalid|test)$/i.test(host)&&!/[?&](?:access_?token|api_?key|password|secret|authorization|session)=/i.test(value));
+}
+function validCrawlState(value) {
+  if(!value||typeof value!=='object'||Array.isArray(value)||value.version!==1||Object.keys(value).length!==5||!['version','updated_at','cursor','pending','seen'].every(k=>Object.hasOwn(value,k)))return false;
+  const stamp=x=>Number.isSafeInteger(x)&&x>=0&&x<=Math.floor(Date.now()/1000)+300;
+  if(!stamp(value.updated_at)||(value.cursor!==null&&!publicCrawlUrl(value.cursor))||!Array.isArray(value.pending)||value.pending.length>48||!value.pending.every(publicCrawlUrl)||!value.seen||typeof value.seen!=='object'||Array.isArray(value.seen))return false;
+  const seen=Object.entries(value.seen);
+  if(seen.length>1000||!seen.every(([key,at])=>/^[a-f0-9]{64}$/.test(key)&&stamp(at)))return false;
+  const json=JSON.stringify(value);
+  return json.length<=90*1024&&encodeURIComponent(json).replace(/%[0-9A-F]{2}/g,'x').length<=90*1024;
+}
+async function renewCollection(store,owner) {
+  // Checking the run and renewing its existing lease in one statement prevents
+  // a delayed worker from reclaiming a newer run after a lease takeover.
+  const renewed=await store.db.run("UPDATE sjc_locks SET expires=:expires WHERE key='collection' AND owner=:owner AND EXISTS(SELECT 1 FROM sjc_meta WHERE key='collection_run' AND json_extract(payload,'$.owner')=:owner AND json_extract(payload,'$.state')='running')",{':owner':owner,':expires':Date.now()+900000});
+  assert(renewed.rowsAffected===1,'Collection owner mismatch or run not active');
+}
 export async function notifyOne(store, api, uid, catalog) {
   assert(positive(uid), 'Invalid subscriber');
   const cooldown = await store.meta('notification_cooldown');
@@ -222,6 +243,12 @@ export async function administer(input, ctx, deps) {
     await deps.api.sendMessage({ chat_id: 340780041, text: '<i>Проверка переноса в Telegram Serverless</i>\n\n'+text, parse_mode: 'HTML', reply_markup: { inline_keyboard: rows } });
     return { sent: 1 };
   }
+  if(op==='collection_due') {
+    const active=Boolean(await store.meta('active')),last=await successfulCollection(store),run=await store.meta('collection_run');
+    const lease=await store.db.get("SELECT owner,expires FROM sjc_locks WHERE key='collection'");
+    const running=Boolean(run?.state==='running'&&lease?.owner===run.owner&&lease.expires>Date.now());
+    return {due:active&&!running&&(!Number.isFinite(Date.parse(last))||Date.now()-Date.parse(last)>=1800000),active,last_successful_collection:last,running};
+  }
   // Cron and delivery are inert until cutover; no baseline import can send mail.
   assert(await store.meta('active'), 'Cloud bot not active');
   if(op==='facts_status')return {version:await store.meta('facts_version'),progress:await store.meta('facts_progress')};
@@ -251,11 +278,34 @@ export async function administer(input, ctx, deps) {
     assert(!await store.db.get('SELECT 1 AS n FROM sjc_jobs WHERE id>:after AND id<=:upper LIMIT 1',{':after':progress.after,':upper':progress.upper}),'Facts migration incomplete');
     await store.setMeta('facts_version',input.version);await store.setMeta('facts_progress',null);await store.unlock('facts_refresh',input.owner);return {complete:true};
   }
-  if (op === 'collection_begin' || op === 'collect' || op === 'collection_end') {
+  if (['collection_begin','collection_state','collect','collection_end'].includes(op)) {
     assert(typeof input.owner === 'string' && /^[a-f0-9-]{36}$/.test(input.owner), 'Collection owner required');
+    // Requests using one run owner can also overlap after transport retries.
+    // Serialize individual RPCs as well as retaining the durable run lease.
+    const requestOwner=`${input.owner}:${Date.now()}:${Math.random()}`;
+    assert(await store.lock('collection_rpc',requestOwner,120),'Collection operation in progress');
+    try {
+    if (op === 'collection_begin') {
+      let previous=await store.meta('collection_run');
+      assert(previous?.owner!==input.owner||previous.state==='running','Collection owner already completed');
+      assert(await store.lock('collection',input.owner,900), 'Collection in progress');
+      // Read again after claiming: an earlier read may predate another owner's
+      // completed run and must never reopen it or reset a running baseline.
+      previous=await store.meta('collection_run');
+      if(previous?.owner===input.owner){assert(previous.state==='running','Collection owner already completed');return {claimed:true};}
+      const now=new Date().toISOString();
+      const blocked=(await store.db.get("SELECT COUNT(*) AS n FROM sjc_deliveries WHERE state='blocked'")).n;
+      await store.setMeta('collection_run',{owner:input.owner,state:'running',started_at:now,baseline:await store.latest(),blocked_baseline:blocked});
+      await store.sourceStatus('_collection', { state: 'running', checked_at: now });
+      await notifyReports(store,deps.api);
+      return { claimed: true };
+    }
     if (op === 'collection_end') {
       const run=await store.meta('collection_run');
       assert(run?.owner===input.owner,'Collection owner mismatch');
+      // End retries do not rewrite totals, advance freshness or count a run twice.
+      if(run.state!=='running'){await store.unlock('collection',input.owner);return {released:true};}
+      await renewCollection(store,input.owner);
       const jobs=await store.jobs(), groups=groupJobs(jobs), now=new Date().toISOString();
       const newRows=jobs.filter(j=>j.id>run.baseline);
       const newGroups=groups.filter(g=>g.members.every(j=>j.id>run.baseline)).length;
@@ -266,27 +316,38 @@ export async function administer(input, ctx, deps) {
       await store.setMeta('last_collection',result); await store.setMeta('collection_run',result);
       await store.sourceStatus('_collection', { state: result.state, checked_at: now }); await store.unlock('collection',input.owner); return { released: true };
     }
-    assert(await store.lock('collection',input.owner,900), 'Collection in progress');
-    if (op === 'collection_begin') {
-      const now=new Date().toISOString();
-      const blocked=(await store.db.get("SELECT COUNT(*) AS n FROM sjc_deliveries WHERE state='blocked'")).n;
-      await store.setMeta('collection_run',{owner:input.owner,state:'running',started_at:now,baseline:await store.latest(),blocked_baseline:blocked});
-      await store.sourceStatus('_collection', { state: 'running', checked_at: now });
-      await notifyReports(store,deps.api);
-      return { claimed: true };
+    assert(Object.hasOwn(SOURCE_NAMES,input.source),'Invalid collection source');
+    await renewCollection(store,input.owner);
+    if(op==='collection_state') {
+      const row=await store.db.get("SELECT payload FROM sjc_records WHERE kind='collection_crawl' AND record_key=:source",{':source':input.source});
+      let state={};try{const value=row&&JSON.parse(row.payload);if(validCrawlState(value))state=value;}catch{/* A malformed old checkpoint restarts only its own source. */}
+      return {state};
     }
-    assert(Object.hasOwn(SOURCE_NAMES,input.source) && Array.isArray(input.jobs) && input.jobs.length <= 50 && input.jobs.every(j => j.source === input.source), 'Invalid source batch');
+    assert(Array.isArray(input.jobs) && input.jobs.length <= 50 && input.jobs.every(j => j.source === input.source), 'Invalid source batch');
+    assert(input.status===undefined || input.status&&typeof input.status==='object'&&!Array.isArray(input.status),'Invalid source status');
+    const {crawl_state,...status}=input.status||{};
+    if(crawl_state!==undefined)assert(validCrawlState(crawl_state),'Invalid crawl checkpoint');
+    const withdrawn=status.withdrawn_urls || [];
+    assert(Array.isArray(withdrawn) && withdrawn.length<=120 && withdrawn.every(url=>/^(tg_|telegram_)/.test(input.source)?typeof url==='string' && /^https:\/\/t\.me\/[A-Za-z0-9_]+\/\d+$/.test(url):validUrl(url)&&url.startsWith('https://')), 'Invalid withdrawn links');
     let added = 0;
     for (const j of input.jobs) {
       // Closed/expired updates invalidate known records without importing source archives.
       if(j._cloud?.expires_ms!=null && j._cloud.expires_ms<=Date.now() && !await store.db.get('SELECT 1 AS n FROM sjc_jobs WHERE source_key=:key',{':key':JSON.stringify([j.source,j.url])}))continue;
       if(await store.putJob(j))added++;
     }
-    const withdrawn=input.status?.withdrawn_urls || [];
-    assert(Array.isArray(withdrawn) && withdrawn.length<=120 && withdrawn.every(url=>/^(tg_|telegram_)/.test(input.source)?typeof url==='string' && /^https:\/\/t\.me\/[A-Za-z0-9_]+\/\d+$/.test(url):validUrl(url)&&url.startsWith('https://')), 'Invalid withdrawn links');
     await store.withdraw(input.source,withdrawn);
-    if (input.status) await store.sourceStatus(input.source,input.status);
+    if(input.status)await store.sourceStatus(input.source,status);
+    // The caller supplies the checkpoint only on its final upload batch. Advance
+    // it after every job/withdrawal in that batch has committed, so retries can
+    // revisit jobs but never skip a partially uploaded page.
+    if(crawl_state!==undefined){
+      // Fence the final checkpoint in the write itself. Even a delayed RPC
+      // cannot advance a newer owner's source position after lease takeover.
+      const written=await store.db.run("INSERT INTO sjc_records(kind,record_key,payload) SELECT 'collection_crawl',:source,:payload WHERE EXISTS(SELECT 1 FROM sjc_locks WHERE key='collection' AND owner=:owner) AND EXISTS(SELECT 1 FROM sjc_meta WHERE key='collection_run' AND json_extract(payload,'$.owner')=:owner AND json_extract(payload,'$.state')='running') ON CONFLICT(kind,record_key) DO UPDATE SET payload=excluded.payload",{':source':input.source,':payload':JSON.stringify(crawl_state),':owner':input.owner});
+      assert(written.rowsAffected===1,'Collection owner mismatch or run not active');
+    }
     return { added };
+    } finally {await store.unlock('collection_rpc',requestOwner);}
   }
   if (op === 'subscribers') {
     const rows = await store.rows('users',input.offset || 0,50);
