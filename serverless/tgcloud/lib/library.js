@@ -6,8 +6,8 @@ export async function hasFavorite(bot,job) {
  const ids=new Set(await bot.store.favoriteIds(bot.uid));
  return (job._duplicate_ids||[job.id]).some(id=>ids.has(id));
 }
-export async function libraryRoute(bot,action) {
- const saved=new Set(await bot.store.favoriteIds(bot.uid)),groups=groupJobs(await bot.store.jobs());
+export async function libraryRoute(bot,action,catalog=null) {
+ const saved=new Set(await bot.store.favoriteIds(bot.uid)),groups=catalog||groupJobs(await bot.store.jobs());
  const selected=groups.filter(g=>g.members.some(j=>saved.has(j.id)));
  const present=new Set(selected.flatMap(g=>g.members.map(j=>j.id)));
  const missing=[...saved].filter(id=>!present.has(id));
@@ -41,5 +41,5 @@ export async function libraryRoute(bot,action) {
   const nav=[];if(page)nav.push(button('⬅️',`favorites:${page-1}`));if((page+1)*5<entries.length)nav.push(button('➡️',`favorites:${page+1}`));
   return bot.panel(lines.join('\n\n'),[...rows,...(nav.length?[nav]:[]),...HOME]);
  }
- return libraryRoute(bot,'library');
+ return libraryRoute(bot,'library',groups);
 }

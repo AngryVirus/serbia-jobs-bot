@@ -125,7 +125,7 @@ export async function ownerReport(store) {
   return { text, details, issues, sources, groups, pending_reports:pending };
 }
 
-export async function ownerRoute(bot, action) {
+export async function ownerRoute(bot, action, prepared = null) {
   if (bot.uid !== OWNER_ID || bot.chat !== OWNER_ID) return bot.panel('Этот раздел доступен только владельцу бота.');
   if(action.startsWith('admin:ideas:'))return sourceIdeaRoute(bot,action);
   if(action.startsWith('admin:bans:'))return banPanel(bot,action);
@@ -133,7 +133,7 @@ export async function ownerRoute(bot, action) {
     const [text,rows]=OWNER_SECTIONS[action];
     return bot.panel(text,[...rows,...OWNER_BACK]);
   }
-  const data = await ownerReport(bot.store);
+  const data = prepared || await ownerReport(bot.store);
   if(action==='admin:stats' || action.startsWith('admin:stats:') || action.startsWith('admin:quality'))return analyticsPanel(bot,action,data);
   const refreshed=action==='admin:refresh'||action==='admin:details:refresh'?'✅ Отчёт обновлён из сохранённых данных.\n\n':'';
   if (action === 'admin' || action === 'admin:refresh') return bot.panel(refreshed+data.text,OWNER_HOME);
