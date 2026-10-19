@@ -34,7 +34,12 @@ export async function sourceIdeaRoute(bot,action) {
  let m;
  if((m=/^admin:ideas:(work|reject):([a-z][a-z0-9_]{3,31})$/.exec(action))){
   const row=await bot.store.db.get("SELECT payload FROM sjc_records WHERE kind='source_idea' AND record_key=:key",{':key':m[2]});
-  if(row){const previous=JSON.parse(row.payload);if(previous.state==='pending')await bot.store.db.run("UPDATE sjc_records SET payload=:next WHERE kind='source_idea' AND record_key=:key AND payload=:old",{':key':m[2],':old':row.payload,':next':JSON.stringify({...previous,state:m[1]==='work'?'work':'rejected',updated_at:new Date().toISOString()})});}
+  const back=[[button('📋 К предложениям','admin:ideas:pending:0')],...OWNER_BACK];
+  if(!row)return bot.panel('Предложение больше не найдено.',back);
+  const previous=JSON.parse(row.payload);
+  if(previous.state!=='pending')return bot.panel('Это предложение уже рассмотрено. Откройте актуальный список.',back);
+  const changed=await bot.store.db.run("UPDATE sjc_records SET payload=:next WHERE kind='source_idea' AND record_key=:key AND payload=:old",{':key':m[2],':old':row.payload,':next':JSON.stringify({...previous,state:m[1]==='work'?'work':'rejected',updated_at:new Date().toISOString()})});
+  if(changed.rowsAffected!==1)return bot.panel('Состояние предложения изменилось. Откройте актуальный список.',back);
   return bot.panel(m[1]==='work'?'Предложение взято в работу. Проверьте канал перед подключением к сбору.':'Предложение отклонено.',[[button('📋 К предложениям','admin:ideas:pending:0')],...OWNER_BACK]);
  }
  if((m=/^admin:ideas:(pending|reviewed):(\d{1,6})$/.exec(action))){
@@ -59,7 +64,7 @@ export async function sourceIdeaInput(bot,message) {
  const existing=await bot.store.db.get("SELECT 1 AS found FROM sjc_records WHERE kind='source_idea' AND record_key=:key",{':key':username});
  if(!existing){
   const wait=await bot.store.rate(bot.uid+':source_idea',3,86400);
-  if(wait){await bot.panel(`Сегодня вы уже предложили три источника. Повторите через ${Math.ceil(wait/3600)} ч.`,HELP);return true;}
+  if(wait){await bot.panel(`За последние сутки вы уже предложили три источника. Повторите через ${Math.ceil(wait/3600)} ч.`,HELP);return true;}
   const result=await bot.store.db.run("INSERT INTO sjc_records(kind,record_key,payload) SELECT 'source_idea',:key,:payload WHERE (SELECT COUNT(*) FROM sjc_records WHERE kind='source_idea' AND json_extract(payload,'$.state')='pending')<100 ON CONFLICT(kind,record_key) DO NOTHING",{':key':username,':payload':JSON.stringify({state:'pending',created_at:new Date().toISOString(),notice:'pending'})});
   if(!result.rowsAffected&&!await bot.store.db.get("SELECT 1 AS found FROM sjc_records WHERE kind='source_idea' AND record_key=:key",{':key':username})){await bot.panel('Сейчас много предложений на проверке. Попробуйте позже.',HELP);return true;}
  }

@@ -25,6 +25,7 @@ test('only the numeric owner in their private chat can review proposals',async()
  for(const [uid,chat] of [[2,2],[2,OWNER_ID],[OWNER_ID,2]]){const u=callback(uid,'admin:ideas:reject:example_jobs');u.callback_query.message.chat.id=chat;await handle(f,u);assert.equal((await f.store.records('source_idea'))[0].state,'pending');}
  await handle(f,callback(OWNER_ID,'admin:ideas:work:example_jobs'));assert.equal((await f.store.records('source_idea'))[0].state,'work');
  await handle(f,callback(OWNER_ID,'admin:ideas:reject:example_jobs'));assert.equal((await f.store.records('source_idea'))[0].state,'work');
+ assert.match(f.api.edited.at(-1).text,/уже рассмотрено/);
  await handle(f,callback(OWNER_ID,'admin:ideas:reviewed:0'));assert.match(f.api.edited.at(-1).text,/в работе/);
 });
 test('daily source proposal limit survives restarts; repeats do not consume more quota',async()=>{
