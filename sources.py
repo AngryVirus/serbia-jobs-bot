@@ -699,10 +699,12 @@ def collect_source(source: Source, *, detail_limit: int = DEFAULT_DETAIL_LIMIT, 
         return collect_rss(source, fetcher, include_expired=include_expired)
     if source.id in {'tg_rabotavserbii', 'tg_radim_serbia'}:
         from telegram_templates import collect_telegram
-        return collect_telegram(source, fetcher, include_expired=include_expired, **crawl_options)
+        from telegram_post_quality import without_editorial_posts
+        return without_editorial_posts(*collect_telegram(source, fetcher, include_expired=include_expired, **crawl_options))
     if source.telegram_channel:
         from telegram_sources import collect_channel
-        return collect_channel(source, fetcher, include_expired=include_expired, **crawl_options)
+        from telegram_post_quality import without_editorial_posts
+        return without_editorial_posts(*collect_channel(source, fetcher, include_expired=include_expired, **crawl_options))
     if source.id == 'serbiahub':
         return _collect_serbiahub(source, fetcher, include_expired=include_expired, **crawl_options)
     if source.id == 'lakodoposla':
