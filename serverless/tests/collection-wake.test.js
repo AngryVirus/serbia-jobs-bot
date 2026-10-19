@@ -43,6 +43,14 @@ test('rolling daily budget bounds requests even when catalogue stays stale',asyn
  for(let i=0;i<12;i++)assert.equal((await requestCollectionWake(f.store,fetch,{now:now+i*901000})).status,'requested');
  assert.equal((await requestCollectionWake(f.store,fetch,{now:now+12*901000})).status,'daily_limit');assert.equal(calls,12);
 });
+test('a new daily window cannot reset eleven recent attempts from the previous day',async()=>{
+ const f=await enabled();let calls=0;const fetch=async()=>{calls++;return {status:204};};
+ assert.equal((await requestCollectionWake(f.store,fetch,{now})).status,'requested');
+ for(let i=0;i<11;i++)assert.equal((await requestCollectionWake(f.store,fetch,{now:now+20*3600000+i*901000})).status,'requested');
+ assert.equal((await requestCollectionWake(new Store(f.db),fetch,{now:now+86401000})).status,'requested');
+ assert.equal((await requestCollectionWake(new Store(f.db),fetch,{now:now+86401000+901000})).status,'daily_limit');
+ assert.equal(calls,13);
+});
 test('GitHub retry-after persists beyond the ordinary cooldown',async()=>{
  const f=await enabled();let calls=0;const fetch=async()=>{calls++;return {status:429,headers:{get:name=>name==='retry-after'?'3600':null}};};
  assert.equal((await requestCollectionWake(f.store,fetch,{now})).status,'limited');
