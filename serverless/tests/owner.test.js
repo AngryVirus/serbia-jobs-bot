@@ -65,7 +65,7 @@ test('owner dashboard groups existing tools into readable sections with a route 
     ['admin:vacancies','жалобы',['admin:reports:0','admin:blocked:0']],
     ['admin:users','блокировками доступа',['admin:stats','admin:bans:0']],
     ['admin:staff','изменения прав',['admin:team:0','admin:audit:0']],
-    ['admin:collection','сохранённые данные',['admin:sources:0','admin:quality:sources:0','admin:quality','admin:details']]
+    ['admin:collection','сохранённые данные',['admin:sources:0','admin:quality:sources:0','admin:ideas:pending:0','admin:quality','admin:details']]
   ]) {
     await handle(f,callback(OWNER_ID,action));
     const panel=f.api.edited.at(-1),buttons=panel.reply_markup.inline_keyboard;

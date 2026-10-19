@@ -11,6 +11,7 @@ const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS sjc_updates_expires ON sjc_updates(expires)`,
   `CREATE INDEX IF NOT EXISTS sjc_rate_expires ON sjc_records(json_extract(payload,'$.end')) WHERE kind='rate'`,
   `CREATE INDEX IF NOT EXISTS sjc_input_effect_expires ON sjc_records(json_extract(payload,'$.expires')) WHERE kind='input_effect'`,
+  `CREATE INDEX IF NOT EXISTS sjc_favorite_action_expires ON sjc_records(json_extract(payload,'$.expires')) WHERE kind='favorite_action'`,
 ];
 export function assert(value, message) { if (!value) throw new Error(message); }
 export const positive = x => Number.isSafeInteger(x) && x > 0;
@@ -53,6 +54,31 @@ export class Store {
   }
   async isBanned(uid) { return Boolean(await this.db.get("SELECT 1 AS banned FROM sjc_records WHERE kind='user_ban' AND record_key=:uid AND COALESCE(json_extract(payload,'$.active'),1)!=0",{':uid':String(uid)})); }
   async user(uid) { const row = await this.db.get('SELECT payload FROM sjc_users WHERE id=:id', { ':id': uid }); return row ? JSON.parse(row.payload) : null; }
+  async favoriteIds(uid) {
+    const ids=[];let after='';
+    while(true){
+      const rows=await this.db.all("SELECT record_key,json_extract(payload,'$.job_id') AS id FROM sjc_records WHERE kind='favorites' AND record_key LIKE :prefix AND record_key>:after AND COALESCE(json_extract(payload,'$.active'),1)!=0 ORDER BY record_key LIMIT 100",{':prefix':uid+':%',':after':after});
+      for(const row of rows)if(positive(row.id))ids.push(row.id);
+      if(rows.length<100)return ids;after=rows.at(-1).record_key;
+    }
+  }
+  async setFavorite(uid,ids,enabled,event) {
+    assert(positive(uid)&&ids.length&&ids.every(positive)&&typeof enabled==='boolean'&&typeof event==='string','Invalid favorite');
+    const key=uid+':'+event;
+    // Favorite state and replay receipt are one SQLite statement. A delayed
+    // retry after removal cannot resurrect the previous save operation.
+    const written=await this.db.run(`INSERT INTO sjc_records(kind,record_key,payload)
+      SELECT kind,record_key,payload FROM (
+       SELECT 'favorites' AS kind,:prefix||value AS record_key,json_object('user_id',:uid,'job_id',value,'active',:active,'created_at',:at) AS payload
+       FROM json_each(:ids) WHERE :active=0 OR value=:canonical
+       UNION ALL SELECT 'favorite_action',:event,json_object('expires',:expires)
+      ) WHERE NOT EXISTS(SELECT 1 FROM sjc_records WHERE kind='favorite_action' AND record_key=:event)
+      AND (:active=0 OR (SELECT COUNT(*) FROM sjc_records WHERE kind='favorites' AND record_key LIKE :like AND COALESCE(json_extract(payload,'$.active'),1)!=0)<200
+       OR EXISTS(SELECT 1 FROM sjc_records WHERE kind='favorites' AND record_key LIKE :like AND COALESCE(json_extract(payload,'$.active'),1)!=0 AND json_extract(payload,'$.job_id') IN (SELECT value FROM json_each(:ids))))
+      ON CONFLICT(kind,record_key) DO UPDATE SET payload=excluded.payload`,{':prefix':uid+':',':like':uid+':%',':uid':uid,':active':enabled?1:0,':at':new Date().toISOString(),':ids':JSON.stringify(ids),':canonical':Math.min(...ids),':event':key,':expires':Date.now()+172800000});
+    await this.db.run("DELETE FROM sjc_records WHERE kind='favorites' AND record_key LIKE :prefix AND json_extract(payload,'$.active')=0",{':prefix':uid+':%'});
+    return written.rowsAffected>0||Boolean(await this.db.get("SELECT 1 AS done FROM sjc_records WHERE kind='favorite_action' AND record_key=:key",{':key':key}));
+  }
   async saveUser(user) { await this.db.run('UPDATE sjc_users SET payload=:payload WHERE id=:id', { ':id': user.user_id, ':payload': JSON.stringify(user) }); }
   async patch(uid, fields) { const user = await this.user(uid); assert(user, 'Missing user'); user.settings = { ...settings(user.settings), ...fields }; user.updated_at = new Date().toISOString(); await this.saveUser(user); return user.settings; }
   // A receipt contains no input text. The user-row revision makes the state
@@ -91,6 +117,8 @@ export class Store {
     await this.db.run('DELETE FROM sjc_updates WHERE key IN (SELECT key FROM sjc_updates WHERE expires<=:now ORDER BY expires LIMIT 100)',{':now':now});
     await this.db.run("DELETE FROM sjc_records WHERE kind='rate' AND record_key IN (SELECT record_key FROM sjc_records WHERE kind='rate' AND json_extract(payload,'$.end')<=:now ORDER BY json_extract(payload,'$.end') LIMIT 100)",{':now':now});
     await this.db.run("DELETE FROM sjc_records WHERE kind='input_effect' AND record_key IN (SELECT record_key FROM sjc_records WHERE kind='input_effect' AND json_extract(payload,'$.expires')<=:now ORDER BY json_extract(payload,'$.expires') LIMIT 100)",{':now':now});
+    await this.db.run("DELETE FROM sjc_records WHERE kind='favorite_action' AND record_key IN (SELECT record_key FROM sjc_records WHERE kind='favorite_action' AND json_extract(payload,'$.expires')<=:now ORDER BY json_extract(payload,'$.expires') LIMIT 100)",{':now':now});
+    await this.db.run("DELETE FROM sjc_records WHERE kind='source_idea' AND json_extract(payload,'$.state')!='pending' AND json_extract(payload,'$.updated_at')<:cutoff",{':cutoff':new Date(now-90*86400000).toISOString()});
   }
   async deleteUser(uid,key=null) {
     let effect;

@@ -5,6 +5,7 @@ import { CITIES } from './config.js';
 import { groupJobs, visibleJobs, includesId } from './catalog.js';
 import { savedSearches, snapshotFilters } from './searches.js';
 import { vacancyWarnings } from './risks.js';
+import { hasFavorite } from './library.js';
 import { freshness, usage } from './analytics.js';
 import { button, BACK, safe, emptyText, translatedCard, links, browserUrl, cardActions } from './ui.js';
 
@@ -138,7 +139,7 @@ async function render(bot, original, {action='show',jobId=null,index=0,mode='s',
     return bot.panel(await freshness(bot.store)+notice+text,[...more,...backRows(session)]);
   }
   const job=jobs[index];
-  if(session.view==='actions')return bot.panel(...cardActions(job,index,mode,{token:session.token}));
+  if(session.view==='actions')return bot.panel(...cardActions(job,index,mode,{token:session.token},await hasFavorite(bot,job)));
   if(session.view==='risk')return bot.panel(...reasons(job,callback(session,job,index,'show',mode)));
   const result=await translatedCard(job,mode,bot.fetch,bot.store);
   const newCount=session.kind==='all'?newJobs(jobs,session).length:0;

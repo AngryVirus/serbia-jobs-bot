@@ -4,6 +4,8 @@ import { banInput, inboundBanNotice, deliverBanNotice, moderatorSnapshot } from 
 import { imagePanel, textPanel } from './image-panel.js';
 import { activity, usage, freshness } from './analytics.js';
 import { notificationState } from './notification-state.js';
+import { libraryRoute, hasFavorite } from './library.js';
+import { sourceIdeaRoute, sourceIdeaInput } from './source-ideas.js';
 import { OPTIONS } from './config.js';
 import { settings, defaults, choose, hidden, validUrl } from './filters.js';
 import { groupJobs, visibleJobs, hiddenGroups, includesId, decorate } from './catalog.js';
@@ -154,11 +156,13 @@ export class Bot {
     if(action==='ads'||action.startsWith('ads:')) return adRoute(this,action);
     if(/^plans(?::|$)/.test(action))return searchRoute(this,action);
     if(action==='search:0')return openDiscovery(this);
+    if(action==='library'||/^(favorite|favorites):/.test(action))return libraryRoute(this,action);
     if(/^(discover:|similar:|risk:)/.test(action))return discoveryRoute(this,action);
     action = action.replace(/^(choose|set):freshness:(today|yesterday)(?=:|$)/, '$1:freshness:7');
     if (action === 'menu' || action === 'start' || action === 'cancel') return this.home();
     if (action === 'filters') return this.panel(...filtersPanel(this.s));
-    if (action === 'help') return this.panel('<b>💬 Помощь</b>\n\nЕсли нужна помощь с настройками или вы нашли ошибку, напишите владельцу. Кратко опишите, что произошло.', [[{ text: '✉️ Написать владельцу', url: 'https://t.me/AngryVirus' }], ...BACK]);
+    if (action === 'help') return this.panel('<b>💬 Помощь</b>\n\nЕсли нужна помощь с настройками или вы нашли ошибку, напишите владельцу. Кратко опишите, что произошло.\n\nЗнаете хороший публичный канал с вакансиями в Сербии? Предложите его для проверки.', [[{ text: '✉️ Написать владельцу', url: 'https://t.me/AngryVirus' }],[button('📡 Предложить источник','idea:start')], ...BACK]);
+    if(action==='idea:start')return sourceIdeaRoute(this,action);
     if (action === 'notifications' || action === 'input:hour') return this.notifications();
     if (/^notify:(off|instant|daily)$/.test(action)) {
       const mode = action === 'notify:off' ? 'off' : 'instant', patch = { notifications: mode };
@@ -168,8 +172,8 @@ export class Bot {
     let m;
     if (action === 'admin' || action.startsWith('admin:')) return staffRoute(this,action);
     if ((m = /^actions:([1-9]\d*):(-1|\d+):(s|f|rs|rf)$/.exec(action)) && positive(Number(m[1])) && Number(m[2])<=1000000) {
-      const j=await this.store.job(Number(m[1]));
-      return j ? this.panel(...cardActions(j,Number(m[2]),m[3])) : this.panel('Вакансия больше не найдена.');
+      const group=groupJobs(await this.store.jobs()).find(g=>includesId(g,Number(m[1]))),j=group&&decorate(group,group.members.find(j=>j.id===Number(m[1])));
+      return j ? this.panel(...cardActions(j,Number(m[2]),m[3],null,await hasFavorite(this,j))) : this.panel('Вакансия больше не найдена.');
     }
     if ((m = /^report:([1-9]\d*):(choose|not_job|duplicate|outdated):(-1|\d+):(s|f|rs|rf)(?::([a-z0-9]{8}))?$/.exec(action)) && positive(Number(m[1])) && Number(m[3])<=1000000) return complaint(this,Number(m[1]),m[2]==='choose'?null:m[2],Number(m[3]),m[4],m[5]);
     if ((m = /^report:([1-9]\d*)(?::(not_job|duplicate|outdated))?$/.exec(action)) && positive(Number(m[1]))) return complaint(this,Number(m[1]),m[2]);
@@ -177,7 +181,7 @@ export class Bot {
     if ((m = /^view:([1-9]\d*):(\d+):(show|next|prev|details|translate|hide):(s|f|rs|rf)$/.exec(action)) && positive(Number(m[1])) && Number(m[2]) <= 1000000) return this.show(Number(m[2]),Number(m[1]),m[3],m[4]);
     if ((m = /^hidden:(\d+)$/.exec(action))) return this.hiddenPanel(Number(m[1]));
     if (/^(job|hide|restore):/.test(action)) return this.vacancy(action);
-    if (/^(sources$|source:|favorite:|favorites:)/.test(action)) return this.home();
+    if (/^(sources$|source:)/.test(action)) return this.home();
     if (action.startsWith('input:') && Object.hasOwn(PROMPTS,action.slice(6))) { const field = action.slice(6); await this.patchInput({ pending_input: field },`input:${field}`); return this.panel(PROMPTS[field] + '\n/cancel — отмена.', [[button('✖ Отменить ввод','cancel')], ...BACK]); }
     if (Object.hasOwn(OPTIONS,action)) return this.panel(...choicePanel(this.s,action));
     if ((m = /^(choose|set):([^:]+):([^:]+)(?::([01]))?$/.exec(action)) && OPTIONS[m[2]] && Object.hasOwn(OPTIONS[m[2]],m[3])) {
@@ -186,7 +190,7 @@ export class Bot {
     }
     if (action === 'toggle_salary') { await this.patchInput({ include_unknown_salary: !this.s.include_unknown_salary },'filters'); return this.panel(...filtersPanel(this.s)); }
     if (action === 'reset') { const d = defaults(); await this.patchInput(Object.fromEntries(['keywords','exclusions','city','remote','language','min_salary','currency','include_unknown_salary','freshness','residence_permit'].map(k => [k,d[k]])),'filters'); return this.panel(...filtersPanel(this.s)); }
-    if (action === 'delete') return this.panel('Удалить ваши настройки, скрытые вакансии, жалобы и историю уведомлений?', [[button('Удалить мои данные','delete_confirm')], ...BACK]);
+    if (action === 'delete') return this.panel('Удалить ваши настройки, избранные и скрытые вакансии, жалобы и историю уведомлений?', [[button('Удалить мои данные','delete_confirm')], ...BACK]);
     if (action === 'delete_confirm') { if(!await this.store.deleteUser(this.uid,this.updateKey))return this.home(); this.s=null; return this.panel(DELETED_TEXT, [], null); }
     return this.home();
   }
@@ -241,11 +245,11 @@ export class Bot {
         await this.finishAcceptedInput(key,message,callback);return;
       }
       this.s = settings((await this.store.ensure(this.uid,this.chat)).settings);
-      const ordinary=!(callback && /^(admin(?::|$)|ads(?::|$))/.test(callback.data||'')) && !(this.s.pending_input && !['keywords','exclusions','salary','hour','search_name'].includes(this.s.pending_input));
+      const ordinary=!(callback && /^(admin(?::|$)|ads(?::|$)|favorite:)/.test(callback.data||'')) && !(this.s.pending_input && !['keywords','exclusions','salary','hour','search_name'].includes(this.s.pending_input));
       const mutation=callback?inputMutation(callback.data):Boolean(this.s.pending_input);
       const cleanup=this.s.pending_input || this.s.ban_draft || this.s.staff_draft || this.s.search_operation;
       if(ordinary && (mutation || cleanup))await this.store.inputEffect(this.uid,key,callback?inputScreen(callback.data):this.s.pending_input && !message.text?.startsWith('/')?this.s.pending_input==='search_name'?'plans':'filters':'menu');
-      if(!callback && ['keywords','exclusions','salary','hour','owner_ban','owner_ban_reason','staff_target','search_name'].includes(this.s.pending_input) && !message.text?.startsWith('/') && positive(this.s.ui_panel_id)) {this.mid=this.s.ui_panel_id;this.isPhoto=this.s.ui_panel_kind==='photo';}
+      if(!callback && ['keywords','exclusions','salary','hour','owner_ban','owner_ban_reason','staff_target','search_name','source_idea'].includes(this.s.pending_input) && !message.text?.startsWith('/') && positive(this.s.ui_panel_id)) {this.mid=this.s.ui_panel_id;this.isPhoto=this.s.ui_panel_kind==='photo';}
       await this.store.captureUsername(this.uid,user.username);
       await activity(this.store,this.uid);
       if(this.s.bot_blocked) await this.patch({bot_blocked:false});
@@ -259,6 +263,7 @@ export class Bot {
         }
       }
       else {
+        if(await sourceIdeaInput(this,message)){await this.finishAcceptedInput(key,message,callback);return;}
         if(await searchInput(this,message)){await this.finishAcceptedInput(key,message,callback);return;}
         if(await staffInput(this,message)){await this.finishAcceptedInput(key,message,callback);return;}
         if(await banInput(this,message)){await this.finishAcceptedInput(key,message,callback);return;}

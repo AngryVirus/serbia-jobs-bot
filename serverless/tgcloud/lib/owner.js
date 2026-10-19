@@ -7,6 +7,7 @@ import { groupJobs, visibleJobs, includesId } from './catalog.js';
 import { discoverySession, expiredDiscovery } from './discovery.js';
 import { button, BACK, safe, card, links } from './ui.js';
 import { OWNER_ID } from './permissions.js';
+import { sourceIdeaRoute } from './source-ideas.js';
 export { OWNER_ID } from './permissions.js';
 export const REASONS = { not_job: 'Не вакансия / реклама', duplicate: 'Повтор объявления', outdated: 'Набор закрыт / устарело' };
 const SOURCE_PAGE=4;
@@ -16,7 +17,7 @@ const OWNER_SECTIONS = {
   'admin:vacancies': ['<b>📋 Вакансии</b>\n\nРассматривайте жалобы на объявления. Снятые вами вакансии можно вернуть в общую выдачу.', [[button('🚩 Жалобы','admin:reports:0')],[button('🙈 Снятые вакансии','admin:blocked:0')]]],
   'admin:users': ['<b>👥 Пользователи</b>\n\nСмотрите статистику пользователей и управляйте блокировками доступа к боту.', [[button('📈 Статистика пользователей','admin:stats')],[button('🚫 Блокировки','admin:bans:0')]]],
   'admin:staff': ['<b>🛡 Команда</b>\n\nНазначайте администраторов и модераторов. В журнале — блокировки и изменения прав за последние 10 дней.', [[button('👥 Состав команды','admin:team:0')],[button('📋 Действия команды','admin:audit:0')]]],
-  'admin:collection': ['<b>📡 Сбор вакансий</b>\n\nПроверяйте состояние автоматического сбора, источников и базы вакансий. Отчёты показывают сохранённые данные.', [[button('⚠️ Проблемы источников','admin:sources:0')],[button('📡 Все источники','admin:quality:sources:0')],[button('🧹 Проверка базы','admin:quality')],[button('📋 Подробный отчёт','admin:details')]]]
+  'admin:collection': ['<b>📡 Сбор вакансий</b>\n\nПроверяйте состояние автоматического сбора, источников и базы вакансий. Отчёты показывают сохранённые данные.', [[button('⚠️ Проблемы источников','admin:sources:0')],[button('📡 Все источники','admin:quality:sources:0')],[button('📥 Предложения источников','admin:ideas:pending:0')],[button('🧹 Проверка базы','admin:quality')],[button('📋 Подробный отчёт','admin:details')]]]
 };
 const date = (value,seconds=false) => Number.isFinite(Date.parse(value)) ? new Date(Date.parse(value)+belgradeOffset(Date.parse(value))).toISOString().replace('T',' ').slice(0,seconds?19:16) + ' (Белград)' : 'нет данных';
 const STATES = { ok:'работает', empty:'нет подходящих объявлений', partial:'частичный сбор', blocked:'доступ заблокирован', robots_disallowed:'автосбор запрещён', unsupported:'нет доступной ленты', requires_permission:'нужно разрешение', excluded:'не подходит название канала', error:'ошибка', unknown:'не проверен' };
@@ -126,6 +127,7 @@ export async function ownerReport(store) {
 
 export async function ownerRoute(bot, action) {
   if (bot.uid !== OWNER_ID || bot.chat !== OWNER_ID) return bot.panel('Этот раздел доступен только владельцу бота.');
+  if(action.startsWith('admin:ideas:'))return sourceIdeaRoute(bot,action);
   if(action.startsWith('admin:bans:'))return banPanel(bot,action);
   if(Object.hasOwn(OWNER_SECTIONS,action)) {
     const [text,rows]=OWNER_SECTIONS[action];
