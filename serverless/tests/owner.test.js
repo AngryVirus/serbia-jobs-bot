@@ -86,10 +86,10 @@ test('owner dashboard groups existing tools into readable sections with a route 
 
 test('owner sections need no catalog read and reject numeric-string or mismatched identities before reading',async()=>{
   const sections=['admin:vacancies','admin:users','admin:staff','admin:collection'];
-  const actions=[...sections,'admin:refresh','admin:details:refresh'];
+  const actions=[...sections,'admin:refresh','admin:details:refresh','admin:collection:wake'];
   const panels=[],panel=async(text,rows)=>panels.push({text,rows});
   for(const action of sections) {
-    await ownerRoute({uid:OWNER_ID,chat:OWNER_ID,panel},action);
+    await ownerRoute({uid:OWNER_ID,chat:OWNER_ID,panel,store:{meta:async()=>null,jobs:()=>assert.fail('Section must not read catalogue')}},action);
     assert(panels.at(-1).rows.flat().some(b=>b.callback_data==='admin'));
   }
   for(const [uid,chat] of [[String(OWNER_ID),OWNER_ID],[OWNER_ID,String(OWNER_ID)],[2,2],[OWNER_ID,2],[2,OWNER_ID]]) {

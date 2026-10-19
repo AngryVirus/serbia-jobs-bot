@@ -8,6 +8,7 @@ import { discoverySession, expiredDiscovery } from './discovery.js';
 import { button, BACK, safe, card, links } from './ui.js';
 import { OWNER_ID } from './permissions.js';
 import { sourceIdeaRoute } from './source-ideas.js';
+import { requestCollectionWake,wakeStatus,wakeMessage } from './collection-wake.js';
 export { OWNER_ID } from './permissions.js';
 export const REASONS = { not_job: 'Не вакансия / реклама', duplicate: 'Повтор объявления', outdated: 'Набор закрыт / устарело' };
 const SOURCE_PAGE=4;
@@ -127,10 +128,15 @@ export async function ownerReport(store) {
 
 export async function ownerRoute(bot, action, prepared = null) {
   if (bot.uid !== OWNER_ID || bot.chat !== OWNER_ID) return bot.panel('Этот раздел доступен только владельцу бота.');
+  if(action==='admin:collection:wake')return bot.panel(wakeMessage(await requestCollectionWake(bot.store,bot.fetch,{manual:true})),[[button('📡 Сбор вакансий','admin:collection')],...OWNER_BACK]);
   if(action.startsWith('admin:ideas:'))return sourceIdeaRoute(bot,action);
   if(action.startsWith('admin:bans:'))return banPanel(bot,action);
   if(Object.hasOwn(OWNER_SECTIONS,action)) {
     const [text,rows]=OWNER_SECTIONS[action];
+    if(action==='admin:collection') {
+      const wake=await wakeStatus(bot.store);
+      return bot.panel(text+'\n\nРезервный запуск из бота: '+(wake.enabled?'подключён.':'не подключён.')+(wake.state==='denied'?'\n⚠️ Требуется проверить доступ к GitHub.':''),[...(wake.enabled?[[button('▶️ Запросить сбор сейчас','admin:collection:wake')]]:[]),...rows,...OWNER_BACK]);
+    }
     return bot.panel(text,[...rows,...OWNER_BACK]);
   }
   const data = prepared || await ownerReport(bot.store);
