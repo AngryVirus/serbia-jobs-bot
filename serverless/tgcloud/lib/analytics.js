@@ -1,9 +1,15 @@
-import { defaults, normalize } from './filters.js';
+import { defaults, normalize, belgradeOffset } from './filters.js';
 import { groupJobs, visibleJobs } from './catalog.js';
 import { SOURCE_NAMES } from './config.js';
 import { sourceEnabled } from './source-policy.js';
 import { safe, button } from './ui.js';
-const BACK=[[button('📊 Админка','admin')]];
+const BACK=[[button('📊 К отчёту владельца','admin')]];
+function reportTime(value) {
+ const stamp=typeof value==='number'?value:Date.parse(value);
+ if(!Number.isFinite(stamp))return 'ещё нет';
+ const [day,time]=new Date(stamp+belgradeOffset(stamp)).toISOString().split('T');
+ return `${day.split('-').reverse().join('.')} ${time.slice(0,8)} · Белград`;
+}
 // Count recipients, rather than subscriptions: one user can have several plans.
 export const SUBSCRIBED_SQL="(COALESCE(json_extract(payload,'$.settings.notifications'),'off')!='off' OR EXISTS(SELECT 1 FROM json_each(payload,'$.settings.saved_searches') AS saved WHERE json_extract(CASE WHEN saved.type='object' THEN saved.value ELSE '{}' END,'$.notifications')='instant'))";
 export async function usage(store,field,now=Date.now()) {
@@ -108,44 +114,48 @@ export function collectionMetrics(status={}) {
  return parts.join('\n');
 }
 export async function analyticsPanel(bot,action,data) {
+ const refreshed=/^admin:(?:stats(?::(?:delivery|usage))?|quality(?::sources:\d+)?):refresh$/.test(action);
+ if(refreshed)action=action.slice(0,-8);
+ const now=Date.now();
+ const panel=(text,rows)=>bot.panel(`${refreshed?'✅ Отчёт обновлён из сохранённых данных.\n\n':''}${text}\n\n<i>Отчёт сформирован: ${reportTime(now)}.\nОбновление отчёта не запускает сбор и рассылку вакансий.</i>`,rows);
  if(action==='admin:stats') {
   const banned=(await bot.store.db.get("SELECT COUNT(*) AS n FROM sjc_records WHERE kind='user_ban' AND COALESCE(json_extract(payload,'$.active'),1)!=0")).n;
-  const s=await userStatistics(bot.store),started=await bot.store.meta('analytics_started');
-  return bot.panel(`<b>👥 Пользователи бота</b>\n\n<b>Всего в базе:</b> ${s.total}\nВоспользовались за время учёта: ${s.observed}\n\n<b>Активные пользователи · UTC</b>\nСегодня: ${s.active_today}\nЗа 7 дней: ${s.active_week}\nЗа 30 дней: ${s.active_month}\n\n<b>Новые пользователи · UTC</b>\nСегодня: ${s.new_today}\nЗа 7 дней: ${s.new_week}\nЗа 30 дней: ${s.new_month}\n\n<b>Уведомления включены:</b> ${s.subscribed}\n<b>Не принимают сообщения (403):</b> ${s.unavailable}\nПодтверждённо заблокировали бота: ${s.blocked}\nЗабанены командой бота: ${banned}\n\n<i>Активность учитывается с ${safe(started||'первого обращения',30)}. Данные об удалённых профилях сюда не входят; возвращение после удаления считается новой регистрацией.</i>`,[[button('🚫 Блокировки и доставка','admin:stats:delivery')],[button('📈 Поиски и переводы','admin:stats:usage')],[button('🔄 Обновить','admin:stats')],...BACK]);
+  const s=await userStatistics(bot.store,now),started=await bot.store.meta('analytics_started');
+  return panel(`<b>👥 Статистика пользователей</b>\nЛюди, которые открыли бот, их активность и настройки уведомлений.\n\n<b>Всего в базе:</b> ${s.total}\nВоспользовались за время учёта: ${s.observed}\n\n<b>Активные пользователи · UTC</b>\nСегодня: ${s.active_today}\nЗа 7 дней: ${s.active_week}\nЗа 30 дней: ${s.active_month}\n\n<b>Новые пользователи · UTC</b>\nСегодня: ${s.new_today}\nЗа 7 дней: ${s.new_week}\nЗа 30 дней: ${s.new_month}\n\n<b>Уведомления включены:</b> ${s.subscribed}\n<b>Не принимают сообщения (403):</b> ${s.unavailable}\nПодтверждённо заблокировали бота: ${s.blocked}\nЗабанены командой бота: ${banned}\n\n<i>Активность учитывается с ${safe(started||'первого обращения',30)}. Данные об удалённых профилях сюда не входят; возвращение после удаления считается новой регистрацией.</i>`,[[button('🚫 Доставка сообщений','admin:stats:delivery')],[button('📈 Поиски и переводы','admin:stats:usage')],[button('🔄 Обновить статистику','admin:stats:refresh')],...BACK]);
  }
  if(action==='admin:stats:delivery') {
-  const s=await userStatistics(bot.store);
-  return bot.panel(`<b>🚫 Блокировки и доставка</b>\n\n<b>Не принимают сообщения (403):</b> ${s.unavailable}\nБлокировка подтверждена Telegram: ${s.blocked}\nАккаунт деактивирован: ${s.deactivated}\nПрочие / старые отказы: ${Math.max(0,s.unavailable-s.blocked-s.deactivated)}\n\nБлокировали хотя бы раз за время наблюдения: ${s.ever_blocked}\n\n<i>Это пользователи, а не число ошибок отправки. Учитываются только профили, которые сейчас есть в базе. Блокировки становятся известны по ответу Telegram при доставке: полного списка заблокировавших бот не получает. Отдельной проверки рассылкой нет. Возвращение в бот снимает текущий отказ; исторические отказы без точной причины не считаются подтверждённой блокировкой.</i>`,[[button('🔄 Обновить','admin:stats:delivery')],[button('👥 Пользователи','admin:stats')],...BACK]);
+  const s=await userStatistics(bot.store,now);
+  return panel(`<b>🚫 Доставка сообщений</b>\nПользователи, которым Telegram не разрешил доставить сообщения. Данные сохранены при обычной доставке. Сообщения для проверки не отправляются.\n\n<b>Не принимают сообщения (403):</b> ${s.unavailable}\nБлокировка подтверждена Telegram: ${s.blocked}\nАккаунт деактивирован: ${s.deactivated}\nПрочие / старые отказы: ${Math.max(0,s.unavailable-s.blocked-s.deactivated)}\n\nБлокировали хотя бы раз за время наблюдения: ${s.ever_blocked}\n\n<i>Это пользователи, а не число ошибок отправки. Учитываются только профили, которые сейчас есть в базе. Блокировки становятся известны по ответу Telegram при доставке: полного списка заблокировавших бот не получает. Возвращение в бот снимает текущий отказ; исторические отказы без точной причины не считаются подтверждённой блокировкой.</i>`,[[button('🔄 Обновить статистику доставки','admin:stats:delivery:refresh')],[button('👥 Статистика пользователей','admin:stats')],...BACK]);
  }
  if(action==='admin:stats:usage') {
-  const now=Date.now(),since=new Date(now-6*86400000).toISOString().slice(0,10),today=new Date(now).toISOString().slice(0,10);
+  const since=new Date(now-6*86400000).toISOString().slice(0,10),today=new Date(now).toISOString().slice(0,10);
   const rows=await bot.store.db.all("SELECT payload FROM sjc_records WHERE kind='usage' AND record_key>=:since",{':since':since});
   const totals={searches:0,empty:0,translations:0};for(const r of rows)for(const key of Object.keys(totals))totals[key]+=JSON.parse(r.payload)[key]||0;
   const active=async day=>(await bot.store.db.get("SELECT COUNT(*) AS n FROM sjc_users WHERE json_extract(payload,'$.last_seen_day')>=:day",{':day':day})).n;
   const subscriptions=await bot.store.db.get(`SELECT COUNT(*) AS n FROM sjc_users WHERE ${SUBSCRIBED_SQL}`);
   const sinceMetrics=await bot.store.meta('analytics_started');
-  return bot.panel(`<b>📈 Использование бота</b>\n\nАктивных сегодня (UTC): ${await active(today)}\nЗа 7 дней: ${await active(since)}\nЗа 30 дней: ${await active(new Date(now-29*86400000).toISOString().slice(0,10))}\nВключены уведомления: ${subscriptions.n}\n\n<b>Последние 7 дней</b>\nПоисков: ${totals.searches}\nБез результатов: ${totals.empty}${totals.searches?' · '+Math.round(100*totals.empty/totals.searches)+'%':''}\nЗапросов перевода: ${totals.translations}\n\n<i>Учёт с ${safe(sinceMetrics||'первого обращения',30)}. Переходы между карточками не считаются новым поиском. Тексты запросов и значения фильтров не собираются.</i>`,[[button('👥 Пользователи','admin:stats')],...BACK]);
+  return panel(`<b>📈 Поиски и переводы</b>\nСколько раз пользователи искали вакансии и запрашивали перевод.\n\nАктивных сегодня (UTC): ${await active(today)}\nЗа 7 дней: ${await active(since)}\nЗа 30 дней: ${await active(new Date(now-29*86400000).toISOString().slice(0,10))}\nВключены уведомления: ${subscriptions.n}\n\n<b>Последние 7 дней · UTC</b>\nПоисков: ${totals.searches}\nБез результатов: ${totals.empty}${totals.searches?' · '+Math.round(100*totals.empty/totals.searches)+'%':''}\nЗапросов перевода: ${totals.translations}\n\n<i>Учёт с ${safe(sinceMetrics||'первого обращения',30)}. Переходы между карточками не считаются новым поиском. Тексты запросов и значения фильтров не собираются.</i>`,[[button('🔄 Обновить статистику','admin:stats:usage:refresh')],[button('👥 Статистика пользователей','admin:stats')],...BACK]);
  }
- const q=qualitySummary(data.groups.flatMap(g=>g.members),data.groups);
+ const q=qualitySummary(data.groups.flatMap(g=>g.members),data.groups,now);
  if(action==='admin:quality') {
   const backup=await bot.store.meta('last_backup');
-  return bot.panel(`<b>🧹 Качество базы</b>\n\nПубликаций: ${q.total} · групп: ${q.groups}\nДоступно: ${q.visible}\nОбъединено копий: ${q.merged}\nЗакрытых / просроченных публикаций: ${q.expired}\nС датой старше 30 дней: ${q.old}\nБез даты публикации: ${q.undated}\nГрупп возможных дублей: ${q.candidates.length}\n\nВозраст сам по себе не закрывает вакансию. Возможные дубли требуют проверки владельца.\n\nПоследняя проверенная резервная копия: ${safe(backup?.verified_at||'ещё нет',40)}\n<i>Копия считается завершённой после сохранения зашифрованного артефакта в Actions.</i>`,[[button('📡 Польза источников','admin:quality:sources:0')],[button('🔍 Возможные дубли','admin:quality:duplicates:0')],...BACK]);
+  return panel(`<b>🔎 Проверка базы</b>\nДиагностика сохранённых вакансий: повторы, даты и закрытые объявления. Просмотр и обновление отчёта ничего не удаляют.\n\nПубликаций: ${q.total} · групп: ${q.groups}\nДоступно в поиске: ${q.visible}\nОбъединено копий: ${q.merged}\nЗакрытых / просроченных публикаций: ${q.expired}\nС датой старше 30 дней: ${q.old}\nБез даты публикации: ${q.undated}\nГрупп возможных дублей: ${q.candidates.length}\n\nВозраст сам по себе не закрывает вакансию. Возможные дубли требуют проверки владельца.\n\nПоследняя проверенная резервная копия: ${safe(backup?.verified_at||'ещё нет',40)}\n<i>Копия считается завершённой после сохранения зашифрованного артефакта в Actions.</i>`,[[button('📡 Все источники','admin:quality:sources:0')],[button('🔍 Возможные дубли','admin:quality:duplicates:0')],[button('🔄 Обновить отчёт','admin:quality:refresh')],...BACK]);
  }
  let m;if((m=/^admin:quality:sources:(\d+)$/.exec(action))) {
   const page=Math.min(Number(m[1]),Math.max(0,Math.ceil(q.sources.length/4)-1));
   const history=Object.fromEntries((await bot.store.db.all("SELECT record_key,payload FROM sjc_records WHERE kind='source_health'")).map(r=>[r.record_key,JSON.parse(r.payload)]));
   const statuses=new Map((await bot.store.records('source_status')).map(s=>[s.source,s.payload]));
-  const text=q.sources.slice(page*4,page*4+4).map(s=>{const h=history[s.source],status=statuses.get(s.source),metrics=collectionMetrics(status);return `<b>${safe(SOURCE_NAMES[s.source],70)}</b>\nДоступ: ${sourceHealthy(status)?'работает':'требует внимания'}${status?.truncated?' · обход не завершён':''}\nВ выдаче: ${s.visible} · только здесь: ${s.exclusive}\nЗаписей: ${s.stored} · копий внутри источника: ${s.duplicates}\nЗакрытых / просроченных: ${s.expired}\nСбоев: ${h?.failures??0}/${h?.checks??0} · подряд: ${h?.streak??0}${metrics?'\n'+metrics:''}`;}).join('\n\n');
+  const text=q.sources.slice(page*4,page*4+4).map(s=>{const h=history[s.source],status=statuses.get(s.source),metrics=collectionMetrics(status);return `<b>${safe(SOURCE_NAMES[s.source],70)}</b>\nПоследняя проверка: ${reportTime(status?.checked_at)}\nДоступ: ${sourceHealthy(status)?'работает':'требует внимания'}${status?.truncated?' · обход не завершён':''}\nВ выдаче: ${s.visible} · только здесь: ${s.exclusive}\nЗаписей: ${s.stored} · копий внутри источника: ${s.duplicates}\nЗакрытых / просроченных: ${s.expired}\nСбоев: ${h?.failures??0}/${h?.checks??0} · подряд: ${h?.streak??0}${metrics?'\n'+metrics:''}`;}).join('\n\n');
   const nav=[];if(page)nav.push(button('⬅️',`admin:quality:sources:${page-1}`));if((page+1)*4<q.sources.length)nav.push(button('➡️',`admin:quality:sources:${page+1}`));
-  return bot.panel('<b>📡 Польза и стабильность источников</b>\n<i>Успешный ответ источника не означает полный обход каталога. Счётчики — за последнюю проверку.</i>\n\n'+text,[...(nav.length?[nav]:[]),...BACK]);
+  return panel('<b>📡 Все источники</b>\n<i>База сейчас и сохранённые результаты последней проверки каждого источника. Обновление читает базу, к источникам не обращается.\n«В выдаче» — вакансии после объединения копий; «только здесь» — без копий из других источников; «записей» — публикации до объединения.\nОбнаружено — найденные публикации; проверено — изученные; разобрано — распознанные вакансии, включая уже известные. Это счётчики последней проверки, а не новых вакансий. Успешный ответ не означает полный обход каталога.</i>\n\n'+text,[...(nav.length?[nav]:[]),[button('🔄 Обновить отчёт',`admin:quality:sources:${page}:refresh`)],[button('🔎 Проверка базы','admin:quality')],...BACK]);
  }
  if((m=/^admin:quality:duplicates:(\d+)$/.exec(action))) {
   const page=Math.min(Number(m[1]),Math.max(0,q.candidates.length-1)),v=q.candidates[page];
-  if(!v)return bot.panel('Подозрительных совпадений по должности, работодателю и городу не найдено. Жалобы на повторы остаются в разделе «Жалобы».',BACK);
+  if(!v)return panel('Подозрительных совпадений по должности, работодателю и городу не найдено. Жалобы на повторы остаются в разделе «Жалобы».',[[button('🔎 Проверка базы','admin:quality')],...BACK]);
   const rows=[],text=[`<b>🔍 Возможные дубли · ${page+1}/${q.candidates.length}</b>\nСовпали должность, работодатель и город. Это может быть несколько разных вакансий — автоматического объединения нет.`];
   for(const g of v.slice(0,3)) {const j=g.members[0];text.push(`\n${safe(j.title,100)}\n${safe(j.company,80)} · ${safe(j.location,80)}`);rows.push([button('📄 Открыть',`job:${j.id}:full`),button('Убрать из выдачи',`admin:block:${g.id}`)]);}
   const nav=[];if(page)nav.push(button('⬅️',`admin:quality:duplicates:${page-1}`));if(page+1<q.candidates.length)nav.push(button('➡️',`admin:quality:duplicates:${page+1}`));
-  return bot.panel(text.join('\n'),[...rows,...(nav.length?[nav]:[]),...BACK]);
+  return panel(text.join('\n'),[...rows,...(nav.length?[nav]:[]),[button('🔎 Проверка базы','admin:quality')],...BACK]);
  }
  return bot.panel('Откройте раздел заново.',BACK);
 }
