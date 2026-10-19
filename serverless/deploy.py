@@ -5,9 +5,9 @@ from pathlib import Path
 import sys
 from cloud import call, cli, invoke, routing_identity
 
-# Reviewed predecessor: db2d4a8 (verified owner menu release).
+# Reviewed predecessor: 7622b81 (verified notification state release).
 # A later release must explicitly review and update its predecessor digest.
-PREVIOUS_DIGEST = 'afb269f6b3890086c2711df7d8a7826f8cbd39d76fc29c29bba6a7f0111661f9'  # pragma: allowlist secret
+PREVIOUS_DIGEST = '175dae441e19a3372f4d97400eb6b76d16cb9a73455b48f23b340d256a679488'  # pragma: allowlist secret
 
 
 def digest(modules):

@@ -3,6 +3,7 @@ import { selected, hidden, validUrl } from './filters.js';
 import { catalogDiagnostics } from './catalog.js';
 import { translateVacancy } from './translation.js';
 import { vacancyWarnings } from './risks.js';
+import { displayLanguages } from './language-display.js';
 export const button = (text, callback_data) => ({ text, callback_data });
 export const BACK = [[button('🏠 Меню', 'menu')]];
 const label = value => String(value).replace(/^[^\p{L}\p{N}]+/u, '');
@@ -34,7 +35,7 @@ export function menu(s, hiddenCount = hidden(s).size) {
   const on = s.notifications !== 'off';
   const plans = Array.isArray(s.saved_searches) ? s.saved_searches.slice(0,3) : [], enabled = plans.filter(p => p?.notifications && p.notifications !== 'off').length;
   return ['<b>Работа в Сербии</b>\n\n<b>Условия поиска</b>\n<blockquote>' + summary(s, true) + '</blockquote>\n\n<b>Ваши настройки</b>\n' + (plans.length ? 'Уведомления текущего поиска: ' : 'Уведомления: ') + (on ? 'включены' : 'выключены') + (enabled ? `\nУведомления сохранённых поисков: ${enabled}` : '') + `\nСкрытые вакансии: ${hiddenCount}\n\n<i>Откройте вакансии или измените условия поиска.</i>`,
-    [[button('🔎 Найти вакансии', 'search:0')], [button('⚙️ Фильтры', 'filters'), button(on ? '🔔 Уведомления ✓' : '🔕 Уведомления —', 'notifications')], [button('🙈 Скрытые', 'hidden:0'), button('💬 Помощь', 'help')]]];
+    [[button('🔎 Найти вакансии', 'search:0')], [button('⚙️ Фильтры', 'filters'), button(on ? '🔔 Уведомления ✓' : '🔕 Уведомления —', 'notifications')], [button('📂 Мои вакансии', 'library'), button('💬 Помощь', 'help')]]];
 }
 export function filtersPanel(s) {
   return ['<b>Фильтры поиска</b>\n\n<blockquote>' + summary(s) + '</blockquote>\n\n<i>Условия разных параметров действуют одновременно. Выберите параметр ниже. Изменения сохраняются сразу.</i>',
@@ -68,8 +69,7 @@ export function card(j, expanded = false) {
   const periods = { month: 'месяц', hour: 'час', year: 'год' };
   const salary = j.salary_display || (j.salary_min != null ? `от ${j.salary_min} ${j.salary_currency || ''} / ${periods[j.salary_period || 'month'] || 'период не указан'}` : 'Зарплата не указана');
   lines.push('\n<b>💶 ' + safe(salary, expanded ? 120 : 80) + '</b>');
-  const names = { ru: 'Русский', sr: 'Сербский', en: 'Английский', de: 'Немецкий' };
-  lines.push('🗣 Языки: ' + safe(f.languages.map(x => (names[x] || x) + (f.required_languages.includes(x) ? ' (обяз.)' : '')).join(', ') || 'не указаны', expanded ? 140 : 80));
+  lines.push('🗣 Языки: ' + safe(displayLanguages(j),260));
   lines.push('🪪 ВНЖ: ' + (f.permit === true ? 'нужен' : f.permit === false ? 'не нужен' : 'не указано'));
   if (f.experience === true || f.experience === false) lines.push('🛠 Опыт: ' + (f.experience ? 'требуется' : 'можно без опыта'));
   if (f.paperwork_assistance === true || f.paperwork_assistance === false) lines.push('📄 Помощь с документами: ' + (f.paperwork_assistance ? 'указана работодателем' : 'не предоставляется'));
@@ -106,12 +106,13 @@ export function viewerButtons(j, index, count, mode, failed) {
   if (nav.length) rows.push(nav);
   return rows;
 }
-export function cardActions(j, index, mode, context = null) {
+export function cardActions(j, index, mode, context = null, favorite = false) {
   const standalone=index===-1;
   const scoped=action=>`discover:${context.token}:${j.id}:${index}:${action}:${mode}`;
   const back=context ? scoped('show') : standalone ? `job:${j.id}:${mode.startsWith('r')?'ru_':''}${mode.endsWith('f')?'full':'short'}` : `view:${j.id}:${index}:show:${mode}`;
   const translate=context ? scoped('translate') : standalone ? `job:${j.id}:${mode.startsWith('r')?'':'ru_'}${mode.endsWith('f')?'full':'short'}` : `view:${j.id}:${index}:translate:${mode}`;
   return ['<b>Действия с вакансией</b>\n\n'+safe(j.title,140),[
+    [button(favorite?'🗑 Убрать из избранного':'⭐ В избранное',`favorite:${favorite?'remove':'add'}:${j.id}${context?':'+context.token+':'+index+':'+mode:''}`)],
     [button(mode.startsWith('r')?'🌐 Оригинал':'🇷🇺 Перевести',translate),button('🙈 Скрыть',context ? scoped('hide') : standalone?`hide:${j.id}`:`view:${j.id}:${index}:hide:${mode}`)],
     [button('🔎 Похожие',`similar:${j.id}${context?':'+context.token:''}`),button('🚩 Пожаловаться',`report:${j.id}:choose:${index}:${mode}${context?':'+context.token:''}`)],
     ...(vacancyWarnings(j).length ? [[button('⚠️ Почему осторожнее',`risk:${j.id}${context?`:${context.token}:${index}:${mode}`:''}`)]] : []),
@@ -123,7 +124,7 @@ export async function translatedCard(j, mode, fetch, store) {
   if (!mode.startsWith('r')) return { text: card(j, mode.endsWith('f')), mode, failed: false };
   try {
     const [title, description] = await translateVacancy(j.id,clip(j.title,140),clip(j.description,1800,true),fetch,store);
-    return { text: '<i>🇷🇺 Перевод на русский</i>\n\n' + card({ ...j, title, description, _warnings: vacancyWarnings(j) }, mode.endsWith('f')), mode, failed: false };
+    return { text: '<i>🇷🇺 Перевод на русский</i>\n\n' + card({ ...j, title, description, _language_original:j.description, _language_title:j.title, _warnings: vacancyWarnings(j) }, mode.endsWith('f')), mode, failed: false };
   } catch {
     return { text: 'Перевод сейчас недоступен. Попробуйте ещё раз или откройте его в браузере.\n\n' + card(j, mode.endsWith('f')), mode: mode.slice(1), failed: true };
   }
