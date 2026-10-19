@@ -11,7 +11,8 @@ permissions:
   contents: read
   actions: read
 concurrency:
-  group: serbia-jobs-backup
+  group: serbia-jobs-collection
+  queue: max
   cancel-in-progress: false
 jobs:
   backup:

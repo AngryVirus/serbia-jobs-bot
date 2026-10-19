@@ -53,10 +53,14 @@ class CatchUpWorkerTests(unittest.TestCase):
         self.assertIn("github.event.workflow_run.conclusion == 'success'", text)
         self.assertIn("github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch'", text)
         self.assertIn('github.event.workflow_run.head_sha == github.sha', text)
-        for path in ('.github/workflows/catch-up.yml', '.github/workflows/serverless.yml'):
+        for path in ('.github/workflows/catch-up.yml', '.github/workflows/serverless.yml',
+                     '.github/workflows/backup.yml'):
             workflow, jobs = (ROOT / path).read_text().split('jobs:', 1)
             self.assertIn('concurrency:\n  group: serbia-jobs-collection\n  queue: max\n  cancel-in-progress: false', workflow)
             self.assertNotIn('concurrency:', jobs)
+        health = (ROOT / '.github/workflows/health.yml').read_text()
+        self.assertIn('group: serbia-jobs-watchdog', health)
+        self.assertNotIn('group: serbia-jobs-collection', health)
         self.assertIn('timeout-minutes: 45', text)
         self.assertNotIn('cron:', text)
         self.assertNotIn('ads_worker', text + (ROOT / 'serverless/catch_up.py').read_text())
