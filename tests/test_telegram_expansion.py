@@ -9,6 +9,7 @@ from serbian_geography import has_serbian_location, serbian_cities
 from source_policy import ACTIVE_TELEGRAM, source_enabled, validate_channel_page
 from sources import SOURCES, Fetcher, FetchError, collect_source
 from telegram_sources import hiring_post, post_job, public_link
+from telegram_post_quality import post_exclusion, without_editorial_posts
 from test_sources import FakeFetcher
 
 
@@ -69,6 +70,47 @@ class TelegramExpansionTests(unittest.TestCase):
         ]:
             with self.subTest(text=text):
                 self.assertFalse(hiring_post(text))
+
+    def test_guide_companion_channel_is_enabled_without_weakening_location_rules(self):
+        source = SOURCES['telegram_rabotavbelgrade1']
+        self.assertTrue(source_enabled(source.id))
+        self.assertEqual(source.telegram_channel, 'rabotavbelgrade1')
+        html = preview(source, [2919], text='В службу доставки еды требуется су-шеф.\nБелград, Аутокоманда.\nОпыт работы обязателен.')
+        jobs, status = collect_source(source, fetcher=FakeFetcher({source.listing_url: html}), crawl_state={}, page_limit=1)
+        self.assertEqual(status['state'], 'ok')
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0].url, 'https://t.me/rabotavbelgrade1/2919')
+        self.assertIsNone(post_job(source, {'id': 1, 'text': 'Требуется повар, условия по договорённости.', 'date': DATE}))
+        self.assertIsNone(post_job(source, {'id': 2, 'text': 'Hiring cook\nLocation: Germany\nCompany office: Serbia', 'date': DATE}))
+
+    def test_guide_interviews_and_multi_job_digests_are_not_single_vacancies(self):
+        # Reduced from srbijabiz/1594 (roundup) and /1610 (editorial interview).
+        for text in [
+            'ℹ️ Вакансии\nБармен, Нови Сад — ссылка.\nПовар, Белград — ссылка.',
+            '🍽 Интервью с владельцами кафе о бизнесе в Сербии\nРаньше мы разместили вакансию повара.',
+            'Interview with a restaurant owner in Belgrade\nWe were hiring a cook in the summer.',
+        ]:
+            with self.subTest(text=text):
+                self.assertIn(post_exclusion(text), {'editorial', 'digest'})
+                html = preview(self.source, [1], text=text)
+                jobs, status = collect_source(self.source, fetcher=FakeFetcher({self.source.listing_url: html}), crawl_state={}, page_limit=1)
+                self.assertEqual(jobs, [])
+                self.assertEqual(status['state'], 'empty')
+        text = 'Вакансия: бармен\nБелград.\nНа интервью обсудим график и оплату.'
+        self.assertIsNone(post_exclusion(text))
+        self.assertTrue(hiring_post(text))
+
+    def test_editorial_gate_preserves_partial_errors_and_crawl_checkpoint(self):
+        job = post_job(self.source, {'id': 1, 'text': 'ℹ️ Вакансии\nБармен, Нови Сад — ссылка.\nПовар, Белград — ссылка.', 'date': DATE})
+        self.assertIsNotNone(job)
+        status = {'state': 'partial', 'healthy': False, 'count': 1, 'parsed_count': 1,
+                  'rejected': {'outdated': 2}, 'crawl_state': {'cursor': 'saved'},
+                  'errors': ['timeout'], 'withdrawn_urls': ['closed'], 'inspected': 4}
+        jobs, result = without_editorial_posts([job], status)
+        self.assertEqual(jobs, [])
+        self.assertEqual(result, {**status, 'count': 0, 'parsed_count': 0,
+                                 'rejected': {'outdated': 2, 'digest': 1}})
+        self.assertEqual(status['rejected'], {'outdated': 2})
 
     def test_localities_include_smaller_cities_without_substring_false_positives(self):
         examples = {'Требуется повар в Руме': 'Ruma', 'Radnik, Ruma': 'Ruma',

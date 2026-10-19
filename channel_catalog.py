@@ -5,6 +5,9 @@ These are discovery references, not a guarantee of current public readability.
 Private invite links, bots, and country-specific channels outside Serbia omitted.
 """
 CHANNELS = {
+    # Reviewed via https://stats.srb.guide/channels?topic=jobs on 2026-10-19:
+    # the public companion channel is linked from the rabotavbelgrade chat.
+    'rabotavbelgrade1': 'Работа в Белграде / Сербия',
     'serbia_jobs': 'Serbia IT Jobs',
     'youritjob': 'IT Работа: Сербия и удалёнка',
     'serbiawork': 'Работа в Сербии | Вакансии',

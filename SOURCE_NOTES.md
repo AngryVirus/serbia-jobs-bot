@@ -1,6 +1,11 @@
 # Расширение сбора — 19 октября 2026 года
 
-Включены 23 источника: прежние 12, NSZ, Manpower, BOX Poslovi, Delhaize / Maxi,
+Дополнительная проверка раздела «Работа» SRB.GUIDE: подключён связанный публичный
+канал @rabotavbelgrade1. Теперь активны 24 источника, включая 7 Telegram.
+Результат проверки всех 22 сообществ и причины исключений —
+[docs/SRB_GUIDE_SOURCES.md](docs/SRB_GUIDE_SOURCES.md).
+
+При предыдущем расширении включены 23 источника: прежние 12, NSZ, Manpower, BOX Poslovi, Delhaize / Maxi,
 публичные Greenhouse-ленты Wolt, JetBrains, Nordeus, Epic Games и три тематических
 Telegram-канала: @serbiawork, @serbia_vacancies, @serbiarabotavacancies.
 Новые площадки проверены штатным Fetcher с robots.txt, чтением списка и карточки.
