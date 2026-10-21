@@ -63,7 +63,7 @@ test('owner dashboard groups existing tools into readable sections with a route 
   ]);
   for(const [action,purpose,targets] of [
     ['admin:vacancies','жалобы',['admin:reports:0','admin:blocked:0']],
-    ['admin:users','блокировками доступа',['admin:stats','admin:bans:0']],
+    ['admin:users','блокировки',['admin:people:0','admin:stats','admin:bans:0']],
     ['admin:staff','изменения прав',['admin:team:0','admin:audit:0']],
     ['admin:collection','сохранённые данные',['admin:sources:0','admin:quality:sources:0','admin:ideas:pending:0','admin:quality','admin:details']]
   ]) {
@@ -74,7 +74,8 @@ test('owner dashboard groups existing tools into readable sections with a route 
     for(const target of targets) {
       await handle(f,callback(OWNER_ID,target));
       assert(!f.api.edited.at(-1).text.includes('Действие устарело'));
-      assert(f.api.edited.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data==='admin'));
+      const back=target==='admin:people:0'?'admin:users':'admin';
+      assert(f.api.edited.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data===back));
     }
     await handle(f,callback(OWNER_ID,'admin'));
     assert.deepEqual(f.api.edited.at(-1).reply_markup.inline_keyboard,rows);

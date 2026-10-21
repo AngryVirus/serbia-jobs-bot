@@ -1,4 +1,4 @@
-import { teamPanel,auditPanel,staffHomeDocument } from './staff.js';
+import { teamPanel,auditPanel,staffHomeDocument,usersPanel } from './staff.js';
 import { roleNoticeTick } from './staff.js';
 import { banPanel, banNoticeTick, banNoticeText } from './bans.js';
 import { Bot } from './bot.js';
@@ -201,6 +201,7 @@ export async function administer(input, ctx, deps) {
     const report=section==='staff'?null:await ownerReport(store);
     const bot={store,readOnly:true,uid:OWNER_ID,chat:OWNER_ID,s:settings((await store.user(OWNER_ID))?.settings),panel:async(text,rows)=>{assert(typeof text==='string' && text.length<4096,'Invalid operations panel');assert(rows.flat().every(b=>!b.callback_data || b.callback_data.length<=64),'Invalid operations callback');const image=renderImage(text);assert(image.width+image.height<=10000 && image.bytes.length<10000000,'Invalid operations image');panels.push(true);}};
     if(section==='all'||section==='owner')for(const action of ['admin','admin:refresh','admin:vacancies','admin:users','admin:staff','admin:collection','admin:details:refresh'])await ownerRoute(bot,action,report);
+    if(section==='all'||section==='owner')for(const action of ['admin:people:0',`admin:people:view:${OWNER_ID}:0`])await usersPanel(bot,action);
     if(section==='all'||section==='personal') {
       for(const action of ['admin:ideas:pending:0','admin:ideas:reviewed:0'])await ownerRoute(bot,action,report);
       for(const action of ['library','favorites:0'])await libraryRoute(bot,action,report.groups);
