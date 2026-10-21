@@ -70,7 +70,7 @@ test('new panels reject forged owner identity and contain no individual usage de
  }
  await f.store.record('staff_audit','expired',{at:new Date(Date.now()-11*86400000).toISOString(),actor:{id:OWNER_ID},actor_role:'owner',action:'ban',target:77});
  const before=await f.db.all('SELECT * FROM sjc_records ORDER BY kind,record_key');
- const result=await administer({operation:'operations_check'},{ownerRun:true},f);assert.equal(result.panels,26);assert.equal(result.failed,false);
+ const result=await administer({operation:'operations_check'},{ownerRun:true},f);assert.equal(result.panels,27);assert.equal(result.failed,false);
  assert.deepEqual(await f.db.all('SELECT * FROM sjc_records ORDER BY kind,record_key'),before);
 });
 test('missing backups alert independently after 36 hours and recover without repeat spam',async()=>{
@@ -88,7 +88,7 @@ test('split production checks reuse one catalog per section and keep failures pr
  const f=await fixture();for(let i=1;i<=205;i++)await f.store.putJob(job(i,{url:'https://example.rs/jobs/'+i}),true);
  const all=f.db.all;let pages=0;
  f.db.all=async(sql,params)=>{if(sql.startsWith('SELECT id,payload FROM sjc_jobs'))pages++;return all(sql,params);};
- for(const [section,expected] of [['owner',9],['analytics',6],['personal',4],['staff',7]]){
+ for(const [section,expected] of [['owner',10],['analytics',6],['personal',4],['staff',7]]){
   pages=0;const result=await administer({operation:'operations_check',section},{ownerRun:true},f);
   assert.equal(result.failed,false);assert.equal(result.panels,expected);assert(pages<=3,'one catalog pass per bounded section');
  }

@@ -9,6 +9,7 @@ import { button, BACK, safe, card, links } from './ui.js';
 import { OWNER_ID } from './permissions.js';
 import { sourceIdeaRoute } from './source-ideas.js';
 import { requestCollectionWake,wakeStatus,wakeMessage } from './collection-wake.js';
+import { positive } from './store.js';
 export { OWNER_ID } from './permissions.js';
 export const REASONS = { not_job: 'Не вакансия / реклама', duplicate: 'Повтор объявления', outdated: 'Набор закрыт / устарело' };
 const SOURCE_PAGE=4;
@@ -24,6 +25,25 @@ const date = (value,seconds=false) => Number.isFinite(Date.parse(value)) ? new D
 const STATES = { ok:'работает', empty:'нет подходящих объявлений', partial:'частичный сбор', blocked:'доступ заблокирован', robots_disallowed:'автосбор запрещён', unsupported:'нет доступной ленты', requires_permission:'нужно разрешение', excluded:'не подходит название канала', error:'ошибка', unknown:'не проверен' };
 const REPORT_GROUP="(json_extract(payload,'$.job_id') IN (SELECT value FROM json_each(:ids)) OR json_extract(payload,'$.group_id') IN (SELECT value FROM json_each(:ids)))";
 const groupParams=group=>({':ids':JSON.stringify(group.members.map(j=>j.id))});
+const contactRejected=error=>error.code===400&&/BUTTON_USER_PRIVACY_RESTRICTED|BUTTON_USER_INVALID|user_id_invalid/i.test(error.description||error.message||'');
+function reporterSnapshot(actor,uid){
+  const snapshot={id:uid};
+  if(actor?.id!==uid)return snapshot;
+  if(typeof actor.name==='string')snapshot.name=actor.name.replace(/[\u0000-\u001f\u007f]/g,' ').replace(/\s+/g,' ').trim().slice(0,80);
+  if(typeof actor.username==='string'&&/^[A-Za-z0-9_]{1,32}$/.test(actor.username))snapshot.username=actor.username;
+  return snapshot;
+}
+async function reportAuthor(store,report){
+  const uid=report.user_id;
+  if(!positive(uid))return {text:'Отправитель неизвестен',button:null};
+  // Identity comes from the authenticated sender; a cached or changed tag never
+  // controls the contact target. Legacy reports already contain the numeric ID.
+  const snapshot=reporterSnapshot(report.reporter,uid),profile=snapshot.username?null:await store.user(uid);
+  const username=snapshot.username||(/^[A-Za-z0-9_]{1,32}$/.test(profile?.telegram_username||'')?profile.telegram_username:null);
+  const name=snapshot.name||'Пользователь';
+  return {text:safe(name,80)+(username?' · @'+safe(username,32):'')+'\nID: '+uid,
+    button:{text:'💬 '+(username?'@'+username:String(uid)),url:'tg://user?id='+uid}};
+}
 async function reportedIds(store){
  const ids=new Set();let after=0;
  while(true){
@@ -44,18 +64,48 @@ async function openGroupReports(store,group){
   if(rows.length<100)return reports;after=rows.at(-1).record_key;
  }
 }
+export async function reportAuthorsPanel(bot,group,page=0){
+  if(bot.uid!==OWNER_ID||bot.chat!==OWNER_ID)return bot.panel('Этот раздел доступен только владельцу бота.');
+  const where="kind='report' AND json_extract(payload,'$.state')='open' AND "+REPORT_GROUP,params=groupParams(group);
+  const total=(await bot.store.db.get('SELECT COUNT(*) AS n FROM sjc_records WHERE '+where,params)).n;
+  page=Math.min(page,Math.max(0,Math.ceil(total/5)-1));
+  const rows=await bot.store.db.all('SELECT payload FROM sjc_records WHERE '+where+" ORDER BY json_extract(payload,'$.created_at') DESC,record_key LIMIT 5 OFFSET :offset",{...params,':offset':page*5});
+  const parts=[],contacts=[],seen=new Set();
+  for(const [i,row] of rows.entries()){
+    const report=JSON.parse(row.payload),author=await reportAuthor(bot.store,report);
+    parts.push(`<b>${page*5+i+1}. Отправитель</b>\n${author.text}\nПричина: ${safe(REASONS[report.reason]||'Другая причина',80)}\nДата: ${date(report.created_at)}`);
+    if(author.button&&!seen.has(author.button.url)){contacts.push([author.button]);seen.add(author.button.url);}
+  }
+  const nav=[];if(page)nav.push(button('⬅️',`admin:reporters:${group.id}:${page-1}`));if((page+1)*5<total)nav.push(button('➡️',`admin:reporters:${group.id}:${page+1}`));
+  const text=`<b>👤 Авторы жалоб</b>\nВсего открытых жалоб: ${total}${total?' · Страница '+(page+1)+' из '+Math.ceil(total/5):''}\n\n`+(parts.join('\n\n')||'Открытых жалоб на эту вакансию больше нет.');
+  const back=[...(nav.length?[nav]:[]),[button('⬅️ К жалобе',`admin:review:${group.id}`)]];
+  try {return await bot.panel(text+(contacts.length?'\n\nКнопка открывает профиль отправителя по ID. Возможность написать зависит от его настроек Telegram.':''),[...contacts,...back]);}
+  catch(error){
+    if(!contacts.length||!contactRejected(error))throw error;
+    return bot.panel(text+'\n\nTelegram не разрешил добавить кнопки профилей. ID отправителей указаны выше.',back);
+  }
+}
 
 export async function notifyReports(store, api) {
   const pending=(await store.db.all("SELECT payload FROM sjc_records WHERE kind='report' AND json_extract(payload,'$.state')='open' AND json_extract(payload,'$.owner_notice')='pending' AND COALESCE(json_extract(payload,'$.notice_after'),0)<=:now ORDER BY record_key LIMIT 5",{':now':Date.now()})).map(r=>JSON.parse(r.payload));
   for (const report of pending) {
+    const author=await reportAuthor(store,report);
     const key=`${report.user_id}:${report.group_id}`, claimed={...report,owner_notice:'sending'};
     const update=async (before,after)=>store.db.run("UPDATE sjc_records SET payload=:next WHERE kind='report' AND record_key=:key AND payload=:old",{':next':JSON.stringify(after),':key':key,':old':JSON.stringify(before)});
     if ((await update(report,claimed)).rowsAffected!==1) continue;
     let next={...claimed,owner_notice:'sent'};
     try {
-      const message=await api.sendMessage({chat_id:OWNER_ID,parse_mode:'HTML',link_preview_options:{is_disabled:true},
-        text:'<b>🚩 Новая жалоба на вакансию</b>\n\n'+safe(report.job_title || 'Вакансия',140)+'\n<b>Причина:</b> '+safe(REASONS[report.reason] || 'Другая причина',80),
-        reply_markup:{inline_keyboard:[[button('🔎 Рассмотреть',`admin:review:${report.job_id}`)]]}});
+      const params={chat_id:OWNER_ID,parse_mode:'HTML',link_preview_options:{is_disabled:true},
+        text:'<b>🚩 Новая жалоба на вакансию</b>\n\n'+safe(report.job_title || 'Вакансия',140)+'\n<b>Причина:</b> '+safe(REASONS[report.reason] || 'Другая причина',80)+'\n\n<b>Отправитель:</b> '+author.text,
+        reply_markup:{inline_keyboard:[[button('🔎 Рассмотреть',`admin:review:${report.job_id}`)],...(author.button?[[author.button]]:[])]}};
+      let message;
+      try {message=await api.sendMessage(params);}
+      catch(error){
+        // Retry only a definite rejection of the numeric profile link. Never
+        // repeat an ambiguous delivery; preserve the owner's ID-based context.
+        if(!author.button||!contactRejected(error))throw error;
+        message=await api.sendMessage({...params,reply_markup:{inline_keyboard:[params.reply_markup.inline_keyboard[0]]}});
+      }
       if (!Number.isSafeInteger(message?.message_id) || message.message_id<=0) throw new Error('Unconfirmed owner notice');
     } catch (error) {
       next.owner_notice=error.code===429?'pending':error.code===403?'blocked':'uncertain';
@@ -74,7 +124,7 @@ export async function complaint(bot, id, reason, index=-1, mode='s', context=nul
   if (!group) return bot.panel('Объявление больше не найдено.');
   const token=context || null;
   const back=token?`discover:${token}:${id}:${index}:show:${mode}`:index===-1 ? `job:${id}:${mode.startsWith('r')?'ru_':''}${mode.endsWith('f')?'full':'short'}` : `view:${id}:${index}:show:${mode}`;
-  if (!reason) return bot.panel('<b>🚩 Пожаловаться</b>\n\n' + safe(group.members[0].title,120) + '\n\nВыберите причину. Объявление будет скрыто из вашей подборки, а жалобу проверит владелец.', [...Object.entries(REASONS).map(([key,label])=>[button(label,`report:${id}:${key}:${index}:${mode}${token?':'+token:''}`)]), [button('↩️ К объявлению',back)], ...BACK]);
+  if (!reason) return bot.panel('<b>🚩 Пожаловаться</b>\n\n' + safe(group.members[0].title,120) + '\n\nВыберите причину. Объявление будет скрыто из вашей подборки, а жалобу проверит владелец. Он увидит ваш профиль Telegram и сможет связаться с вами для уточнения деталей.', [...Object.entries(REASONS).map(([key,label])=>[button(label,`report:${id}:${key}:${index}:${mode}${token?':'+token:''}`)]), [button('↩️ К объявлению',back)], ...BACK]);
   if (!Object.hasOwn(REASONS,reason)) return bot.home();
   const exists = Boolean(await bot.store.db.get("SELECT 1 AS found FROM sjc_records WHERE kind='report' AND record_key LIKE :prefix AND json_extract(payload,'$.user_id')=:uid AND "+REPORT_GROUP+' LIMIT 1',{...groupParams(group),':prefix':bot.uid+':%',':uid':bot.uid}));
   if(!exists) {
@@ -82,7 +132,7 @@ export async function complaint(bot, id, reason, index=-1, mode='s', context=nul
     if(wait) return bot.panel(`Суточный лимит жалоб исчерпан. Повторите через ${Math.ceil(wait/60)} мин.`,BACK);
   }
   const key = `${bot.uid}:${group.id}`;
-  const record = { user_id: bot.uid, job_id: id, group_id: group.id, reason, state: 'open', created_at: new Date().toISOString(), owner_notice:'pending',job_title:group.members.find(j=>j.id===id)?.title || group.members[0].title };
+  const record = { user_id: bot.uid, reporter:reporterSnapshot(bot.actor,bot.uid), job_id: id, group_id: group.id, reason, state: 'open', created_at: new Date().toISOString(), owner_notice:'pending',job_title:group.members.find(j=>j.id===id)?.title || group.members[0].title };
   // One complaint per person and recognized vacancy, even on replay/another copy.
   if (!exists) await bot.store.db.run("INSERT INTO sjc_records(kind,record_key,payload) VALUES('report',:key,:payload) ON CONFLICT(kind,record_key) DO NOTHING", { ':key':key, ':payload':JSON.stringify(record) });
   await bot.patch({ hidden_jobs: [...new Set([...(bot.s.hidden_jobs || []),group.id])] });
@@ -140,6 +190,11 @@ export async function ownerRoute(bot, action, prepared = null) {
     return bot.panel(text,[...rows,...OWNER_BACK]);
   }
   const data = prepared || await ownerReport(bot.store);
+  const authors=/^admin:reporters:([1-9]\d{0,15}):(\d{1,6})$/.exec(action);
+  if(authors){
+    const group=data.groups.find(g=>includesId(g,Number(authors[1])));
+    return group?reportAuthorsPanel(bot,group,Number(authors[2])):bot.panel('Вакансия больше не найдена.',OWNER_BACK);
+  }
   if(action==='admin:stats' || action.startsWith('admin:stats:') || action.startsWith('admin:quality'))return analyticsPanel(bot,action,data);
   const refreshed=action==='admin:refresh'||action==='admin:details:refresh'?'✅ Отчёт обновлён из сохранённых данных.\n\n':'';
   if (action === 'admin' || action === 'admin:refresh') return bot.panel(refreshed+data.text,OWNER_HOME);
@@ -162,7 +217,7 @@ export async function ownerRoute(bot, action, prepared = null) {
     const summary=await reportSummary(bot.store,group);
     const purpose=blocked?'Вакансии, снятые владельцем из общей выдачи. Можно вернуть после проверки.':'Проверьте жалобы: оставьте вакансию или снимите её из общей выдачи.';
     const text=`<b>${blocked?'🙈 Снятые с выдачи':'🚩 Жалобы'} · ${index+1}/${groups.length}</b>\n${purpose}\n${safe(summary.reasons,180)}${summary.total ? ` · ${summary.total} жалоб` : ''}\n\n`+card(group.members[0],true);
-    const rows=[...links(group.members[0],false), blocked ? [button('↩️ Вернуть в выдачу',`admin:restore:${group.id}`)] : [button('Убрать из выдачи',`admin:block:${group.id}`),button('Оставить',`admin:keep:${group.id}`)]];
+    const rows=[...links(group.members[0],false),...(!blocked&&summary.total?[[button('👤 Авторы жалоб · '+summary.total,`admin:reporters:${group.id}:0`)]]:[]), blocked ? [button('↩️ Вернуть в выдачу',`admin:restore:${group.id}`)] : [button('Убрать из выдачи',`admin:block:${group.id}`),button('Оставить',`admin:keep:${group.id}`)]];
     const route=blocked?'blocked':'reports';
     const nav=[]; if(index>0) nav.push(button('⬅️',`admin:${route}:${index-1}`)); if(index+1<groups.length) nav.push(button('➡️',`admin:${route}:${index+1}`));
     return bot.panel(text,[...rows,...(nav.length?[nav]:[]),...OWNER_BACK],bot.mid,false);

@@ -17,7 +17,7 @@ import { libraryRoute } from './library.js';
 import { SOURCE_NAMES } from './config.js';
 import { sourceEnabled } from './source-policy.js';
 import { adTick } from './ads.js';
-import { ownerReport, ownerRoute, OWNER_ID, notifyReports } from './owner.js';
+import { ownerReport, ownerRoute, OWNER_ID, notifyReports,reportAuthorsPanel } from './owner.js';
 import { card, jobButtons, menu, filtersPanel, choicePanel, translatedCard, safe } from './ui.js';
 // Crawl checkpoints contain only public source URLs and URL digests, never jobs or users.
 function publicCrawlUrl(value) {
@@ -202,6 +202,7 @@ export async function administer(input, ctx, deps) {
     const bot={store,readOnly:true,uid:OWNER_ID,chat:OWNER_ID,s:settings((await store.user(OWNER_ID))?.settings),panel:async(text,rows)=>{assert(typeof text==='string' && text.length<4096,'Invalid operations panel');assert(rows.flat().every(b=>!b.callback_data || b.callback_data.length<=64),'Invalid operations callback');const image=renderImage(text);assert(image.width+image.height<=10000 && image.bytes.length<10000000,'Invalid operations image');panels.push(true);}};
     if(section==='all'||section==='owner')for(const action of ['admin','admin:refresh','admin:vacancies','admin:users','admin:staff','admin:collection','admin:details:refresh'])await ownerRoute(bot,action,report);
     if(section==='all'||section==='owner')for(const action of ['admin:people:0',`admin:people:view:${OWNER_ID}:0`])await usersPanel(bot,action);
+    if(section==='all'||section==='owner')await reportAuthorsPanel(bot,report.groups[0]||{id:1,members:[{id:1}]});
     if(section==='all'||section==='personal') {
       for(const action of ['admin:ideas:pending:0','admin:ideas:reviewed:0'])await ownerRoute(bot,action,report);
       for(const action of ['library','favorites:0'])await libraryRoute(bot,action,report.groups);
