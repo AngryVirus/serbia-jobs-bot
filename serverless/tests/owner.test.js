@@ -183,13 +183,15 @@ test('moderation removes every copy from search and notifications; restore retai
   assert.equal((await f.store.records('report'))[0].state,'reviewed');
 });
 
-test('withdrawn source posts exclude the vacancy and copies; new original can reopen it',async()=>{
+test('withdrawn posts and copies stay closed on reread until current availability is verified',async()=>{
   const f=await fixture(); const a=job(1), b=job(2,{url:a.url.replace('https:','http:')});
   await f.store.putJob(a,true); await f.store.putJob(b,true);
   await f.store.withdraw(a.source,[a.url]);
   assert.equal(visibleJobs(groupJobs(await f.store.jobs()),defaults()).length,0);
   assert.equal((await f.store.job(1))._cloud.quality.reason,'closed');
   await f.store.putJob(a);
+  assert.equal(visibleJobs(groupJobs(await f.store.jobs()),defaults()).length,0);
+  await f.store.record('availability','t.me/rabotavserbii/1',{state:'active',verified_at:Date.now(),checked_at:Date.now(),expires_ms:null});
   assert.equal(visibleJobs(groupJobs(await f.store.jobs()),defaults()).length,1);
 });
 
@@ -237,6 +239,17 @@ test('fact refresh preserves IDs, source fields and concurrent edits',async()=>{
   await f.store.putJob({...a,description:'New content'});
   assert.equal(await f.store.refreshFacts(fresh),false);
   assert.equal((await f.store.job(1)).description,'New content');
+});
+
+test('legacy greeting repair reaches cards and lists while preserving the saved source and delivery IDs',async()=>{
+  const f=await fixture(),original=job(1,{title:'Даниил,у нас открыта вакансия',description:'Даниил,у нас открыта вакансия\nОперативный менеджер\nБелград'});
+  await f.store.putJob(original,true);
+  await f.db.run("INSERT INTO sjc_deliveries VALUES(77,1,'sent','{}')");
+  assert.equal(await f.store.refreshFacts({...original,_cloud:{...original._cloud,display_title:'Оперативный менеджер'}}),true);
+  const saved=await f.store.job(1);assert.equal(saved.title,'Оперативный менеджер');assert.equal((await f.store.jobs())[0].title,saved.title);
+  assert(card(saved).includes('Оперативный менеджер'));assert.equal(saved.description,original.description);
+  const raw=JSON.parse((await f.db.get('SELECT payload FROM sjc_jobs WHERE id=1')).payload);
+  assert.equal(raw.title,original.title);assert.equal((await f.store.stats()).deliveries,1);
 });
 
 test('collection report records completion, counts, sources and uncertain deliveries without user IDs',async()=>{

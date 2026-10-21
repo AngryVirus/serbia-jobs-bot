@@ -65,6 +65,8 @@ class FilterTests(unittest.TestCase):
         self.job["created_at"] = "2026-09-01T00:00:00+00:00"
         self.job["updated_at"] = "2026-10-14T00:00:00+00:00"
         now = datetime(2026, 10, 14, tzinfo=timezone.utc)
+        self.assertFalse(matches(self.job, self.settings, now))
+        self.job['_availability']={'state':'active','verified_at':int(now.timestamp()*1000),'expires_ms':None}
         self.assertTrue(matches(self.job, self.settings, now))
         self.settings['freshness'] = '30'
         self.assertFalse(matches(self.job, self.settings, now))

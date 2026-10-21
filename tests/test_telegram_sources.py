@@ -3,7 +3,7 @@ from html import escape
 import unittest
 
 from sources import SOURCES, Fetcher, FetchError, collect_source, collect_all, is_detail_url
-from telegram_sources import ChannelPage, hiring_post, post_job
+from telegram_sources import ChannelPage, hiring_post, post_job, vacancy_title
 from test_sources import FakeFetcher, Opener
 
 
@@ -18,6 +18,22 @@ def post(number, text, channel='serbia_jobs', date=DATE):
 
 
 class TelegramSourceTests(unittest.TestCase):
+    def test_greeting_is_not_a_role_and_body_mentions_do_not_replace_a_valid_title(self):
+        text = ('Даниил,у нас открыта вакансия\n\n👨🏻‍💼 Оперативный менеджер\n'
+                '📍 Белград, Облаковская, 61\nКомпания VROOM — автосервис и аренда автомобилей.\n'
+                'В нашу команду ищем оперативного менеджера.\n'
+                'Заработная плата: 750 € фиксированный оклад. Средний доход — от 1000 €.\n'
+                'Возможность самостоятельного оформления ВНЖ')
+        job = post_job(SOURCE, {'id': 90, 'text': text, 'date': DATE})
+        self.assertEqual(job.title, 'Оперативный менеджер')
+        from serverless.enrich_jobs import enrich_job
+        self.assertEqual(enrich_job(job)['_cloud']['salary']['min'], 750)
+        self.assertEqual(job.description, text)
+        for heading in ['Всем привет!', 'Друзья, у нас открыта вакансия', 'We are hiring!', '#вакансия']:
+            self.assertEqual(vacancy_title(heading + '\n👨🏻‍💼 Оперативный менеджер\nБелград'), 'Оперативный менеджер')
+        for title in ['Hiring engineer in Serbia', 'Вакансия: повар', 'Водитель категории B', 'C++ developer']:
+            self.assertEqual(vacancy_title(title + '\nЗадачи менеджера: подбор водителей'), title)
+
     def test_public_posts_keep_identity_text_dates_and_only_serbian_hiring(self):
         html = post(20, 'Вакансия\nPython developer\nBeograd\nEnglish required\nАдрес: Knez Mihailova 12\n1500 EUR / month')
         html += post(19, 'Ищу работу программистом в Сербии. Резюме.')

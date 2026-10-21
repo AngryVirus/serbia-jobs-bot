@@ -1,4 +1,6 @@
 import { defaults, settings } from './filters.js';
+import { availabilityTarget } from './catalog.js';
+import { sourceEnabled } from './source-policy.js';
 export const TABLES = ['users', 'jobs', 'deliveries', 'favorites', 'source_status'];
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS sjc_meta (key TEXT PRIMARY KEY, payload TEXT NOT NULL)`,
@@ -17,7 +19,10 @@ export function assert(value, message) { if (!value) throw new Error(message); }
 export const positive = x => Number.isSafeInteger(x) && x > 0;
 export class Store {
   constructor(db) { this.db = db; }
-  async init() { for (const sql of SCHEMA) await this.db.run(sql); }
+  async init() {
+    for (const sql of SCHEMA) await this.db.run(sql);
+    await this.db.run("INSERT INTO sjc_meta(key,payload) VALUES('availability_started_at',:at) ON CONFLICT(key) DO NOTHING",{':at':JSON.stringify(new Date().toISOString())});
+  }
   async pruneStaffAudit(now=Date.now()) {
     await this.db.run("DELETE FROM sjc_records WHERE kind='staff_audit' AND julianday(json_extract(payload,'$.at'))<julianday(:cutoff)",{':cutoff':new Date(now-10*86400000).toISOString()});
   }
@@ -150,7 +155,68 @@ export class Store {
       if(page.length<100) break;
       before=page[page.length-1].id;
     }
-    return rows.map(r => ({ ...JSON.parse(r.payload), id: r.id, ...(blocked.has(r.id) ? { _moderated: true } : {}) })).sort((a,b) => (Date.parse(b.created_at) - Date.parse(a.created_at) || b.id-a.id));
+    const jobs=rows.map(r => ({ ...JSON.parse(r.payload), id: r.id, ...(blocked.has(r.id) ? { _moderated: true } : {}) }));
+    await this.decorateJobs(jobs);
+    return jobs.sort((a,b) => (Date.parse(b.created_at) - Date.parse(a.created_at) || b.id-a.id));
+  }
+  async decorateJobs(jobs){
+    const keys=[...new Set(jobs.map(j=>availabilityTarget(j).key))],states=new Map(),baseline=await this.meta('availability_started_at');
+    for(let i=0;i<keys.length;i+=250){
+      const rows=await this.db.all("SELECT record_key,payload FROM sjc_records WHERE kind='availability' AND record_key IN (SELECT value FROM json_each(:keys))",{':keys':JSON.stringify(keys.slice(i,i+250))});
+      for(const row of rows)states.set(row.record_key,JSON.parse(row.payload));
+    }
+    for(const job of jobs){
+      if(typeof job._cloud?.display_title==='string'&&job._cloud.display_title.length<=140)job.title=job._cloud.display_title;
+      const state=states.get(availabilityTarget(job).key);job._availability_baseline=baseline;
+      if(state){
+        job._availability=state;
+        if(state.state!=='closed'&&Number.isFinite(state.verified_at))job._cloud={...job._cloud,expires_ms:state.expires_ms??null,quality:job._cloud?.quality?.reason==='closed'?{...job._cloud.quality,reason:null}:job._cloud?.quality};
+      }
+    }
+  }
+  async availabilityBatch(now=Date.now()){
+    const after=await this.meta('availability_cursor')||0;
+    const rows=await this.db.all("SELECT id,json_extract(payload,'$.source') AS source,json_extract(payload,'$.url') AS url FROM sjc_jobs WHERE id>:after ORDER BY id LIMIT 12",{':after':after});
+    const candidates=[],seen=new Set();
+    for(const row of rows){
+      if(!sourceEnabled(row.source))continue;
+      if(['tg_radim_serbia','tg_rabotavserbii'].includes(row.source))row.description=(await this.db.get("SELECT json_extract(payload,'$.description') AS description FROM sjc_jobs WHERE id=:id",{':id':row.id}))?.description;
+      const target=availabilityTarget(row);
+      if(!target.key||seen.has(target.key))continue;seen.add(target.key);
+      const saved=await this.db.get("SELECT payload FROM sjc_records WHERE kind='availability' AND record_key=:key",{':key':target.key});
+      if(saved&&JSON.parse(saved.payload).next_at>now)continue;
+      candidates.push({id:row.id,...target});
+    }
+    return {after,cursor:rows.length===12?rows.at(-1).id:0,started_at:now,candidates,scanned:rows.length};
+  }
+  async applyAvailability(input,now=Date.now()){
+    const last=await this.meta('availability_batch');
+    if(last?.probe===input.probe)return {replayed:true};
+    assert((await this.meta('availability_cursor')||0)===input.after,'Availability cursor changed');
+    const rows=await this.db.all('SELECT id FROM sjc_jobs WHERE id>:after ORDER BY id LIMIT 12',{':after':input.after});
+    assert(input.cursor===(rows.length===12?rows.at(-1).id:0)&&input.results.every(r=>rows.some(row=>row.id===r.id)),'Invalid availability batch');
+    const fence="EXISTS(SELECT 1 FROM sjc_locks WHERE key='collection' AND owner=:owner AND expires>:now) AND EXISTS(SELECT 1 FROM sjc_meta WHERE key='collection_run' AND json_extract(payload,'$.owner')=:owner AND json_extract(payload,'$.state')='running')";
+    let closed=0,verified=0;
+    for(const result of input.results){
+      const row=await this.db.get('SELECT payload FROM sjc_jobs WHERE id=:id',{':id':result.id});if(!row)continue;
+      const target=availabilityTarget(JSON.parse(row.payload));
+      assert(result.key===target.key,'Availability target changed');
+      const saved=await this.db.get("SELECT payload FROM sjc_records WHERE kind='availability' AND record_key=:key",{':key':target.key}),old=saved?JSON.parse(saved.payload):{};
+      if(old.probe===input.probe||old.checked_at>input.started_at)continue;
+      let state=result.state;
+      const next={...old,state:old.state==='closed'?'closed':'unknown',reason:result.reason,checked_at:now,next_at:now+86400000,probe:input.probe};
+      if(state==='missing'){
+        if(Number.isFinite(old.missing_at)&&now-old.missing_at>=6*3600000)state='closed';
+        else if(!Number.isFinite(old.missing_at))next.missing_at=now;
+      }
+      if(state==='active'){next.state='active';next.verified_at=now;next.expires_ms=result.expires_ms??null;delete next.missing_at;verified++;}
+      if(state==='closed'){next.state='closed';next.next_at=now+7*86400000;closed++;}
+      const written=await this.db.run("INSERT INTO sjc_records(kind,record_key,payload) SELECT 'availability',:key,:payload WHERE "+fence+' ON CONFLICT(kind,record_key) DO UPDATE SET payload=excluded.payload',{':key':target.key,':payload':JSON.stringify(next),':owner':input.owner,':now':now});
+      assert(written.rowsAffected===1,'Availability owner changed');
+    }
+    const advanced=await this.db.run("INSERT INTO sjc_meta(key,payload) SELECT key,payload FROM (SELECT 'availability_cursor' AS key,:cursor AS payload UNION ALL SELECT 'availability_batch',:batch) WHERE "+fence+' ON CONFLICT(key) DO UPDATE SET payload=excluded.payload',{':cursor':JSON.stringify(input.cursor),':batch':JSON.stringify({probe:input.probe,cursor:input.cursor}),':owner':input.owner,':now':now});
+    assert(advanced.rowsAffected===2,'Availability owner changed');
+    return {closed,verified};
   }
   async records(kind) { return (await this.db.all('SELECT payload FROM sjc_records WHERE kind=:kind ORDER BY record_key', { ':kind': kind })).map(r => JSON.parse(r.payload)); }
   async record(kind, key, value) { await this.db.run('INSERT INTO sjc_records(kind,record_key,payload) VALUES(:kind,:key,:payload) ON CONFLICT(kind,record_key) DO UPDATE SET payload=excluded.payload', { ':kind': kind, ':key': String(key), ':payload': JSON.stringify(value) }); }
@@ -162,6 +228,7 @@ export class Store {
       job._withdrawn_at = new Date().toISOString(); job.updated_at = job._withdrawn_at;
       job._cloud.quality = { version: 1, reason: 'closed' };
       await this.db.run('UPDATE sjc_jobs SET payload=:payload WHERE source_key=:key AND payload=:old', { ':key': JSON.stringify([source,url]), ':old': row.payload, ':payload': JSON.stringify(job) });
+      await this.record('availability',availabilityTarget(job).key,{state:'closed',reason:'publisher_notice',checked_at:Date.now(),next_at:Date.now()+7*86400000});
     }
   }
   async refreshFacts(row) {
@@ -173,11 +240,11 @@ export class Store {
     job._cloud={...row._cloud};
     return (await this.db.run('UPDATE sjc_jobs SET payload=:payload WHERE id=:id AND payload=:old', { ':id': row.id, ':old': saved.payload, ':payload': JSON.stringify(job) })).rowsAffected === 1;
   }
-  async job(id) { const row = await this.db.get('SELECT id,payload FROM sjc_jobs WHERE id=:id', { ':id': id }); return row ? { ...JSON.parse(row.payload), id: row.id } : null; }
+  async job(id) { const row = await this.db.get('SELECT id,payload FROM sjc_jobs WHERE id=:id', { ':id': id });if(!row)return null;const jobs=[{...JSON.parse(row.payload),id:row.id}];await this.decorateJobs(jobs);return jobs[0]; }
   async latest() { return (await this.db.get('SELECT COALESCE(MAX(id),0) AS id FROM sjc_jobs')).id; }
   async putJob(raw, migration = false) {
     assert(raw && typeof raw.source === 'string' && typeof raw.url === 'string' && raw.title && raw._cloud?.version === 1, 'Invalid enriched job');
-    const job = { ...raw }, key = JSON.stringify([job.source, job.url]);
+    const job = { ...raw,_cloud:{...raw._cloud,...(raw._cloud.quality?{quality:{...raw._cloud.quality}}:{})} }, key = JSON.stringify([job.source, job.url]);
     if (migration) {
       assert(positive(job.id), 'Invalid job ID');
       await this.db.run('INSERT INTO sjc_jobs(id,source_key,payload) VALUES(:id,:key,:payload)', { ':id': job.id, ':key': key, ':payload': JSON.stringify(job) });
@@ -186,14 +253,24 @@ export class Store {
     const old = await this.db.get('SELECT payload FROM sjc_jobs WHERE source_key=:key', { ':key': key });
     const previous = old ? JSON.parse(old.payload) : null;
     delete job.id;
+    delete job._availability;delete job._availability_baseline;
     if (previous?.published_at) {
       job.published_at = previous.published_at; job.publication_date_only = previous.publication_date_only;
       for (const field of ['published_ms', 'published_day', 'date_only', 'date_label']) job._cloud[field] = previous._cloud[field];
     }
     job.created_at = previous?.created_at || new Date().toISOString();
     job.updated_at = new Date().toISOString();
+    if(previous?._withdrawn_at){job._withdrawn_at=previous._withdrawn_at;job._cloud.quality={...job._cloud.quality,reason:'closed'};}
     if (old) await this.db.run('UPDATE sjc_jobs SET payload=:payload WHERE source_key=:key', { ':key': key, ':payload': JSON.stringify(job) });
     else await this.db.run('INSERT INTO sjc_jobs(source_key,payload) VALUES(:key,:payload)', { ':key': key, ':payload': JSON.stringify(job) });
+    const target=availabilityTarget(job);
+    if(raw._cloud?.quality?.reason==='closed'||raw._cloud?.expires_ms!=null&&raw._cloud.expires_ms<=Date.now())await this.record('availability',target.key,{state:'closed',reason:raw._cloud?.quality?.reason==='closed'?'publisher_notice':'expired',checked_at:Date.now(),next_at:Date.now()+7*86400000});
+    else if(!/^(tg_|telegram_)/.test(job.source)&&!raw._cloud?.quality?.reason){
+      // A current original feed/detail confirms an open web publication. A
+      // known closure still needs a direct probe; stale listings cannot reopen it.
+      const row=await this.db.get("SELECT payload FROM sjc_records WHERE kind='availability' AND record_key=:key",{':key':target.key});
+      if(!row||JSON.parse(row.payload).state!=='closed')await this.record('availability',target.key,{state:'active',reason:'parsed',checked_at:Date.now(),verified_at:Date.now(),expires_ms:raw._cloud?.expires_ms??null,next_at:Date.now()+86400000});
+    }
     return !old;
   }
   async importRows(table, rows) {

@@ -556,10 +556,12 @@ def extract_jobs(source: Source, html: str, page_url: str, *, allow_fallback: bo
 
 
 class FetchError(Exception):
-    def __init__(self, state: str, detail: str):
+    def __init__(self, state: str, detail: str, *, http_status=None, http_url=None):
         super().__init__(detail)
         self.state = state
         self.detail = detail
+        self.http_status = http_status
+        self.http_url = http_url
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -646,7 +648,7 @@ class Fetcher:
             if robot_file and exc.code in {404, 410}:
                 return "User-agent: *\nAllow: /", url
             state = "blocked" if exc.code in {401, 403, 429} else "error"
-            raise FetchError(state, f"HTTP {exc.code}; автоматический доступ не подтверждён.") from exc
+            raise FetchError(state, f"HTTP {exc.code}; автоматический доступ не подтверждён.",http_status=exc.code,http_url=canonical_url(url)) from exc
         except (URLError, TimeoutError, OSError) as exc:
             # Do not print proxy credentials, full request URLs or response data.
             raise FetchError("error", f"Сетевой запрос не выполнен ({type(exc).__name__}).") from exc

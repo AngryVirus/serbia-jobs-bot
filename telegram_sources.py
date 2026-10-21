@@ -114,6 +114,29 @@ REQUIREMENTS = re.compile(
     r'qualifications|what we offer|what you(?: will|’ll|\x27ll) bring|benefits|uslovi|nudimo)\b')
 
 
+def vacancy_title(text):
+    """Skip introductory greetings, without mining duties for a different role."""
+    lines = [re.sub(r'^[^\w#]+', '', line.strip()) for line in text.splitlines() if line.strip()]
+    lines = [line for line in lines if line]
+    if not lines:
+        return ''
+    def heading(line):
+        value = normalize(line)
+        return (bool(re.fullmatch(r'(?:#\w+\s*)+|вакансия\s*[:!]*', value)) or
+                not ROLE.search(value) and bool(re.search(
+                    r'\b(?:у нас (?:открыта|есть) вакансия|всем привет|добрыи день|'
+                    r'друзья|коллеги|we are hiring|we.re hiring|hello everyone)\b', value)))
+    if not heading(lines[0]):
+        return lines[0][:140]
+    opening = [line for line in lines[1:6] if not heading(line)]
+    for line in opening:
+        value = normalize(line)
+        if (len(line) <= 100 and ROLE.search(value) and not DUTIES.search(value)
+                and not REQUIREMENTS.search(value) and not re.search(r'[.!?]|\b(?:компания|company|зарплата|salary)\b', value)):
+            return line[:140]
+    return (opening[0] if opening else lines[0])[:140]
+
+
 def hiring_post(text):
     text = _ad_text(text)
     if quality_reason(text):
@@ -158,8 +181,7 @@ def post_job(source, post, *, include_expired=False):
     published = safe_date(post['date'])
     if not published:
         return None
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    title = next((line for line in lines if not re.fullmatch(r'(?:#\w+\s*)+|вакансия\s*[:!]*', line, re.I)), lines[0])[:140]
+    title = vacancy_title(text)
     links = [link for value in post.get('links', []) if (link := public_link(value)) and link not in text]
     description = text + ('\n' + '\n'.join(dict.fromkeys(links)) if links else '')
     job = Job(source.id, f'https://t.me/{source.telegram_channel}/{post["id"]}', title,

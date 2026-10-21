@@ -1,5 +1,6 @@
 import { OPTIONS, CITIES, DEFAULTS, KEYWORD_FORMS } from './config.js';
 import { sourceEnabled } from './source-policy.js';
+import { availabilityAllows } from './availability.js';
 export const defaults = () => JSON.parse(JSON.stringify(DEFAULTS));
 export function settings(raw = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) raw = {};
@@ -54,9 +55,10 @@ export const belgradeDay = ms => Math.floor((ms + belgradeOffset(ms)) / 86400000
 export const validUrl = url => typeof url === 'string' && url.length <= 2048 && /^https?:\/\/[^\s/@<>"\\]+\/[^\s<>"\\]+$/i.test(url);
 export const contactable = j => validUrl(j.url) || Boolean(j.contacts?.length);
 export function matches(j, s, now = Date.now()) {
+  if(!availabilityAllows(j,now))return false;
   if (!sourceEnabled(j.source)) return false;
   const f = j._cloud;
-  if (!f || f.quality?.reason || j._moderated || hidden(s).has(j.id) || !f.serbia || (f.expires_ms != null && f.expires_ms <= now)) return false;
+  if (!f || f.quality?.reason || j._moderated || hidden(s).has(j.id) || !f.serbia) return false;
   const periods = selected(s, 'freshness'), age = f.published_day == null ? null : belgradeDay(now) - f.published_day;
   if (age !== null && (age < 0 || (!f.date_only && f.published_ms > now))) return false;
   if (!periods.some(p => p === 'any' || age !== null && ({ today: age === 0, yesterday: age === 1, 7: age >= 0 && age < 7, 30: age >= 0 && age < 30 })[p])) return false;
