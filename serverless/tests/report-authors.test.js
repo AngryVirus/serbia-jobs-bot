@@ -34,6 +34,13 @@ test('legacy reports use cached usernames or numeric IDs without rewriting data 
  assert.deepEqual(buttons(f).filter(b=>b.url).map(b=>b.url).sort(),['tg://user?id=77','tg://user?id=78']);
  assert.deepEqual(await f.store.records('report'),before);
 });
+test('a long name with an emoji on the length boundary remains valid Unicode in snapshots and notices',async()=>{
+ const f=await fixture();await f.store.putJob(job(1),true);
+ const name='А'.repeat(79)+'🧑',update=callback(77,'report:1:outdated');update.callback_query.from.first_name=name;
+ await handle(f,update);
+ const [report]=await f.store.records('report');assert.equal(report.reporter.name,name);assert(report.reporter.name.isWellFormed());
+ const notice=f.api.sent.find(p=>p.chat_id===OWNER_ID);assert(notice);assert(notice.text.isWellFormed());assert.equal(report.owner_notice,'sent');
+});
 test('authors of all copies are paginated in bounded queries and unrelated or resolved reports stay out',async()=>{
  const f=await fixture();await f.store.putJob(job(1,{url:'https://example.rs/same'}),true);await f.store.putJob(job(2,{url:'https://example.rs/same?utm_source=test'}),true);
  await f.store.putJob(job(3,{url:'https://example.rs/other'}),true);

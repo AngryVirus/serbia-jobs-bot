@@ -29,7 +29,7 @@ const contactRejected=error=>error.code===400&&/BUTTON_USER_PRIVACY_RESTRICTED|B
 function reporterSnapshot(actor,uid){
   const snapshot={id:uid};
   if(actor?.id!==uid)return snapshot;
-  if(typeof actor.name==='string')snapshot.name=actor.name.replace(/[\u0000-\u001f\u007f]/g,' ').replace(/\s+/g,' ').trim().slice(0,80);
+  if(typeof actor.name==='string')snapshot.name=[...actor.name.replace(/[\u0000-\u001f\u007f]/g,' ').replace(/\s+/g,' ').trim()].slice(0,80).join('');
   if(typeof actor.username==='string'&&/^[A-Za-z0-9_]{1,32}$/.test(actor.username))snapshot.username=actor.username;
   return snapshot;
 }
