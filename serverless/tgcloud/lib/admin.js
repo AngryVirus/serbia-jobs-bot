@@ -136,9 +136,10 @@ export async function administer(input, ctx, deps) {
   const store = new Store(deps.db), op = input?.operation;
   if(op==='release_state'){
     const facts=await store.meta('facts_progress'),last=await store.meta('last_collection'),run=await store.meta('collection_run');
+    const leases=Object.fromEntries((await store.db.all("SELECT key,expires FROM sjc_locks WHERE key IN ('facts_refresh','collection')")).map(row=>[row.key,row.expires]));
     const remaining=facts?(await store.db.get('SELECT COUNT(*) AS n FROM sjc_jobs WHERE id>:after AND id<=:upper',{':after':facts.after,':upper':facts.upper})).n:0;
     const titles=await store.db.get("SELECT COUNT(*) AS n,SUM(CASE WHEN json_extract(payload,'$._cloud.display_title')='Оперативный менеджер' AND json_extract(payload,'$.description') LIKE 'Даниил,%' THEN 1 ELSE 0 END) AS example FROM sjc_jobs WHERE json_type(payload,'$._cloud.display_title')='text'");
-    return {facts_remaining:remaining,title_repairs:titles.n,example_repaired:Boolean(titles.example),collection_running:run?.state==='running',last_collection_state:last?.state,availability_checked:last?.totals?.availability_checked,availability_verified:last?.totals?.availability_verified,availability_closed:last?.totals?.availability_closed};
+    return {leases,facts_remaining:remaining,title_repairs:titles.n,example_repaired:Boolean(titles.example),collection_running:run?.state==='running',last_collection_state:last?.state,availability_checked:last?.totals?.availability_checked,availability_verified:last?.totals?.availability_verified,availability_closed:last?.totals?.availability_closed};
   }
   if(['backup_create','backup_page','backup_release'].includes(op)) return backupOperation(store,input);
   if(op==='menu_image_audit') {
