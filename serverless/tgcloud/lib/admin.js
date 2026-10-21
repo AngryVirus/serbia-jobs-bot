@@ -134,6 +134,11 @@ export async function administer(input, ctx, deps) {
   const me = await deps.api.getMe();
   assert(me.is_bot && me.id === 8802394224 && me.username?.toLowerCase() === 'serbiajobsbot', 'Wrong bot; stopped');
   const store = new Store(deps.db), op = input?.operation;
+  if(op==='release_finished_facts'){
+    assert(Number.isSafeInteger(input.expires)&&typeof input.version==='string','Invalid recovery fence');
+    const result=await store.db.run("DELETE FROM sjc_locks WHERE key='facts_refresh' AND expires=:expires AND EXISTS(SELECT 1 FROM sjc_meta WHERE key='facts_progress' AND json_extract(payload,'$.version')=:version)",{':expires':input.expires,':version':input.version});
+    return {released:result.rowsAffected===1};
+  }
   if(op==='release_state'){
     const facts=await store.meta('facts_progress'),last=await store.meta('last_collection'),run=await store.meta('collection_run');
     const leases=Object.fromEntries((await store.db.all("SELECT key,expires FROM sjc_locks WHERE key IN ('facts_refresh','collection')")).map(row=>[row.key,row.expires]));
