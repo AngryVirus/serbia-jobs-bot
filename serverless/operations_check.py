@@ -4,7 +4,7 @@ from cloud import invoke
 
 def main():
     total, stale, backup = 0, False, True
-    for section, expected in [('owner', 9), ('analytics', 6), ('personal', 4), ('staff', 7)]:
+    for section, expected in [('owner', 10), ('analytics', 6), ('personal', 4), ('staff', 7)]:
         result = invoke('operations_check', section=section)
         reason=result.get('reason')
         reason=reason if reason in {'panel_size','callback_size','image_size','execution_limit','execution_error'} else 'unconfirmed'
