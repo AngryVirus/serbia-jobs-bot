@@ -84,6 +84,9 @@ def main():
             print('Saved vacancy recheck deferred; collection continues without resetting its cursor.',flush=True)
         totals.update({'availability_'+key:value for key,value in availability.items()})
         print('Saved vacancy recheck:',json.dumps(availability,sort_keys=True),flush=True)
+        # Maintenance has its own three-minute cap. Preserve the existing
+        # twenty-minute discovery/delivery budget after that optional work.
+        deadline=time.monotonic()+1200
         # State belongs to the shared database, not an ephemeral Actions checkout.
         # Read one bounded source at a time; never export users or credentials.
         crawl_states = {}
