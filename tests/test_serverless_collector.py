@@ -13,6 +13,28 @@ from sources import Job
 
 
 class CollectionWorkerTests(unittest.TestCase):
+    def test_saved_link_maintenance_does_not_consume_the_discovery_budget(self):
+        clock=[0]
+        def recheck(owner,deadline):
+            self.assertEqual(deadline,180)
+            clock[0]=180
+            return {'checked':12,'closed':0,'verified':1}
+        def collect_all(**fields):
+            clock[0]=1300  # Beyond the old shared budget, within 180 + 1200.
+            fields['on_source']('radim',[],{'state':'ok'})
+        def invoke(operation,**fields):
+            if operation=='init':return {'active':True}
+            if operation=='collection_end':return {'released':True}
+            if operation=='collect':return {'added':0}
+            return {}
+        with patch.object(collect,'invoke',side_effect=invoke) as calls, \
+             patch.object(collect.time,'monotonic',side_effect=lambda:clock[0]), \
+             patch.object(collect,'recheck',side_effect=recheck), \
+             patch.object(collect,'collect_all',side_effect=collect_all), \
+             patch.object(collect,'notify',return_value=(0,0)),contextlib.redirect_stdout(io.StringIO()):collect.main()
+        completed=next(call for call in calls.call_args_list if call.args==('collection_end',))
+        self.assertFalse(completed.kwargs['failed'])
+
     def test_saved_link_queue_commits_only_the_inspected_batch_and_stops_at_wrap(self):
         batch={'after':0,'cursor':0,'started_at':123,'candidates':[{'id':1,'key':'radim.rs/jobs/test'}]}
         with patch.object(collect,'invoke',side_effect=[batch,{'closed':1,'verified':0}]) as invoke, \
