@@ -22,7 +22,7 @@ try {
       // /run needs its complete module space; it cannot use the deployed code as a cache.
       // This reviewed entrypoint uses only the backup dependency closure, without UI assets.
       entrypoint='endpoints/backup';
-      selected=Object.fromEntries(['lib/backup','lib/store','lib/filters','lib/config','lib/source-policy'].map(name=>{
+      selected=Object.fromEntries(['lib/backup','lib/store','lib/filters','lib/config','lib/source-policy','lib/catalog','lib/availability'].map(name=>{
         if(typeof sources[name]!=='string')throw Error('Missing backup dependency');return [name,sources[name]];
       }));
       selected[entrypoint]="import { db, api } from 'sdk';\nimport { backupAdmin } from '../lib/backup.js';\nexport default async function(input,ctx){return backupAdmin(input,ctx,{db,api});}\n";

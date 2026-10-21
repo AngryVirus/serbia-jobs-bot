@@ -7,6 +7,7 @@ from cloud import invoke
 from enrich_jobs import enrich_job
 from sources import SOURCES, collect_all
 from source_policy import source_enabled
+from vacancy_availability import inspect_batch
 
 
 MAX_BATCH_BYTES = 90 * 1024
@@ -46,6 +47,20 @@ def notify(deadline):
             time.sleep(min(1.1, remaining))
     return sent, uncertain
 
+def recheck(owner,deadline):
+    totals={'checked':0,'closed':0,'verified':0}
+    # Durable numeric cursor, four bounded pages, no dependency on listing links.
+    for _ in range(4):
+        if time.monotonic()>=deadline:break
+        batch=invoke('availability_due',owner=owner)
+        if not isinstance(batch.get('candidates'),list):return totals
+        results=inspect_batch(batch['candidates'],deadline=deadline)
+        saved=invoke('availability_apply',owner=owner,probe=str(uuid.uuid4()),after=batch['after'],cursor=batch['cursor'],started_at=batch['started_at'],results=results)
+        totals['checked']+=len(results)
+        for field in ['closed','verified']:totals[field]+=saved.get(field,0)
+        if not batch['cursor']:break
+    return totals
+
 
 def main():
     status = invoke('init')
@@ -60,6 +75,15 @@ def main():
               'skipped_known': 0, 'rejected': 0, 'truncated_sources': 0}
     deadline = time.monotonic() + 1200
     try:
+        try:
+            availability=recheck(owner,min(deadline,time.monotonic()+180))
+        except (ValueError,RuntimeError,OSError):
+            # A deferred maintenance probe must not prevent discovery. The next
+            # fenced source request still stops a run whose lease was lost.
+            availability={'checked':0,'closed':0,'verified':0,'deferred':1}
+            print('Saved vacancy recheck deferred; collection continues without resetting its cursor.',flush=True)
+        totals.update({'availability_'+key:value for key,value in availability.items()})
+        print('Saved vacancy recheck:',json.dumps(availability,sort_keys=True),flush=True)
         # State belongs to the shared database, not an ephemeral Actions checkout.
         # Read one bounded source at a time; never export users or credentials.
         crawl_states = {}

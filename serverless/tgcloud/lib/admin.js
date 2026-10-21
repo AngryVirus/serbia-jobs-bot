@@ -303,7 +303,7 @@ export async function administer(input, ctx, deps) {
     assert(!await store.db.get('SELECT 1 AS n FROM sjc_jobs WHERE id>:after AND id<=:upper LIMIT 1',{':after':progress.after,':upper':progress.upper}),'Facts migration incomplete');
     await store.setMeta('facts_version',input.version);await store.setMeta('facts_progress',null);await store.unlock('facts_refresh',input.owner);return {complete:true};
   }
-  if (['collection_begin','collection_state','collect','collection_end'].includes(op)) {
+  if (['collection_begin','collection_state','collect','collection_end','availability_due','availability_apply'].includes(op)) {
     assert(typeof input.owner === 'string' && /^[a-f0-9-]{36}$/.test(input.owner), 'Collection owner required');
     // Requests using one run owner can also overlap after transport retries.
     // Serialize individual RPCs as well as retaining the durable run lease.
@@ -341,8 +341,16 @@ export async function administer(input, ctx, deps) {
       await store.setMeta('last_collection',result); await store.setMeta('collection_run',result);
       await store.sourceStatus('_collection', { state: result.state, checked_at: now }); await store.unlock('collection',input.owner); return { released: true };
     }
-    assert(Object.hasOwn(SOURCE_NAMES,input.source),'Invalid collection source');
     await renewCollection(store,input.owner);
+    if(op==='availability_due')return store.availabilityBatch();
+    if(op==='availability_apply'){
+      assert(typeof input.probe==='string'&&/^[a-f0-9-]{36}$/.test(input.probe),'Invalid availability probe');
+      assert(Number.isSafeInteger(input.started_at)&&input.started_at<=Date.now()&&input.started_at>=Date.now()-600000,'Expired availability probe');
+      assert([input.after,input.cursor].every(x=>Number.isSafeInteger(x)&&x>=0),'Invalid availability cursor');
+      assert(Array.isArray(input.results)&&input.results.length<=12&&input.results.every(r=>positive(r.id)&&typeof r.key==='string'&&r.key.length<=2048&&['active','closed','unknown','missing'].includes(r.state)&&['parsed','expired','publisher_notice','not_found','gone','unrecognized','post_only','unavailable','unsupported'].includes(r.reason)&&(r.expires_ms==null||Number.isSafeInteger(r.expires_ms)&&r.expires_ms>0)),'Invalid availability results');
+      return store.applyAvailability(input);
+    }
+    assert(Object.hasOwn(SOURCE_NAMES,input.source),'Invalid collection source');
     if(op==='collection_state') {
       const row=await store.db.get("SELECT payload FROM sjc_records WHERE kind='collection_crawl' AND record_key=:source",{':source':input.source});
       let state={};try{const value=row&&JSON.parse(row.payload);if(validCrawlState(value))state=value;}catch{/* A malformed old checkpoint restarts only its own source. */}

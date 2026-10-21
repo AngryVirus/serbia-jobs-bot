@@ -34,7 +34,7 @@ class CalendarTests(unittest.TestCase):
                               'yesterday': [('2026-10-13',True),('2026-10-14',False),('2026-10-12',False)],
                               '7': [('2026-10-08',True),('2026-10-07',False)],
                               '30': [('2026-09-15',True),('2026-09-14',False)],
-                              'any': [('2001-01-01',True),(None,True)]}.items():
+                              'any': [('2001-01-01',False),(None,True)]}.items():
             for date,expected in dates:
                 with self.subTest(period=period,date=date): self.check(period,date,expected)
 

@@ -74,11 +74,30 @@ def parse_datetime(value):
 
 def active(job, now=None):
     now = now or datetime.now(timezone.utc)
+    evidence=job.get('_availability') or {}
+    if evidence.get('state')!='closed' and type(evidence.get('verified_at')) in (int,float) and 'expires_ms' in evidence:
+        return evidence['expires_ms'] is None or evidence['expires_ms']>now.timestamp()*1000
     value = job.get('expires_at')
     expiry = parse_datetime(value)
     if expiry and (len(str(value)) == 10 or job.get('expires_date_only')):
         expiry = datetime.combine(expiry.astimezone(BELGRADE).date() + timedelta(days=1), datetime.min.time(), BELGRADE)
     return not expiry or expiry > now
+
+
+def availability_matches(job,now):
+    evidence=job.get('_availability') or {}
+    if evidence.get('state')=='closed':return False
+    facts=job.get('_cloud') or {}
+    verified=type(evidence.get('verified_at')) in (int,float) and 'expires_ms' in evidence
+    expiry=evidence.get('expires_ms') if verified else facts.get('expires_ms')
+    if type(expiry) in (int,float):return expiry>now.timestamp()*1000
+    if not verified and parse_datetime(job.get('expires_at')):return True  # active() checked the deadline.
+    anchor=evidence.get('verified_at')
+    if type(anchor) not in (int,float):anchor=facts.get('published_ms')
+    if type(anchor) not in (int,float):
+        stamp=next((stamp for key in ['published_at','created_at','_availability_baseline'] if (stamp:=parse_datetime(job.get(key)))),None)
+        anchor=stamp.timestamp()*1000 if stamp else None
+    return anchor is None or now.timestamp()*1000-anchor<30*86400000
 
 
 def freshness_matches(job, period, now):
@@ -109,7 +128,7 @@ def matches(job, settings, now=None):
     if not source_enabled(job.get('source') or ''): return False
     now = now or datetime.now(timezone.utc)
     if job.get('id') in hidden_job_ids(settings): return False
-    if not active(job, now) or not serbia_eligible(job): return False
+    if not active(job, now) or not availability_matches(job,now) or not serbia_eligible(job): return False
     if not any(freshness_matches(job, period, now) for period in selected_values(settings, 'freshness')): return False
     text = normalize(' '.join(str(job.get(k) or '') for k in ('title', 'description')))
     if settings.get('keywords') and not any(keyword_contains(text, x) for x in settings['keywords']): return False

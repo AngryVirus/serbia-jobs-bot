@@ -123,5 +123,15 @@ class MigrationTests(unittest.TestCase):
         self.assertTrue(j['_cloud']['map_url'].startswith('https://www.google.com/maps/'))
         self.assertIsNone(j['_cloud']['permit'])
 
+    def test_legacy_telegram_greeting_gets_a_display_title_without_mutating_source_fields(self):
+        raw = {'source':'telegram_serbia_jobs', 'title':'Даниил,у нас открыта вакансия',
+               'description':'Даниил,у нас открыта вакансия\n👨🏻‍💼 Оперативный менеджер\nБелград',
+               'published_at':'2026-08-09', 'id':12}
+        fresh = enrich_job(raw)
+        self.assertEqual(fresh['_cloud']['display_title'], 'Оперативный менеджер')
+        for key, value in raw.items(): self.assertEqual(fresh[key], value)
+        self.assertNotIn('display_title', enrich_job({**raw,'title':'Custom role'})['_cloud'])
+        self.assertNotIn('display_title', enrich_job({**raw,'source':'radim'})['_cloud'])
+
 
 if __name__ == '__main__': unittest.main()

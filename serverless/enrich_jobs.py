@@ -32,6 +32,16 @@ def enrich_job(raw):
         from serbian_geography import has_serbian_location
         serbia = serbia and has_serbian_location(_ad_text(text))
     reason = 'closed' if job.get('_withdrawn_at') else quality_reason(text)
+    display_title = None
+    if str(job.get('source') or '').startswith(('telegram_', 'tg_')):
+        from telegram_sources import vacancy_title
+        description = str(job.get('description') or '')
+        first = next((line.strip() for line in description.splitlines() if line.strip()), '')
+        # Repair legacy first-line titles only; keep deliberately supplied titles.
+        if str(job.get('title') or '') == first[:140]:
+            parsed_title = vacancy_title(description)
+            if parsed_title and parsed_title != job['title']:
+                display_title = parsed_title
     job['_cloud'] = {
         'version': 1, 'languages': languages, 'required_languages': required,
         'remote': remote, 'salary': salary_facts(job),
@@ -44,5 +54,6 @@ def enrich_job(raw):
         'address': job_address(job), 'map_url': maps_url(job), 'location_url': job_map_url(job),
         'quality': {'version': 1, 'reason': reason},
         **explicit_requirements(text),
+        **({'display_title': display_title} if display_title else {}),
     }
     return job

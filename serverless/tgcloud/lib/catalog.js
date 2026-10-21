@@ -52,7 +52,7 @@ function applicationLinks(j) {
 
 // Verified publisher templates link to one exact vacancy, even when the
 // Telegram teaser uses a shorter title, salary or city than the website.
-function publisherOriginal(j) {
+export function publisherOriginal(j) {
   const publishers = { tg_radim_serbia: ['t.me/radim_serbia/', /^radim\.rs\/jobs\/[^/?#]+(?:\?.*)?$/],
     tg_rabotavserbii: ['t.me/rabotavserbii/', /^ovdejobs\.com\/(?:jobs\/[^/?#]+|\?p=\d+)$/] };
   const rule = publishers[j.source];
@@ -60,6 +60,10 @@ function publisherOriginal(j) {
   const matches = [...String(j.description || '').matchAll(/Подробнее и откликнуться:\s*(https?:\/\/[^\s<>"']+)/g)]
     .map(m => canonicalUrl(m[1])).filter(url => rule[1].test(url));
   return matches.length === 1 ? matches[0] : '';
+}
+export function availabilityTarget(job){
+  const key=publisherOriginal(job)||canonicalUrl(job.url);
+  return {key,url:'https://'+key,source:key.startsWith('radim.rs/jobs/')?'radim':key.startsWith('ovdejobs.com/')?'ovdejobs':job.source};
 }
 
 export function groupJobs(jobs) {
@@ -124,7 +128,7 @@ export function visibleJobs(groups, s, now = Date.now()) {
   const ids = hidden(s), result = [];
   for (const group of groups) {
     if (group.members.some(j => ids.has(j.id))) continue;
-    if (group.members.some(j => j._moderated) || currentPublications(group).some(j => j._cloud?.quality?.reason === 'closed')) continue;
+    if (group.members.some(j => j._moderated) || currentPublications(group).some(j => j._cloud?.quality?.reason === 'closed'||j._availability?.state==='closed'||j._cloud?.expires_ms!=null&&j._cloud.expires_ms<=now&&group.members.some(copy=>publisherOriginal(copy)===canonicalUrl(j.url)))) continue;
     // Select only among records matching the user's complete filter. Do not
     // invent a composite salary/language/location from different publications.
     const choices = currentPublications(group).filter(j => contactable(j) && matches(j, s, now));

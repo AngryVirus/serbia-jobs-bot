@@ -13,6 +13,32 @@ from sources import Job
 
 
 class CollectionWorkerTests(unittest.TestCase):
+    def test_saved_link_queue_commits_only_the_inspected_batch_and_stops_at_wrap(self):
+        batch={'after':0,'cursor':0,'started_at':123,'candidates':[{'id':1,'key':'radim.rs/jobs/test'}]}
+        with patch.object(collect,'invoke',side_effect=[batch,{'closed':1,'verified':0}]) as invoke, \
+             patch.object(collect,'inspect_batch',return_value=[{'id':1,'key':'radim.rs/jobs/test','state':'closed','reason':'gone'}]), \
+             patch.object(collect.time,'monotonic',return_value=1):
+            self.assertEqual(collect.recheck('owner',10),{'checked':1,'closed':1,'verified':0})
+        self.assertEqual(invoke.call_args.kwargs['after'],0)
+        self.assertEqual(invoke.call_args.kwargs['results'][0]['id'],1)
+
+    def test_saved_link_probe_failure_does_not_abort_discovery_or_leak_exception_details(self):
+        def invoke(operation, **fields):
+            if operation=='init':return {'active':True}
+            if operation=='collection_end':return {'released':True}
+            if operation=='collect':return {'added':0}
+            return {}
+        output=io.StringIO()
+        with patch.object(collect,'invoke',side_effect=invoke) as calls, \
+             patch.object(collect,'recheck',side_effect=RuntimeError('private transport detail')), \
+             patch.object(collect,'notify',return_value=(0,0)), \
+             patch.object(collect,'collect_all',side_effect=lambda **fields:fields['on_source']('radim',[],{'state':'ok'})), \
+             contextlib.redirect_stdout(output):collect.main()
+        completed=next(call for call in calls.call_args_list if call.args==('collection_end',))
+        self.assertFalse(completed.kwargs['failed'])
+        self.assertEqual(completed.kwargs['totals']['availability_deferred'],1)
+        self.assertNotIn('private transport detail',output.getvalue())
+
     def test_deadline_and_worker_restart_continue_the_cloud_cursor(self):
         clock, cursor, visits = [0.0], [0], []
 
