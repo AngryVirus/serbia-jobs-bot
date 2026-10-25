@@ -7,7 +7,7 @@
   },
   "devDependencies": {
     "@tgcloud/cli": "0.2.0",
-    "pako": "2.1.0"
+    "pako": "3.0.2"
   },
   "engines": {
     "node": ">=22.13"
