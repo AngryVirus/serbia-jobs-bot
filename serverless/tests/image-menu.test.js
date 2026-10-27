@@ -92,7 +92,7 @@ test('production audit and owner-only preview render and edit without changing f
  const f=await graphics();await f.store.ensure(OWNER_ID,OWNER_ID);await f.store.patch(OWNER_ID,{city:['novi_sad'],keywords:['chef']});
  const before=(await f.store.user(OWNER_ID)).settings;
  await assert.rejects(administer({operation:'menu_image_preview'},{initData:'forged'},f),/Owner CLI/);
- const audit=await administer({operation:'menu_image_audit'},{ownerRun:true},f);assert.equal(audit.rendered,3);
+ const audit=await administer({operation:'menu_image_audit'},{ownerRun:true},f);assert.equal(audit.rendered,3);assert.equal(audit.home_buttons,4);assert.equal(audit.filter_buttons,6);
  const preview=await administer({operation:'menu_image_preview'},{ownerRun:true},f);assert.equal(preview.edited_in_place,3);
  assert(f.graphics.sends.every(p=>p.chat_id===OWNER_ID));
  const after=(await f.store.user(OWNER_ID)).settings;assert.deepEqual(after.city,before.city);assert.deepEqual(after.keywords,before.keywords);

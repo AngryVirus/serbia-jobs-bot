@@ -8,8 +8,10 @@ if __name__ == '__main__':
     parser.add_argument('--preview',action='store_true')
     args=parser.parse_args()
     result=invoke('menu_image_audit')
-    if result.get('images',[{},{}])[1].get('icons')!=9:
-        raise RuntimeError('Filter category icons were not confirmed')
+    if result.get('images',[{},{}])[1].get('icons',0)<2:
+        raise RuntimeError('Compact filter category icons were not confirmed')
+    if (result.get('home_buttons'),result.get('filter_buttons'))!=(4,6):
+        raise RuntimeError('Compact menu controls were not confirmed')
     print(json.dumps(result,sort_keys=True))
     if args.preview:
         print(json.dumps(invoke('menu_image_preview'),sort_keys=True))

@@ -147,7 +147,7 @@ export async function administer(input, ctx, deps) {
     assert(typeof deps.InputFile==='function','Runtime image upload unsupported');
     const s=settings((await store.user(OWNER_ID))?.settings),start=Date.now(),panels=[menu(s)[0],filtersPanel(s)[0],choicePanel(s,'city')[0]];
     const sizes=panels.map(text=>{const image=renderImage(text);assert(image.bytes.length<10000000 && image.width+image.height<=10000,'Image exceeds Telegram limits');return {width:image.width,height:image.height,bytes:image.bytes.length,icons:image.icons};});
-    return {rendered:sizes.length,elapsed_ms:Date.now()-start,images:sizes};
+    return {rendered:sizes.length,elapsed_ms:Date.now()-start,images:sizes,home_buttons:menu(s)[1].flat().length,filter_buttons:filtersPanel(s)[1].flat().length};
   }
   if(op==='menu_image_preview') {
     assert(typeof deps.InputFile==='function','Runtime image upload unsupported');
@@ -278,7 +278,7 @@ export async function administer(input, ctx, deps) {
       const bot=new Bot(deps);bot.uid=OWNER_ID;bot.chat=OWNER_ID;bot.s=settings((await store.ensure(OWNER_ID,OWNER_ID)).settings);bot.mid=null;bot.isPhoto=false;
       await bot.home();return {sent:1};
     }
-    const s = settings((await store.user(340780041))?.settings), [text, rows] = menu(s, hiddenGroups(groupJobs(await store.jobs()), s).length);
+    const s = settings((await store.user(340780041))?.settings), [text, rows] = menu(s);
     await deps.api.sendMessage({ chat_id: 340780041, text: '<i>Проверка переноса в Telegram Serverless</i>\n\n'+text, parse_mode: 'HTML', reply_markup: { inline_keyboard: rows } });
     return { sent: 1 };
   }
