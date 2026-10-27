@@ -73,9 +73,9 @@ export async function ratingRoute(bot,action){
  if(m[2]!=='list'){
   const existing=await bot.store.db.get(`SELECT 1 AS n FROM sjc_records WHERE ${REVIEW_SCOPE} AND json_extract(payload,'$.uid')=:uid`,{...params,':uid':bot.uid});
   if(existing)return bot.panel('Вы уже оставили отзыв на эту вакансию. Повторная оценка не учитывается.',[[button('⭐ Отзывы',`ratings:${id}:list`)],...back]);
-  if(m[2]==='start')return bot.panel('<b>Оцените вакансию</b>\n\n1 — очень плохо, 5 — отлично. Затем напишите о своём опыте. Оценка и текст появятся после проверки командой. Команда увидит ваше имя, @username и ID; публично показывается только текст и оценка.',[[1,2,3,4,5].map(n=>button(n+' ⭐',`ratings:${id}:${n}`)),...back]);
+  if(m[2]==='start')return bot.panel('<b>Отзыв о вакансии</b>\n\nЕсли вы работали по этой вакансии или проходили собеседование у работодателя, поделитесь своим опытом.\n\nКаждый отзыв проходит ручную проверку перед публикацией. Команда бота может связаться с вами, чтобы уточнить детали и попросить подтверждающие материалы.\n\nКоманда увидит ваше имя, @username и ID. Публично показываются только оценка и текст отзыва.\n\nВыберите оценку: 1 — очень плохо, 5 — отлично.',[[1,2,3,4,5].map(n=>button(n+' ⭐',`ratings:${id}:${n}`)),...back]);
   await bot.patch({pending_input:'vacancy_review',review_draft:{job_id:id,stars:Number(m[2]),token:nonce().slice(-12)}});
-  return bot.panel(`<b>Ваша оценка: ${m[2]}/5</b>\n\nНапишите отзыв от 5 до 800 символов: что произошло при отклике или работе. Не указывайте чужие контакты и личные данные.\n\n/cancel — отменить.`,back);
+  return bot.panel(`<b>Ваша оценка: ${m[2]}/5</b>\n\nНапишите отзыв от 5 до 800 символов о личном опыте работы или собеседования. Перед публикацией его проверит команда; при необходимости с вами свяжутся для уточнений. Не указывайте чужие контакты и личные данные.\n\n/cancel — отменить.`,back);
  }
  const summary=await ratingSummary(bot.store,ids),page=Math.min(Number(m[3]||0),Math.max(0,Math.ceil(summary.count/3)-1));
  const rows=await bot.store.db.all(`SELECT payload FROM (${publicReviews}) WHERE position=1 ORDER BY json_extract(payload,'$.at') DESC,record_key DESC LIMIT 3 OFFSET :offset`,{...params,':offset':page*3});

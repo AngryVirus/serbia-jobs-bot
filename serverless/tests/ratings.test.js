@@ -72,6 +72,18 @@ test('durable team and author notices survive restart without repeats',async()=>
  const published=(await f.store.records('vacancy_review'))[0];await decideReview(bot(f,3),r.key,published.version,'deleted');await reviewNoticeTick(f.store,f.api);
  assert.equal(f.api.sent.filter(p=>p.chat_id===77).length,2);assert.match(f.api.sent.at(-1).text,/удалён/);
 });
+test('a submitted review notifies every active staff member across bounded batches, once',async()=>{
+ const f=await seed(),recipients=[2,3,OWNER_ID,100,101,102,103,104,105];
+ for(const uid of recipients.slice(3)){await f.store.ensure(uid,uid);await f.store.record('staff_role',uid,{role:uid%2?'administrator':'moderator'});}
+ await handle(f,callback(77,'ratings:1:4'));
+ const update=message(77,'Проходил собеседование, делюсь личным опытом.');
+ await handle(f,update);await handle(f,update);
+ assert.equal(f.api.sent.filter(p=>p.chat_id!==77).length,5);
+ await reviewNoticeTick(new Store(f.db),f.api);await reviewNoticeTick(f.store,f.api);
+ const notices=f.api.sent.filter(p=>p.chat_id!==77);
+ assert.deepEqual(notices.map(p=>p.chat_id).sort((a,b)=>a-b),recipients.sort((a,b)=>a-b));
+ for(const p of notices){assert.match(p.text,/Новый отзыв на проверке/);assert.match(p.text,/ID 77/);assert.match(p.text,/Проходил собеседование/);assert.equal(p.reply_markup.inline_keyboard[0][0].callback_data,'admin:ratings:view:1:77');}
+});
 test('notices recheck staff access, honor 429 and never repeat uncertain sends',async()=>{
  for(const code of [429,500,403]){
   const f=await seed(),r=await add(f);await decideReview(bot(f,2),r.key,r.version,'published');let calls=0;
