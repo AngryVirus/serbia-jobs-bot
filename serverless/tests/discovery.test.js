@@ -20,9 +20,9 @@ const click=async(f,action,uid=1)=>discoveryRoute(await context(f,uid),action);
 
 test('first search keeps the home unchanged and introduces new only after a previous visit',async()=>{
   const f=await fixture();await f.store.putJob(job(1),true);
-  assert.equal(menu(defaults())[1].flat().length,5);
+  assert.equal(menu(defaults())[1].flat().length,4);
   assert(!JSON.stringify(menu(defaults())).includes('plans'));
-  assert.equal(filtersPanel(defaults())[1].flat().filter(b=>b.callback_data==='plans').length,1);
+  assert.equal(filtersPanel(defaults())[1].flat().filter(b=>b.callback_data==='plans').length,0);
   await openDiscovery(await context(f));
   assert(!data(f,'С прошлого просмотра'));assert.equal((await f.store.user(1)).settings.last_viewed_id,1);
   await f.store.putJob(job(2),true);await openDiscovery(await context(f));
@@ -67,9 +67,9 @@ test('saved searches have independent view markers and keep their scope through 
   await f.store.putJob(job(3,{title:'Повар пиццерии'}),true);
   await openDiscovery(await context(f),'chef');await click(f,data(f,'С прошлого просмотра'));
   assert.match(panel(f).text,/Повар пиццерии/);await click(f,data(f,'Подробнее'));assert.match(panel(f).text,/Поиск: Кухня/);
-  await click(f,data(f,'Ещё'));const translation=data(f,'Перевести');assert(translation.startsWith('discover:'));
+  await click(f,data(f,'Действия'));const translation=data(f,'Перевести');assert(translation.startsWith('discover:'));
   await click(f,translation);assert.match(panel(f).text,/Перевод сейчас недоступен/);assert.match(panel(f).text,/Поиск: Кухня/);
-  await click(f,data(f,'Ещё'));await click(f,data(f,'Скрыть'));
+  await click(f,data(f,'Действия'));await click(f,data(f,'Проблема'));await click(f,data(f,'Скрыть'));
   assert.match(panel(f).text,/Новых вакансий.*нет/);assert.deepEqual((await f.store.user(1)).settings.hidden_jobs,[3]);
   saved=(await f.store.user(1)).settings.saved_searches;assert.equal(saved[1].last_viewed_id,null);assert.equal((await f.store.user(1)).settings.last_viewed_id,undefined);
 });
@@ -81,7 +81,7 @@ test('similar jobs exclude every seed copy, reject generic overlap and keep othe
   for(const j of raw)await f.store.putJob(j,true);
   await f.store.ensure(1,1);await f.store.patch(1,{keywords:['готовим'],city:['belgrade'],hidden_jobs:[6]});
   await f.store.record('moderation','7',{blocked:true,ids:[7]});
-  await openDiscovery(await context(f));await click(f,data(f,'Ещё'));assert(data(f,'Похожие'));
+  await openDiscovery(await context(f));await click(f,data(f,'Действия'));assert(data(f,'Похожие'));
   await click(f,data(f,'Похожие'));assert.match(panel(f).text,/Kuvar/);assert.match(panel(f).text,/1 из 1/);
   assert(!JSON.stringify(panel(f)).includes('view:'));assert(data(f,'исходной'));
   const generic=job(10,{title:'Требуется сотрудник ресторана',description:'Хорошие условия и оплата'});
@@ -132,7 +132,7 @@ test('the real update handler replays a committed scoped hide after 429 without 
 test('safety warning is contextual, factual and survives translation; hidden jobs expose no reasons',async()=>{
   const f=await fixture(),j=job(1,{title:'Повар',description:'Для получения работы необходимо заплатить предоплату 100 евро.'});
   await f.store.putJob(j,true);await openDiscovery(await context(f));assert.match(panel(f).text,/требующие осторожности/);
-  assert(!data(f,'Почему'));await click(f,data(f,'Ещё'));const risk=data(f,'Почему');assert(risk);
+  assert(!data(f,'Почему'));await click(f,data(f,'Действия'));await click(f,data(f,'Проблема'));const risk=data(f,'Почему');assert(risk);
   await click(f,risk);assert.match(panel(f).text,/автоматическая подсказка/);assert(!panel(f).text.includes('это мошенник'));
   assert(data(f,'К вакансии').startsWith('discover:'));
   const translated=await translatedCard(j,'rf',async()=>({ok:true,json:async()=>[[['Безобидный перевод']]]}),f.store);

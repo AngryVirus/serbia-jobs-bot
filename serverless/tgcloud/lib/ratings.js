@@ -4,7 +4,7 @@ import {groupJobs,includesId} from './catalog.js';
 import {positive} from './store.js';
 import {button,safe} from './ui.js';
 import {REVIEW_SCOPE,publicReviews,ratingSummary,ratingLine} from './rating-data.js';
-const BACK=[[button('🛡 Панель','admin')]];
+const BACK=[[button('⬅️ Панель управления','admin')]];
 const actor=bot=>bot.actor?.id===bot.uid?bot.actor:moderatorSnapshot({id:bot.uid});
 const load=async(store,key)=>{const r=await store.db.get("SELECT payload FROM sjc_records WHERE kind='vacancy_review' AND record_key=:key",{':key':key});return r?JSON.parse(r.payload):null;};
 const staffSql=`(:actor=${OWNER_ID} OR (EXISTS(SELECT 1 FROM sjc_records WHERE kind='staff_role' AND record_key=:actor_key AND json_extract(payload,'$.role') IN ('moderator','administrator')) AND NOT EXISTS(SELECT 1 FROM sjc_records WHERE kind='user_ban' AND record_key=:actor_key AND COALESCE(json_extract(payload,'$.active'),1)!=0)))`;
@@ -75,13 +75,13 @@ export async function ratingRoute(bot,action){
   if(existing)return bot.panel('Вы уже оставили отзыв на эту вакансию. Повторная оценка не учитывается.',[[button('⭐ Отзывы',`ratings:${id}:list`)],...back]);
   if(m[2]==='start')return bot.panel('<b>Отзыв о вакансии</b>\n\nЕсли вы работали по этой вакансии или проходили собеседование у работодателя, поделитесь своим опытом.\n\nКаждый отзыв проходит ручную проверку перед публикацией. Команда бота может связаться с вами, чтобы уточнить детали и попросить подтверждающие материалы.\n\nКоманда увидит ваше имя, @username и ID. Публично показываются только оценка и текст отзыва.\n\nВыберите оценку: 1 — очень плохо, 5 — отлично.',[[1,2,3,4,5].map(n=>button(n+' ⭐',`ratings:${id}:${n}`)),...back]);
   await bot.patch({pending_input:'vacancy_review',review_draft:{job_id:id,stars:Number(m[2]),token:nonce().slice(-12)}});
-  return bot.panel(`<b>Ваша оценка: ${m[2]}/5</b>\n\nНапишите отзыв от 5 до 800 символов о личном опыте работы или собеседования. Перед публикацией его проверит команда; при необходимости с вами свяжутся для уточнений. Не указывайте чужие контакты и личные данные.\n\n/cancel — отменить.`,back);
+  return bot.panel(`<b>Ваша оценка: ${m[2]}/5</b>\n${'★'.repeat(Number(m[2]))+'☆'.repeat(5-Number(m[2]))}\n\nНапишите отзыв от 5 до 800 символов о личном опыте работы или собеседования. Перед публикацией его проверит команда; при необходимости с вами свяжутся для уточнений. Не указывайте чужие контакты и личные данные.\n\n/cancel — отменить.`,back);
  }
- const summary=await ratingSummary(bot.store,ids),page=Math.min(Number(m[3]||0),Math.max(0,Math.ceil(summary.count/3)-1));
- const rows=await bot.store.db.all(`SELECT payload FROM (${publicReviews}) WHERE position=1 ORDER BY json_extract(payload,'$.at') DESC,record_key DESC LIMIT 3 OFFSET :offset`,{...params,':offset':page*3});
- const text='<b>⭐ Отзывы о вакансии</b>\n'+ratingLine(summary)+'\n\n'+(rows.map(r=>{const v=JSON.parse(r.payload);return '⭐'.repeat(v.stars)+'\n'+safe(v.text,800);}).join('\n\n')||'Отзывов пока нет.');
- const nav=[];if(page)nav.push(button('⬅️',`ratings:${id}:list:${page-1}`));if((page+1)*3<summary.count)nav.push(button('➡️',`ratings:${id}:list:${page+1}`));
- return bot.panel(text,[[button('✍️ Оставить отзыв',`ratings:${id}:start`)],...(nav.length?[nav]:[]),...back],bot.mid,false);
+ const summary=await ratingSummary(bot.store,ids),page=Math.min(Number(m[3]||0),Math.max(0,Math.ceil(summary.count)-1));
+ const rows=await bot.store.db.all(`SELECT payload FROM (${publicReviews}) WHERE position=1 ORDER BY json_extract(payload,'$.at') DESC,record_key DESC LIMIT 1 OFFSET :offset`,{...params,':offset':page});
+ const text='<b>⭐ Отзывы о вакансии</b>\n'+ratingLine(summary)+'\n\n'+(rows.map(r=>{const v=JSON.parse(r.payload);return '★'.repeat(v.stars)+'☆'.repeat(5-v.stars)+'\n<b>Отзыв '+(page+1)+' из '+summary.count+'</b>\n'+safe(v.text,800);}).join('\n\n')||'Отзывов пока нет.');
+ const nav=[];if(page)nav.push(button('⬅️',`ratings:${id}:list:${page-1}`));if(page+1<summary.count)nav.push(button('➡️',`ratings:${id}:list:${page+1}`));
+ return bot.panel(text,[[button('✍️ Оставить отзыв',`ratings:${id}:start`)],...(nav.length?[nav]:[]),...back]);
 }
 export async function ratingInput(bot,message){
  if(bot.s.pending_input!=='vacancy_review'||message.text?.startsWith('/'))return false;
@@ -104,16 +104,17 @@ export async function ratingsAdmin(bot,action){
   if(m[1]==='d')return bot.panel('Удалить отзыв? Он перестанет влиять на рейтинг. Автор получит уведомление.',[[button('🗑 Удалить',`admin:ratings:c:${m[2]}:${m[3]}`)],[button('⬅️ Назад',`admin:ratings:view:${m[2]}`)]]);
   const done=await decideReview(bot,m[2],m[3],m[1]==='p'?'published':'deleted');
   if(done)try{const r=await load(bot.store,m[2]);await reviewNoticeTick(bot.store,bot.api,Date.now(),r.uid);}catch{/* durable author notice remains queued */}
-  return bot.panel(done?'Решение сохранено. Уведомление автору поставлено в очередь.':'Отзыв уже рассмотрен или ваши права изменились. Откройте актуальный список.',[[button('⭐ На проверке','admin:ratings:pending:0')],...BACK]);
+  return bot.panel(done?'Решение сохранено. Уведомление автору поставлено в очередь.':'Отзыв уже рассмотрен или ваши права изменились. Откройте актуальный список.',[[button('⬅️ К отзывам','admin:ratings:pending:0')]]);
  }
  if((m=/^admin:ratings:view:([1-9]\d*:[1-9]\d*)$/.exec(action))){
   const r=await load(bot.store,m[1]);if(!r)return bot.panel('Отзыв больше не найден.',BACK);
   const rows=[];if(r.state==='pending')rows.push([button('✅ Опубликовать',`admin:ratings:p:${r.key}:${r.version}`)]);if(r.state!=='deleted')rows.push([button('🗑 Удалить',`admin:ratings:d:${r.key}:${r.version}`)]);
-  return bot.panel(`<b>⭐ Проверка отзыва · ${r.stars}/5</b>\n${safe(r.title,140)}\nСтатус: ${{pending:'на проверке',published:'опубликован',deleted:'удалён'}[r.state]}\nАвтор: ${safe(r.author.name,80)}${r.author.username?' · @'+safe(r.author.username,32):''}\nID: ${r.uid}\n\n${safe(r.text,800)}`,[...rows,[{text:'👤 Автор',url:'tg://user?id='+r.uid}],[button('⭐ На проверке','admin:ratings:pending:0')],...BACK],bot.mid,false);
+  return bot.panel(`<b>⭐ Проверка отзыва · ${r.stars}/5</b>\n${safe(r.title,140)}\n${'★'.repeat(r.stars)+'☆'.repeat(5-r.stars)}\nСтатус: ${{pending:'на проверке',published:'опубликован',deleted:'удалён'}[r.state]}\nАвтор: ${safe(r.author.name,80)}${r.author.username?' · @'+safe(r.author.username,32):''}\nID: ${r.uid}\n\n${safe(r.text,800)}`,[...(rows.length?[rows.flat()]:[]),[{text:'👤 Связаться с автором',url:'tg://user?id='+r.uid}],[button('⬅️ К отзывам',`admin:ratings:${r.state}:0`)]]);
  }
+ if(action==='admin:ratings:history')return bot.panel('<b>Рассмотренные отзывы</b>',[[button('✅ Опубликованные','admin:ratings:published:0')],[button('🗑 Удалённые','admin:ratings:deleted:0')],[button('⬅️ На проверке','admin:ratings:pending:0')]]);
  m=/^admin:ratings:(pending|published|deleted):(\d{1,6})$/.exec(action);if(!m)return bot.panel('Откройте отзывы заново.',BACK);
- const state=m[1],where="kind='vacancy_review' AND json_extract(payload,'$.state')=:state",total=(await bot.store.db.get('SELECT COUNT(*) AS n FROM sjc_records WHERE '+where,{':state':state})).n,page=Math.min(Number(m[2]),Math.max(0,Math.ceil(total/5)-1));
- const rows=await bot.store.db.all('SELECT record_key,payload FROM sjc_records WHERE '+where+' ORDER BY record_key LIMIT 5 OFFSET :offset',{':state':state,':offset':page*5});
- const nav=[];if(page)nav.push(button('⬅️',`admin:ratings:${state}:${page-1}`));if((page+1)*5<total)nav.push(button('➡️',`admin:ratings:${state}:${page+1}`));
- return bot.panel(`<b>⭐ Отзывы · ${{pending:'на проверке',published:'опубликованные',deleted:'удалённые'}[state]}</b>\nВсего: ${total}`, [...rows.map(r=>{const v=JSON.parse(r.payload);return [button(`${v.stars} ⭐ · ${String(v.title).slice(0,35)}`,`admin:ratings:view:${r.record_key}`)];}),...(nav.length?[nav]:[]),...['pending','published','deleted'].filter(s=>s!==state).map(s=>[button({pending:'На проверке',published:'Опубликованные',deleted:'Удалённые'}[s],`admin:ratings:${s}:0`)]),...BACK]);
+ const state=m[1],where="kind='vacancy_review' AND json_extract(payload,'$.state')=:state",total=(await bot.store.db.get('SELECT COUNT(*) AS n FROM sjc_records WHERE '+where,{':state':state})).n,page=Math.min(Number(m[2]),Math.max(0,Math.ceil(total/3)-1));
+ const rows=await bot.store.db.all('SELECT record_key,payload FROM sjc_records WHERE '+where+' ORDER BY record_key LIMIT 3 OFFSET :offset',{':state':state,':offset':page*3});
+ const nav=[];if(page)nav.push(button('⬅️',`admin:ratings:${state}:${page-1}`));if((page+1)*3<total)nav.push(button('➡️',`admin:ratings:${state}:${page+1}`));
+ return bot.panel(`<b>⭐ Отзывы · ${{pending:'на проверке',published:'опубликованные',deleted:'удалённые'}[state]}</b>\nВсего: ${total}`, [...rows.map(r=>{const v=JSON.parse(r.payload);return [button(`${v.stars} ⭐ · ${String(v.title).slice(0,35)}`,`admin:ratings:view:${r.record_key}`)];}),...(nav.length?[nav]:[]),...(state==='pending'?[[button('📂 Рассмотренные','admin:ratings:history')],[button('⬅️ Назад',role==='owner'?'admin:vacancies':'admin')]]:[[button('⬅️ Рассмотренные отзывы','admin:ratings:history')]])]);
 }

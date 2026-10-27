@@ -12,16 +12,16 @@ import { button, BACK, safe, emptyText, translatedCard, links, browserUrl, cardA
 const TTL = 86400000, MAX_SESSIONS = 6;
 const nonnegative = value => Number.isSafeInteger(value) && value >= 0;
 const sessions = (s, now = Date.now()) => (Array.isArray(s.discovery_sessions) ? s.discovery_sessions : [])
-  .filter(x => x && /^[a-z0-9]{8}$/.test(x.token) && ['all','new','similar'].includes(x.kind) && x.expires > now && nonnegative(x.upper_id))
+  .filter(x => x && /^[a-z0-9]{8}$/.test(x.token) && ['all','new','similar','notice'].includes(x.kind) && x.expires > now && nonnegative(x.upper_id))
   .slice(-MAX_SESSIONS);
 const scopePlan = (s, scope) => scope === 'main' ? null : savedSearches(s).find(p => p.id === scope);
-const scopeExists = (s, scope) => scope === 'main' || Boolean(scopePlan(s,scope));
+const scopeExists = (s, scope) => ['main','notice'].includes(scope) || Boolean(scopePlan(s,scope));
 // Array order does not change OR filters or keyword/exclusion matching. Compare
 // only public preferences, so notification switches, hidden jobs and renaming
 // a saved search do not invalidate its still-correct browsing context.
 const filterKey = raw => JSON.stringify(Object.fromEntries(Object.entries(snapshotFilters(raw)).map(([key,value]) =>
   [key,Array.isArray(value) ? [...new Set(value.map(normalize))].sort() : value])));
-const currentFilters = (s, session) => session.scope === 'main' ? s : scopePlan(s,session.scope)?.filters;
+const currentFilters = (s, session) => session.scope === 'notice' ? session.filters : session.scope === 'main' ? s : scopePlan(s,session.scope)?.filters;
 const currentSession = (s, session) => {
   const filters=currentFilters(s,session);
   return Boolean(filters && filterKey(filters) === filterKey(session.filters));
@@ -73,6 +73,7 @@ function eligible(groups, s, session) {
   const settings = scopedSettings(s,session);
   const jobs = visibleJobs(groups,session.kind === 'similar' ? {...settings,keywords:[]} : settings)
     .filter(j => j._duplicate_ids.some(id => id <= session.upper_id));
+  if (session.kind === 'notice') return jobs.filter(j=>j._duplicate_ids.some(id=>session.notice_ids?.includes(id)));
   if (session.kind === 'new') return newJobs(jobs,session);
   if (session.kind === 'similar') {
     const seed = visibleJobs(groups,{...defaults(),hidden_jobs:s.hidden_jobs}).find(j => j._duplicate_ids.includes(session.seed_id));
@@ -82,7 +83,7 @@ function eligible(groups, s, session) {
 }
 function rowsFor(session, job, index, count, mode, failed, newCount, s) {
   const b = (text,action) => button(text,callback(session,job,index,action,mode));
-  const rows = [...links(job),[b(mode.endsWith('f') ? '🔼 Свернуть' : '🔽 Подробнее','details'),b('☰ Ещё','actions')]];
+  const rows = [...links(job),[b(mode.endsWith('f') ? '🔼 Свернуть' : '🔽 Подробнее','details'),b('☰ Действия','actions')]];
   if (failed && validUrl(job.url)) rows.push([{text:'🌐 Перевести в браузере',url:browserUrl(job)}]);
   const nav=[];
   if(index)nav.push(b('⬅️','prev'));
@@ -94,6 +95,7 @@ function rowsFor(session, job, index, count, mode, failed, newCount, s) {
     const parent = session.parent && lookup(s,session.parent);
     rows.push([button('↩️ К исходной вакансии',parent ? `discover:${parent.token}:${session.seed_id}:0:show:s` : `job:${session.seed_id}:short`)]);
   }
+  rows.push([button('🏠 Главное меню','menu')]);
   return rows;
 }
 function reasons(job, back) {
@@ -118,7 +120,7 @@ async function render(bot, original, {action='show',jobId=null,index=0,mode='s',
     jobs=eligible(groups,s,session);notice='<i>🙈 Вакансия скрыта</i>\n\n';
   } else if(current>=0) index=current+(action==='next'?1:action==='prev'?-1:0);
   else if(action==='prev')index--;
-  if(stale && ['details','translate','actions','risk'].includes(action)) {
+  if(stale && ['details','translate','actions','problem','risk'].includes(action)) {
     action='show';mode='s';notice='<i>Подборка изменилась — показана актуальная вакансия.</i>\n\n';
   }
   index=Math.min(Math.max(0,index),Math.max(0,jobs.length-1));
@@ -126,25 +128,25 @@ async function render(bot, original, {action='show',jobId=null,index=0,mode='s',
   else if(action==='translate')mode=mode.startsWith('r')?mode.slice(1):'r'+mode;
   else if(['next','prev','hide'].includes(action))mode='s';
   session.current_id=jobs[index]?.id || null;session.index=index;session.mode=mode;
-  session.view=['actions','risk'].includes(action)?action:'show';
+  session.view=['actions','problem','risk'].includes(action)?action:'show';
   if(persist) {
     const retained=sessions(s).filter(x=>x.token!==session.token);
     await bot.patchInput({...(s.hidden_jobs ? {hidden_jobs:s.hidden_jobs} : {}),discovery_sessions:[...retained,session].slice(-MAX_SESSIONS),discovery_current:session.token},'discovery');
   }
   if(!jobs.length) {
-    const text=session.kind==='new' ? '<b>Новых вакансий с прошлого просмотра нет.</b>\n\nПоказываем только впервые найденные объявления, подходящие этим условиям. Копии прежних вакансий не считаются новыми.'
+    const text=session.kind==='notice' ? '<b>Вакансии из уведомления больше недоступны.</b>\n\nОни могли закрыться или быть скрыты вами. Откройте новый поиск.' : session.kind==='new' ? '<b>Новых вакансий с прошлого просмотра нет.</b>\n\nПоказываем только впервые найденные объявления, подходящие этим условиям. Копии прежних вакансий не считаются новыми.'
       : session.kind==='similar' ? '<b>Похожих актуальных вакансий пока нет.</b>\n\nПодбираем по профессии, сохраняя остальные условия поиска. Попробуйте позже или измените фильтры.'
       : groups.length ? emptyText(groups,scopedSettings(s,session)) : '⏳ База ещё наполняется. Попробуйте поиск через несколько минут.';
     const more=session.kind==='new' ? [[button('🔎 Все подходящие',`discover:${session.token}:0:0:all:s`)]] : [];
     return bot.panel(await freshness(bot.store)+notice+text,[...more,...backRows(session)]);
   }
   const job=jobs[index];
-  if(session.view==='actions')return bot.panel(...cardActions(job,index,mode,{token:session.token},await hasFavorite(bot,job)));
+  if(['actions','problem'].includes(session.view))return bot.panel(...cardActions(job,index,mode,{token:session.token},await hasFavorite(bot,job),session.view==='problem'));
   if(session.view==='risk')return bot.panel(...reasons(job,callback(session,job,index,'show',mode)));
   const result=await translatedCard(job,mode,bot.fetch,bot.store);
   const newCount=session.kind==='all'?newJobs(jobs,session).length:0;
-  const heading=(session.kind==='new'?'<b>🆕 Новое с прошлого просмотра</b>\n':session.kind==='similar'?'<b>🔎 Похожие по профессии</b>\n<i>С учётом '+(session.scope==='main'?'текущих фильтров':'фильтров этого поиска')+', кроме ключевых слов.</i>\n':'')
-    +(session.scope!=='main'?'<b>Поиск: '+safe(scopePlan(s,session.scope)?.name || 'Сохранённый',60)+'</b>\n':'');
+  const heading=(session.kind==='notice'?'<b>🔔 Новые вакансии из уведомления</b>\n':session.kind==='new'?'<b>🆕 Новое с прошлого просмотра</b>\n':session.kind==='similar'?'<b>🔎 Похожие по профессии</b>\n<i>С учётом '+(session.scope==='main'?'текущих фильтров':'фильтров этого поиска')+', кроме ключевых слов.</i>\n':'')
+    +(!['main','notice'].includes(session.scope)?'<b>Поиск: '+safe(scopePlan(s,session.scope)?.name || 'Сохранённый',60)+'</b>\n':'');
   return bot.panel(await freshness(bot.store)+notice+heading+`<i>Вакансия ${index+1} из ${jobs.length}</i>\n\n`+result.text,
     rowsFor(session,job,index,jobs.length,result.mode,result.failed,newCount,s),bot.mid,false);
 }
@@ -152,13 +154,13 @@ export async function openDiscovery(bot, scope='main',kind='all',seedId=null, pa
   if(!scopeExists(bot.s,scope))return expired(bot);
   if(parent && (parent.scope!==scope || !currentSession(bot.s,parent)))return expired(bot);
   const plan=scopePlan(bot.s,scope), all=await bot.store.jobs();
-  const upper=all.reduce((max,j)=>Math.max(max,j.id),0), previous=scope==='main'?bot.s.last_viewed_id:plan.last_viewed_id;
+  const upper=all.reduce((max,j)=>Math.max(max,j.id),0), previous=scope==='notice'?null:scope==='main'?bot.s.last_viewed_id:plan.last_viewed_id;
   const retained=sessions(bot.s),taken=new Set(retained.map(x=>x.token));let token;
   do {token=Math.random().toString(36).slice(2,10).padEnd(8,'0');} while(taken.has(token));
-  const session={token,scope,kind,filters:parent?.filters || snapshotFilters(scope==='main'?bot.s:plan.filters),after_id:parent?parent.after_id:nonnegative(previous)?previous:null,
+  const session={token,scope,kind,filters:parent?.filters || snapshotFilters(scope==='notice'?defaults():scope==='main'?bot.s:plan.filters),after_id:parent?parent.after_id:nonnegative(previous)?previous:null,
     upper_id:parent?.upper_id ?? upper,seed_id:seedId,expires:Date.now()+TTL,index:0,mode:'s',view:'show',parent:parent?.token || null};
   const viewed=Math.max(nonnegative(previous)?previous:0,session.upper_id);
-  const marker=kind==='similar'?{}:scope==='main'?{last_viewed_id:viewed}:{saved_searches:savedSearches(bot.s).map(p=>p.id===scope?{...p,last_viewed_id:viewed}:p)};
+  const marker=kind==='similar'||scope==='notice'?{}:scope==='main'?{last_viewed_id:viewed}:{saved_searches:savedSearches(bot.s).map(p=>p.id===scope?{...p,last_viewed_id:viewed}:p)};
   // The marker and response session are one replay-safe user-row mutation.
   await bot.patchInput({...marker,discovery_sessions:[...retained,session].slice(-MAX_SESSIONS),discovery_current:token},'discovery');
   await usage(bot.store,'searches');
@@ -172,6 +174,14 @@ export async function replayDiscovery(bot) {
 }
 export async function discoveryRoute(bot,action) {
   let m;
+  if((m=/^notice:([a-z0-9]{12,24})$/.exec(action))){
+    const rows=await bot.store.db.all("SELECT job_id FROM sjc_deliveries WHERE user_id=:uid AND json_extract(payload,'$.digest')=:token AND state IN ('sent','sending','uncertain') ORDER BY job_id DESC LIMIT 500",{':uid':bot.uid,':token':m[1]});
+    if(!rows.length)return expired(bot);
+    const all=await bot.store.jobs(),retained=sessions(bot.s),token=Math.random().toString(36).slice(2,10).padEnd(8,'0');
+    const session={token,scope:'notice',kind:'notice',filters:snapshotFilters(defaults()),notice_ids:rows.map(r=>r.job_id),upper_id:all.reduce((max,j)=>Math.max(max,j.id),0),after_id:null,expires:Date.now()+TTL,index:0,mode:'s',view:'show'};
+    await bot.patchInput({discovery_sessions:[...retained,session].slice(-MAX_SESSIONS),discovery_current:token},'discovery');
+    return render(bot,session,{persist:false,catalog:groupJobs(all)});
+  }
   if((m=/^risk:([1-9]\d*)(?::([a-z0-9]{8}):(\d{1,7}):(s|f|rs|rf))?$/.exec(action)) && Number.isSafeInteger(Number(m[1]))) {
     const id=Number(m[1]),session=m[2]&&lookup(bot.s,m[2]);
     if(m[2])return session?render(bot,session,{action:'risk',jobId:id,index:Number(m[3]),mode:m[4]}):expired(bot);
@@ -182,7 +192,7 @@ export async function discoveryRoute(bot,action) {
     const parent=m[2]&&lookup(bot.s,m[2]);if(m[2]&&!parent)return expired(bot);
     return openDiscovery(bot,parent?.scope || 'main','similar',Number(m[1]),parent || null);
   }
-  if((m=/^discover:([a-z0-9]{8}):(0|[1-9]\d*):(\d{1,7}):(show|next|prev|details|translate|hide|actions|new|all):(s|f|rs|rf)$/.exec(action)) && Number.isSafeInteger(Number(m[2])) && Number(m[3])<=1000000) {
+  if((m=/^discover:([a-z0-9]{8}):(0|[1-9]\d*):(\d{1,7}):(show|next|prev|details|translate|hide|actions|problem|new|all):(s|f|rs|rf)$/.exec(action)) && Number.isSafeInteger(Number(m[2])) && Number(m[3])<=1000000) {
     const session=lookup(bot.s,m[1]);if(!session)return expired(bot);
     if(['new','all'].includes(m[4]))return openDiscovery(bot,session.scope,m[4]==='new'?'new':'all',null,session);
     return render(bot,session,{jobId:Number(m[2])||null,index:Number(m[3]),action:m[4],mode:m[5]});

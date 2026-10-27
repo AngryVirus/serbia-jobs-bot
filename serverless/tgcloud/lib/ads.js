@@ -2,7 +2,7 @@ import { deliveryForbidden } from './analytics.js';
 import { OWNER_ID } from './owner.js';
 import { button, safe } from './ui.js';
 
-const BACK=[[button('📣 Реклама','ads')],[button('📊 Админка','admin')]];
+const BACK=[[button('⬅️ Реклама','ads')]];
 const prefix='📣 Реклама\n\n';
 const token=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
 const read=async(store,kind,key)=>{const r=await store.db.get('SELECT payload FROM sjc_records WHERE kind=:kind AND record_key=:key',{':kind':kind,':key':key});return r?JSON.parse(r.payload):null;};
@@ -65,7 +65,7 @@ export async function adStatus(bot) {
   text+=`\nЛимит запусков: ${await bot.store.meta('ad_daily_limit') || 3}/сутки (UTC).`;
   rows.push([button('✍️ Создать пост','ads:new'),button('🔄 Обновить','ads')]);
   if(await bot.store.meta('ad_draft')) rows.push([button('👁 Черновик','ads:preview')]);
-  return bot.panel(text,[...rows,[button('📊 Админка','admin')]]);
+  return bot.panel(text,[...rows,[button('⬅️ Управление','admin:manage')]]);
 }
 
 export async function adRoute(bot,action) {

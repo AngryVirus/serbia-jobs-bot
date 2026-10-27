@@ -18,9 +18,9 @@ import { searchRoute, searchInput, replaySearches } from './searches.js';
 import { openDiscovery, discoveryRoute, replayDiscovery } from './discovery.js';
 import { button, BACK, safe, menu, filtersPanel, choicePanel, emptyText, jobButtons, translatedCard, viewerButtons, browserUrl, cardActions } from './ui.js';
 const DELETED_TEXT='Ваши данные удалены. Уведомления выключены. /start — начать заново.';
-const discoveryAction=action=>/^(discover:|similar:|risk:|search:0$|plans:(?:open|new):)/.test(action||'');
-const inputMutation=action=>typeof action==='string' && (discoveryAction(action)||/^plans(?::|$)/.test(action)||/^(notify:(off|instant|daily)|toggle_salary|reset|delete_confirm)$/.test(action) || /^(choose:|set:|hide:|restore:)/.test(action) || /^view:[^:]+:[^:]+:hide:/.test(action) || action.startsWith('input:') && Object.hasOwn(PROMPTS,action.slice(6)));
-const inputScreen=action=>typeof action!=='string'?'menu':discoveryAction(action)?'discovery':/^plans(?::|$)/.test(action)?'plans':/^(choose|set):/.test(action)?'filters':action==='toggle_salary'||action==='reset'?'filters':action==='delete_confirm'?'deleted':action?.startsWith('input:')?action:'menu';
+const discoveryAction=action=>/^(notice:|discover:|similar:|risk:|search:0$|plans:(?:open|new):)/.test(action||'');
+const inputMutation=action=>typeof action==='string' && (discoveryAction(action)||/^plans(?::|$)/.test(action)||/^(notify:(off|instant|daily|stop)|toggle_salary|reset|delete_confirm)$/.test(action) || /^(choose:|set:|hide:|restore:)/.test(action) || /^view:[^:]+:[^:]+:hide:/.test(action) || action.startsWith('input:') && Object.hasOwn(PROMPTS,action.slice(6)));
+const inputScreen=action=>typeof action!=='string'?'menu':discoveryAction(action)?'discovery':/^plans(?::|$)/.test(action)?'plans':/^(choose|set):/.test(action)?'filters':/^notify:/.test(action)?'notifications':action==='toggle_salary'||action==='reset'?'filters':action==='delete_confirm'?'deleted':action?.startsWith('input:')?action:'menu';
 const PROMPTS = { keywords: 'Введите слова или фразы через запятую. Достаточно совпадения одного. Для распространённых профессий учитываются формы слов: «повар» найдёт «повара». «-» — очистить.', exclusions: 'Введите исключения через запятую. «-» — очистить.', salary: 'Введите минимальную зарплату в месяц: 1000 EUR или 120000 RSD. Сравниваем только выбранную валюту; почасовую и годовую оплату в месячную не пересчитываем. Объявления без суммы зависят от переключателя «Без зарплаты». «-» — снять фильтр.' };
 export class Bot {
   constructor(deps) { this.api = deps.api; this.fetch = deps.fetch; this.store = new Store(deps.db); this.InputFile=deps.InputFile; }
@@ -37,6 +37,7 @@ export class Bot {
   async patchInput(fields,screen='menu') { this.s=await this.store.patchInput(this.uid,fields,this.updateKey,screen); }
   async replayInput(screen) {
     if(screen==='deleted')return this.panel(DELETED_TEXT,[],null);
+    if(screen==='notifications')return this.notifications();
     if(screen==='filters')return this.panel(...filtersPanel(this.s));
     if(screen==='plans')return replaySearches(this);
     if(screen==='discovery')return replayDiscovery(this);
@@ -46,15 +47,12 @@ export class Bot {
   async showPlan(id,newOnly=false) {return openDiscovery(this,id,newOnly?'new':'all');}
   async notifications() {
     const state=await notificationState(this.store,this.uid),on=this.s.notifications!=='off';
-    const text='<b>🔔 Уведомления</b>\n\nТекущий поиск: <b>'+(on?'включены':'выключены')+'</b>.'+
+    const text='<b>Уведомления о вакансиях</b>\n\nТекущий поиск: <b>'+(on?'включены':'выключены')+'</b>.'+
       (state.saved_enabled?'\nСохранённых поисков с уведомлениями: '+state.saved_enabled+'.':'')+
-      (on||state.saved_enabled?'\nОжидают отправки: '+state.pending+'.':'')+
-      (state.cooldown_seconds?'\n⏳ Telegram ограничил отправку. Повторная попытка через '+Math.ceil(state.cooldown_seconds/60)+' мин.':'')+
-      (state.uninitialized_plans?'\nНовая подписка будет подготовлена при следующей фоновой проверке.':'')+
-      '\n\nНовые вакансии по условиям включённого поиска приходят после обнаружения. Старый каталог при включении не рассылается. Одна вакансия не приходит повторно при совпадении нескольких поисков.'+
-      '\n\nКнопка «С прошлого просмотра» в поиске показывает новые для просмотра вакансии, включая уже отправленные уведомлениями.'+
-      '\n\nПроверка источников запускается примерно каждые 30 минут; возможны задержки запуска. У сохранённых поисков свои переключатели: Фильтры → Мои поиски.';
-    await this.panel(text,[[button(on?'🔕 Выключить текущий поиск':'🔔 Включить текущий поиск',on?'notify:off':'notify:instant')],...(state.saved_enabled?[[button('📂 Мои поиски','plans')]]:[]),[button('🔄 Обновить состояние','notifications')],...BACK]);
+      (state.cooldown_seconds?'\nПауза отправки: '+Math.ceil(state.cooldown_seconds/60)+' мин.':'')+
+      '\n\nКогда найдены новые вакансии, придёт одно сообщение с кнопкой «Посмотреть». Не чаще одного сообщения в час. Старые вакансии при включении не приходят.'+
+      '\n\nУ сохранённых поисков свои переключатели в разделе «Мои вакансии». Кнопка в самом уведомлении выключает все подписки.';
+    await this.panel(text,[[button(on?'🔕 Выключить текущий поиск':'🔔 Включить текущий поиск',on?'notify:off':'notify:instant')],...(state.saved_enabled?[[button('📂 Мои поиски','plans')]]:[]),[button('⬅️ Настройки и помощь','preferences')]]);
   }
   async input(text) {
     const field = this.s.pending_input; let patch;
@@ -72,14 +70,15 @@ export class Bot {
       }
     } else return this.panel('Неизвестная настройка. Используйте /cancel.');
     await this.patchInput({ ...patch, pending_input: null },'filters');
-    await this.panel(...filtersPanel(this.s));
+    await this.panel(...filtersPanel(this.s,field==='salary'?'pay':field==='exclusions'?'details':'main'));
   }
-  async home() {
-    const count = hidden(this.s).size ? hiddenGroups(groupJobs(await this.store.jobs()), this.s).length : 0;
-    const [text,rows] = menu(this.s,count);
+  async home() {return this.panel(...menu(this.s));}
+  async preferences() {
     const role=await accessRole(this);
-    if(rank(role))rows.push([button(role==='owner'?'📊 Отчёт владельца':role==='administrator'?'🛡 Админ-панель':'🛡 Модерация','admin')]);
-    return this.panel(text,rows);
+    return this.panel('<b>Настройки и помощь</b>\n\nНастройте уведомления или напишите владельцу, если нужна помощь.',[
+      [button('🔔 Уведомления','notifications')],[button('💬 Помощь','help')],
+      ...(rank(role)?[[button('🛡 Управление ботом','admin')]]:[]),[button('⬅️ Главное меню','menu')],
+    ]);
   }
   async hiddenPanel(page = 0) {
     const groups = hiddenGroups(groupJobs(await this.store.jobs()), this.s), ids = groups.map(g => g.id), pages = Math.max(1, Math.ceil(ids.length / 5));
@@ -148,7 +147,7 @@ export class Bot {
   }
   async route(action) {
     if (typeof action !== 'string') return this.home();
-    const kind = /^report:.*:(not_job|duplicate|outdated)(:|$)/.test(action) ? 'report' : /translate|^job:\d+:ru_|^(view|discover):.*:(rs|rf)$/.test(action) ? 'translate' : /^(search:|view:|job:|discover:|similar:|risk:|plans:(?:open|new):)/.test(action) ? 'search' : null;
+    const kind = /^report:.*:(not_job|duplicate|outdated)(:|$)/.test(action) ? 'report' : /translate|^job:\d+:ru_|^(view|discover):.*:(rs|rf)$/.test(action) ? 'translate' : /^(notice:|search:|view:|job:|discover:|similar:|risk:|plans:(?:open|new):)/.test(action) ? 'search' : null;
     if(kind) {
       const [limit,seconds]={search:[40,60],translate:[10,60],report:[5,60]}[kind];
       const wait=await this.store.rate(`${this.uid}:${kind}`,limit,seconds);
@@ -163,24 +162,26 @@ export class Bot {
       return result;
     }
     if(action==='library'||/^(favorite|favorites):/.test(action))return libraryRoute(this,action);
-    if(/^(discover:|similar:|risk:)/.test(action))return discoveryRoute(this,action);
+    if(/^(notice:|discover:|similar:|risk:)/.test(action))return discoveryRoute(this,action);
     action = action.replace(/^(choose|set):freshness:(today|yesterday)(?=:|$)/, '$1:freshness:7');
     if (action === 'menu' || action === 'start' || action === 'cancel') return this.home();
-    if (action === 'filters') return this.panel(...filtersPanel(this.s));
-    if (action === 'help') return this.panel('<b>💬 Помощь</b>\n\nЕсли нужна помощь с настройками или вы нашли ошибку, напишите владельцу. Кратко опишите, что произошло.\n\nЗнаете хороший публичный канал с вакансиями в Сербии? Предложите его для проверки.', [[{ text: '✉️ Написать владельцу', url: 'https://t.me/AngryVirus' }],[button('📡 Предложить источник','idea:start')], ...BACK]);
+    if(action==='preferences')return this.preferences();
+    if (action === 'filters' || ['filters:pay','filters:details'].includes(action)) return this.panel(...filtersPanel(this.s,action.split(':')[1]));
+    if (action === 'help') return this.panel('<b>💬 Помощь</b>\n\nЕсли нужна помощь с настройками или вы нашли ошибку, напишите владельцу. Кратко опишите, что произошло.\n\nЗнаете хороший публичный канал с вакансиями в Сербии? Предложите его для проверки.', [[{ text: '✉️ Написать владельцу', url: 'https://t.me/AngryVirus' }],[button('📡 Предложить источник','idea:start')],[button('⬅️ Настройки и помощь','preferences')]]);
     if(action==='idea:start')return sourceIdeaRoute(this,action);
     if (action === 'notifications' || action === 'input:hour') return this.notifications();
-    if (/^notify:(off|instant|daily)$/.test(action)) {
-      const mode = action === 'notify:off' ? 'off' : 'instant', patch = { notifications: mode };
+    if (/^notify:(off|instant|daily|stop)$/.test(action)) {
+      const mode = ['notify:off','notify:stop'].includes(action) ? 'off' : 'instant', patch = { notifications: mode };
+      if(action==='notify:stop')patch.saved_searches=(this.s.saved_searches||[]).map(p=>({...p,notifications:'off'}));
       if (mode !== 'off' && this.s.notifications === 'off') patch.notifications_after_id = await this.store.latest();
-      await this.patchInput(patch); return this.home();
+      await this.patchInput(patch,'notifications'); return this.notifications();
     }
     let m;
     if(action.startsWith('ratings:'))return ratingRoute(this,action);
     if (action === 'admin' || action.startsWith('admin:')) return staffRoute(this,action);
-    if ((m = /^actions:([1-9]\d*):(-1|\d+):(s|f|rs|rf)$/.exec(action)) && positive(Number(m[1])) && Number(m[2])<=1000000) {
+    if ((m = /^actions:([1-9]\d*):(-1|\d+):(s|f|rs|rf)(?::(problem))?$/.exec(action)) && positive(Number(m[1])) && Number(m[2])<=1000000) {
       const group=groupJobs(await this.store.jobs()).find(g=>includesId(g,Number(m[1]))),j=group&&decorate(group,group.members.find(j=>j.id===Number(m[1])));
-      return j ? this.panel(...cardActions(j,Number(m[2]),m[3],null,await hasFavorite(this,j))) : this.panel('Вакансия больше не найдена.');
+      return j ? this.panel(...cardActions(j,Number(m[2]),m[3],null,await hasFavorite(this,j),m[4]==='problem')) : this.panel('Вакансия больше не найдена.');
     }
     if ((m = /^report:([1-9]\d*):(choose|not_job|duplicate|outdated):(-1|\d+):(s|f|rs|rf)(?::([a-z0-9]{8}))?$/.exec(action)) && positive(Number(m[1])) && Number(m[3])<=1000000) return complaint(this,Number(m[1]),m[2]==='choose'?null:m[2],Number(m[3]),m[4],m[5]);
     if ((m = /^report:([1-9]\d*)(?::(not_job|duplicate|outdated))?$/.exec(action)) && positive(Number(m[1]))) return complaint(this,Number(m[1]),m[2]);
@@ -189,13 +190,13 @@ export class Bot {
     if ((m = /^hidden:(\d+)$/.exec(action))) return this.hiddenPanel(Number(m[1]));
     if (/^(job|hide|restore):/.test(action)) return this.vacancy(action);
     if (/^(sources$|source:)/.test(action)) return this.home();
-    if (action.startsWith('input:') && Object.hasOwn(PROMPTS,action.slice(6))) { const field = action.slice(6); await this.patchInput({ pending_input: field },`input:${field}`); return this.panel(PROMPTS[field] + '\n/cancel — отмена.', [[button('✖ Отменить ввод','cancel')], ...BACK]); }
+    if (action.startsWith('input:') && Object.hasOwn(PROMPTS,action.slice(6))) { const field = action.slice(6); await this.patchInput({ pending_input: field },`input:${field}`); return this.panel(PROMPTS[field] + '\n/cancel — отмена.', [[button('⬅️ Назад',field==='salary'?'filters:pay':field==='exclusions'?'filters:details':'filters')]]); }
     if (Object.hasOwn(OPTIONS,action)) return this.panel(...choicePanel(this.s,action));
     if ((m = /^(choose|set):([^:]+):([^:]+)(?::([01]))?$/.exec(action)) && OPTIONS[m[2]] && Object.hasOwn(OPTIONS[m[2]],m[3])) {
       if (m[1] === 'choose' && m[4] !== undefined) { await this.patchInput({ [m[2]]: choose(this.s,m[2],m[3],m[4] === '1') },'filters'); return this.panel(...choicePanel(this.s,m[2])); }
       if (m[1] === 'set' && m[4] === undefined) { await this.patchInput({ [m[2]]: m[3] },'filters'); return this.panel(...filtersPanel(this.s)); }
     }
-    if (action === 'toggle_salary') { await this.patchInput({ include_unknown_salary: !this.s.include_unknown_salary },'filters'); return this.panel(...filtersPanel(this.s)); }
+    if (action === 'toggle_salary') { await this.patchInput({ include_unknown_salary: !this.s.include_unknown_salary },'filters'); return this.panel(...filtersPanel(this.s,'pay')); }
     if (action === 'reset') { const d = defaults(); await this.patchInput(Object.fromEntries(['keywords','exclusions','city','remote','language','min_salary','currency','include_unknown_salary','freshness','residence_permit'].map(k => [k,d[k]])),'filters'); return this.panel(...filtersPanel(this.s)); }
     if (action === 'delete') return this.panel('Удалить ваши настройки, избранные и скрытые вакансии, жалобы и историю уведомлений?', [[button('Удалить мои данные','delete_confirm')], ...BACK]);
     if (action === 'delete_confirm') { if(!await this.store.deleteUser(this.uid,this.updateKey))return this.home(); this.s=null; return this.panel(DELETED_TEXT, [], null); }
@@ -248,10 +249,15 @@ export class Bot {
       const replay=await this.store.inputEffectStatus(this.uid,key);
       if(replay && replay.status!=='planned'){
         this.s=replay.user?settings(replay.user.settings):null;
+        this.previousPanelId=this.s?.ui_panel_id;
+        if(callback&&positive(this.previousPanelId)){this.mid=this.previousPanelId;this.isPhoto=this.s.ui_panel_kind==='photo';}
         if(replay.status==='applied')await this.replayInput(replay.effect.screen);
         await this.finishAcceptedInput(key,message,callback);return;
       }
       this.s = settings((await this.store.ensure(this.uid,this.chat)).settings);
+      this.previousPanelId=this.s.ui_panel_id;
+      // Use the current screen even when a callback comes from an older menu or notice.
+      if(callback && positive(this.previousPanelId)){this.mid=this.previousPanelId;this.isPhoto=this.s.ui_panel_kind==='photo';}
       const ordinary=!(callback && /^(admin(?::|$)|ads(?::|$)|favorite:|ratings:)/.test(callback.data||'')) && !(this.s.pending_input && !['keywords','exclusions','salary','hour','search_name'].includes(this.s.pending_input));
       const mutation=callback?inputMutation(callback.data):Boolean(this.s.pending_input);
       const cleanup=this.s.pending_input || this.s.ban_draft || this.s.staff_draft || this.s.search_operation;
@@ -281,7 +287,7 @@ export class Bot {
         if ([...text].length > 1000) { await this.panel('Пожалуйста, сократите сообщение до 1000 символов.'); await this.finishAcceptedInput(key,message,callback); return; }
         if (this.s.pending_input && !text.startsWith('/')) { await this.input(text); await this.finishAcceptedInput(key,message,callback); return; }
         if (this.s.pending_input || this.s.ban_draft || this.s.staff_draft || this.s.search_operation) {const fields={pending_input:null,ban_draft:null,ban_target:null,staff_draft:null,search_operation:null,review_draft:null};if(ordinary)await this.patchInput(fields);else await this.patch(fields);}
-        action = ({ '/start': 'start', '/menu': 'menu', '/cancel': 'menu', '/delete_me': 'delete', '/admin': 'admin' })[text.split(/\s+/)[0].split('@')[0]] || 'menu';
+        action = ({ '/start': 'start', '/strat': 'start', '/help': 'help', '/menu': 'menu', '/cancel': 'menu', '/delete_me': 'delete', '/admin': 'admin' })[text.split(/\s+/)[0].split('@')[0]] || 'menu';
       }
       await this.route(action);
       await this.finishAcceptedInput(key,message,callback);

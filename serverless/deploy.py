@@ -7,7 +7,7 @@ from cloud import call, cli, invoke, routing_identity
 
 # Reviewed predecessor: e9d5ed1, verified by read-only run 40525527237.
 # A later release must explicitly review and update its predecessor digest.
-PREVIOUS_DIGEST = '769e922663cd9fb613ab06b78a31593f8f239e875b5848ae10461da3bff394c2'  # pragma: allowlist secret
+PREVIOUS_DIGEST = 'ac02b56dad27b35f2550a72001593a5eab1d339026844c80660d5c6a65f683f1'  # pragma: allowlist secret
 
 
 def digest(modules):

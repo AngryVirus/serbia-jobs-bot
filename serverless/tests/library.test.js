@@ -4,8 +4,8 @@ import { fixture,handle,callback,message,job } from './fixtures.js';
 import { Store } from '../tgcloud/lib/store.js';
 import { notifyOne } from '../tgcloud/lib/admin.js';
 const last=f=>f.api.edited.at(-1)||f.api.sent.at(-1);
-test('five-item home groups favorites and hidden; duplicate sources save as one vacancy',async()=>{
- const f=await fixture();await handle(f,message(1,'/start'));assert.equal(last(f).reply_markup.inline_keyboard.flat().length,5);
+test('four-item home groups favorites and hidden; duplicate sources save as one vacancy',async()=>{
+ const f=await fixture();await handle(f,message(1,'/start'));assert.equal(last(f).reply_markup.inline_keyboard.flat().length,4);
  assert(last(f).reply_markup.inline_keyboard.flat().some(b=>b.callback_data==='library'));
  await f.store.putJob(job(1),true);await f.store.putJob(job(2,{url:job(1).url+'?utm_source=copy'}),true);
  await handle(f,callback(1,'favorite:add:2'));await handle(f,callback(1,'favorite:add:1'));

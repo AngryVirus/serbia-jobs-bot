@@ -14,7 +14,9 @@ test('compact cards keep paging and put secondary actions in a contextual submen
   assert(rows.flat().some(b=>b.callback_data==='view:8:3:next:rf'));
   const [,actions]=cardActions(j,3,'rf');
   assert(actions.flat().some(b=>b.callback_data==='view:8:3:show:rf'));
-  assert(actions.flat().some(b=>b.callback_data==='report:8:choose:3:rf'));
+  assert(actions.flat().some(b=>b.callback_data==='actions:8:3:rf:problem'));
+  const [,problem]=cardActions(j,3,'rf',null,false,true);
+  assert(problem.flat().some(b=>b.callback_data==='report:8:choose:3:rf'));
   assert(actions.flat().some(b=>b.callback_data==='view:8:3:translate:rf'));
 });
 
@@ -46,8 +48,9 @@ test('owner-only reports and moderation enforce authorization even for forged ca
   assert(!JSON.stringify(f.api.sent.at(-1)).includes('Отчёт владельца'));
   await handle(f,callback(2,'admin:block:1')); assert.equal((await f.store.records('moderation')).length,0);
   assert(f.api.edited.at(-1).text.includes('только владельцу'));
-  await handle(f,message(OWNER_ID,'/start')); assert(JSON.stringify(f.api.sent.at(-1)).includes('Отчёт владельца'));
-  await handle(f,message(OWNER_ID,'/admin')); assert(f.api.sent.at(-1).text.includes('💼 Вакансии'));
+  await handle(f,message(OWNER_ID,'/start')); assert(!JSON.stringify(f.api.sent.at(-1)).includes('admin'));
+  await handle(f,callback(OWNER_ID,'preferences'));assert(JSON.stringify(f.api.edited.at(-1)).includes('Управление ботом'));
+  await handle(f,message(OWNER_ID,'/admin')); assert(f.api.sent.at(-1).text.includes('Управление ботом'));
   assert(f.api.sent.at(-1).text.length < 1000);
   await handle(f,callback(OWNER_ID,'admin:details')); assert(f.api.edited.at(-1).text.includes('Каталог:'));
   await handle(f,callback(2,'admin:details')); assert(f.api.edited.at(-1).text.includes('только владельцу'));
@@ -58,24 +61,23 @@ test('owner dashboard groups existing tools into readable sections with a route 
   await handle(f,callback(OWNER_ID,'admin'));
   const dashboard=f.api.edited.at(-1),rows=dashboard.reply_markup.inline_keyboard;
   assert(rows.every(row=>row.length===1));
-  assert.deepEqual(rows.flat().map(b=>[b.text,b.callback_data]),[
-    ['📋 Вакансии','admin:vacancies'],['👥 Пользователи','admin:users'],['🛡 Команда','admin:staff'],['📡 Сбор вакансий','admin:collection'],['📣 Реклама','ads'],['🔄 Обновить отчёт','admin:refresh'],['🏠 Главное меню','menu']
-  ]);
-  for(const [action,purpose,targets] of [
-    ['admin:vacancies','жалобы',['admin:ratings:pending:0','admin:reports:0','admin:blocked:0']],
-    ['admin:users','блокировки',['admin:people:0','admin:stats','admin:bans:0']],
-    ['admin:staff','изменения прав',['admin:team:0','admin:audit:0']],
-    ['admin:collection','сохранённые данные',['admin:sources:0','admin:quality:sources:0','admin:ideas:pending:0','admin:quality','admin:details']]
+  assert.deepEqual(rows.flat().map(b=>b.callback_data),['admin:vacancies','admin:users','admin:manage','menu']);
+  for(const [action,targets,parent] of [
+    ['admin:vacancies',['admin:ratings:pending:0','admin:reports:0','admin:blocked:0'],'admin'],
+    ['admin:users',['admin:people:0','admin:bans:0','admin:staff','admin:stats'],'admin'],
+    ['admin:staff',['admin:team:0','admin:audit:0'],'admin:users'],
+    ['admin:manage',['admin:status','admin:collection','ads'],'admin'],
+    ['admin:collection',['admin:sources:0','admin:quality:sources:0','admin:diagnostics'],'admin:manage'],
+    ['admin:diagnostics',['admin:ideas:pending:0','admin:quality','admin:details'],'admin:collection']
   ]) {
     await handle(f,callback(OWNER_ID,action));
-    const panel=f.api.edited.at(-1),buttons=panel.reply_markup.inline_keyboard;
-    assert(panel.text.includes(purpose)); assert(buttons.every(row=>row.length===1));
-    assert.deepEqual(buttons.flat().map(b=>b.callback_data),[...targets,'admin','menu']);
-    for(const target of targets) {
+    const buttons=f.api.edited.at(-1).reply_markup.inline_keyboard.flat();
+    assert.deepEqual(buttons.map(b=>b.callback_data),[...targets,parent]);
+    assert.equal(new Set(buttons.map(b=>b.callback_data)).size,buttons.length);
+    for(const target of targets){
       await handle(f,callback(OWNER_ID,target));
       assert(!f.api.edited.at(-1).text.includes('Действие устарело'));
-      const back=target==='admin:people:0'?'admin:users':'admin';
-      assert(f.api.edited.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data===back));
+      assert(f.api.edited.at(-1).reply_markup.inline_keyboard.flat().some(b=>/^(admin|ads)/.test(b.callback_data)));
     }
     await handle(f,callback(OWNER_ID,'admin'));
     assert.deepEqual(f.api.edited.at(-1).reply_markup.inline_keyboard,rows);
@@ -91,7 +93,7 @@ test('owner sections need no catalog read and reject numeric-string or mismatche
   const panels=[],panel=async(text,rows)=>panels.push({text,rows});
   for(const action of sections) {
     await ownerRoute({uid:OWNER_ID,chat:OWNER_ID,panel,store:{meta:async()=>null,jobs:()=>assert.fail('Section must not read catalogue')}},action);
-    assert(panels.at(-1).rows.flat().some(b=>b.callback_data==='admin'));
+    assert(panels.at(-1).rows.flat().some(b=>/^admin(?::|$)/.test(b.callback_data)));
   }
   for(const [uid,chat] of [[String(OWNER_ID),OWNER_ID],[OWNER_ID,String(OWNER_ID)],[2,2],[OWNER_ID,2],[2,OWNER_ID]]) {
     for(const action of actions) {
@@ -103,7 +105,7 @@ test('owner sections need no catalog read and reject numeric-string or mismatche
 });
 
 test('new owner callbacks cannot expose panels outside the owner private chat',async()=>{
-  const f=await fixture(),actions=['admin:vacancies','admin:users','admin:staff','admin:collection','admin:refresh','admin:details:refresh'];
+  const f=await fixture(),actions=['admin:vacancies','admin:users','admin:staff','admin:collection','admin:manage','admin:diagnostics','admin:status','admin:refresh','admin:details:refresh'];
   for(const action of actions) {
     await handle(f,callback(2,action));
     assert.match(f.api.edited.at(-1).text,/только владельцу/);
@@ -122,7 +124,7 @@ test('summary and detailed refresh reread saved data and show report time withou
   await f.store.setMeta('last_collection',last);
   await f.store.setMeta('collection_run',{state:'done',finished_at:last.finished_at});
   await f.store.putJob(job(1),true);
-  await handle(f,callback(OWNER_ID,'admin'));
+  await handle(f,callback(OWNER_ID,'admin:status'));
   const first=f.api.edited.at(-1).text;
   assert.match(first,/В поиске: <b>1<\/b>/);
   assert.match(first,/Последний сбор завершён: 2026-07-01 13:00 \(Белград\)/);

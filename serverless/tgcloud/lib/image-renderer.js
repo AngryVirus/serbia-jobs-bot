@@ -2,7 +2,7 @@
 import { zlibSync, unzlibSync } from './image-codec.js';
 import { HEADER } from './image-header.js';
 import { FONTS, FONT_DATA } from './image-fonts.js';
-export const IMAGE_VERSION='belgrade-v2-icons';
+export const IMAGE_VERSION='belgrade-v3-ratings';
 const W=960, BG=[251,246,236], INK=[22,45,67], MUTED=[100,117,129], BLUE=[44,106,160];
 export function fromBase64(value) {
  const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/',out=[];let bits=0,n=0;
@@ -70,6 +70,7 @@ export function renderImage(html) {
  const take=(text,max)=>{let count=0,n=0,lastSpace=-1;for(const c of text){const next=width(c,'body');if(n+next>max)break;n+=next;count+=c.length;if(c===' ')lastSpace=count;}if(count<text.length && lastSpace>0)count=lastSpace;return [text.slice(0,count).trim(),text.slice(count).trim()];};
  for(const line of doc.lines){
   if(!line.text){y+=20;continue;}
+  if(/^[★☆]{5}$/.test(line.text)){layout.push({stars:line.text,x:92,y:y+30});y+=80;continue;}
   const colon=line.text.indexOf(':'),icon=colon>0?categoryIcon(line.text):null,left=icon?132:68;
   if(icon)layout.push({icon,x:88,y:y+24});
   if(line.bold && colon>0 && width(line.text.slice(0,colon+1),'bold')<W-300-(icon?64:0)){
@@ -77,7 +78,7 @@ export function renderImage(html) {
    let [first,rest]=take(line.text.slice(colon+1).trim(),W-68-x);
    layout.push({text:label,face:'bold',x:left,y,color:INK});layout.push({text:first,face:'body',x,y:y+2,color:INK});y+=48;
    while(rest){const [part,tail]=take(rest,W-68-left);layout.push({text:part,face:'body',x:left,y,color:INK});y+=48;rest=tail;}
-  }else{const face=line.bold?'bold':'body';for(const text of wrap(line.text,face,W-68-left)){layout.push({text,face,x:left,y,color:line.bold?INK:MUTED});y+=48;}}
+  }else{const face=line.bold?'bold':'body';for(const text of wrap(line.text,face,W-68-left)){layout.push({text,face,x:left,y,color:/^Низкий рейтинг/.test(line.text)?[155,55,35]:line.bold?INK:MUTED});y+=48;}}
   y+=10;
  }
  const height=Math.max(660,y+64);if(height>8500)throw Error('Image panel exceeds safe height');
@@ -86,6 +87,13 @@ export function renderImage(html) {
  const rect=(x,y,w,h,c)=>{for(let yy=y;yy<y+h;yy++)for(let xx=x;xx<x+w;xx++)pixel(xx,yy,c);};
  for(let p=0;p<headerPixels.length;p++){const i=headerPixels[p]*3;rgb.set(HEADER.palette.slice(i,i+3),p*3);}
  rect(56,ruleY,100,4,[184,51,63]);rect(156,ruleY,100,4,BLUE);rect(256,ruleY,W-312,2,[226,219,207]);
- for(const line of layout){if(line.icon){drawIcon(pixel,line.icon,line.x,line.y);continue;}let x=line.x;const check=line.text.startsWith('✓') || line.text.startsWith('Выбрано:');if(check)rect(48,line.y-2,W-96,50,[225,237,242]);for(const c of line.text){const [w,h,left,top,advance,offset]=glyph(c,line.face);for(let yy=0;yy<h;yy++)for(let xx=0;xx<w;xx++){const a=fontPixels[offset+yy*w+xx];if(a)pixel(x+left+xx,line.y+top+yy,line.color,a);}x+=advance;}}
- return {bytes:png(rgb,height),width:W,height,title:doc.title,icons:layout.filter(l=>l.icon).length};
+ const star=(cx,cy,filled)=>{
+  const points=Array.from({length:10},(_,i)=>{const a=-Math.PI/2+i*Math.PI/5,r=i%2?13:29;return [cx+Math.cos(a)*r,cy+Math.sin(a)*r];});
+  for(let y=Math.floor(cy-30);y<=cy+30;y++)for(let x=Math.floor(cx-30);x<=cx+30;x++){
+   let inside=false;for(let i=0,j=9;i<10;j=i++){const [xi,yi]=points[i],[xj,yj]=points[j];if((yi>y)!==(yj>y)&&x<(xj-xi)*(y-yi)/(yj-yi)+xi)inside=!inside;}
+   if(inside)pixel(x,y,filled?[226,165,35]:[221,216,204]);
+  }
+ };
+ for(const line of layout){if(line.stars){[...line.stars].forEach((s,i)=>star(line.x+i*76,line.y,s==='★'));continue;}if(line.icon){drawIcon(pixel,line.icon,line.x,line.y);continue;}let x=line.x;const check=line.text.startsWith('✓') || line.text.startsWith('Выбрано:');if(check)rect(48,line.y-2,W-96,50,[225,237,242]);for(const c of line.text){const [w,h,left,top,advance,offset]=glyph(c,line.face);for(let yy=0;yy<h;yy++)for(let xx=0;xx<w;xx++){const a=fontPixels[offset+yy*w+xx];if(a)pixel(x+left+xx,line.y+top+yy,line.color,a);}x+=advance;}}
+ return {bytes:png(rgb,height),width:W,height,title:doc.title,icons:layout.filter(l=>l.icon).length,starRows:layout.filter(l=>l.stars).map(l=>l.stars)};
 }

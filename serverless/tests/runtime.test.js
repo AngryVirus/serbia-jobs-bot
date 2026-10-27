@@ -71,6 +71,7 @@ test('simultaneous notification claims and ambiguous errors never duplicate',asy
   const f=await fixture(); await f.store.ensure(1,1); await f.store.patch(1,{notifications:'instant'}); await f.store.putJob(job(1),true);
   const results=await Promise.all([notifyOne(f.store,f.api,1),notifyOne(f.store,f.api,1)]);
   assert.equal(results.reduce((n,r)=>n+r.sent,0),1);
+ await f.db.run("UPDATE sjc_deliveries SET payload=json_set(payload,'$.delivered_at','2000-01-01T00:00:00.000Z')");
   await f.store.putJob(job(2)); f.api.sendMessage=async()=>{throw new Error('timeout after delivery');};
   assert.equal((await notifyOne(f.store,f.api,1)).uncertain,true);
   assert.equal((await notifyOne(f.store,f.api,1)).sent,0); assert.equal((await f.store.stats()).uncertain,1);

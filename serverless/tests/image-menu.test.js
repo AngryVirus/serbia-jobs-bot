@@ -8,7 +8,7 @@ import { Bot } from '../tgcloud/lib/bot.js';
 import { renderImage,imageHash,imageDocument } from '../tgcloud/lib/image-renderer.js';
 import { CODEC_SOURCE } from '../tgcloud/lib/image-codec.js';
 import { defaults } from '../tgcloud/lib/filters.js';
-import { filtersPanel,choicePanel } from '../tgcloud/lib/ui.js';
+import { filtersPanel,choicePanel,summary } from '../tgcloud/lib/ui.js';
 import { OWNER_ID } from '../tgcloud/lib/owner.js';
 import { administer } from '../tgcloud/lib/admin.js';
 
@@ -103,7 +103,7 @@ test('all reachable user menu and vacancy controls remain usable with image tran
  f.fetch=async()=>({ok:true,json:async()=>[[['Переведённый текст']]]});
  await text(f,1,'/start');const queue=['menu','notifications','delete'],seen=new Set();
  while(queue.length){
-  const action=queue.shift();if(seen.has(action))continue;seen.add(action);
+  const action=queue.shift(),route=action.replace(/:[a-z0-9]{8}(?=:|$)/g,':TOKEN');if(seen.has(route))continue;seen.add(route);
   await f.db.run("DELETE FROM sjc_records WHERE kind='rate'");
   await click(f,1,action);
   const last=f.graphics.last;assert(last?.photo || last?.text,action);
@@ -115,10 +115,39 @@ test('all reachable user menu and vacancy controls remain usable with image tran
 
 test('filter categories have distinct local vector icons and retain readable wrapped values',async()=>{
  const {categoryIcon,IMAGE_VERSION}=await import('../tgcloud/lib/image-renderer.js');
- const document=imageDocument(filtersPanel(defaults())[0]);
+ const content='<b>Условия</b>\n'+summary(defaults()),document=imageDocument(content);
  const labels=document.lines.filter(l=>l.bold&&l.text.includes(':'));
  assert.equal(labels.length,9);assert(labels.every(l=>categoryIcon(l.text)));
  assert.equal(new Set(labels.map(l=>categoryIcon(l.text))).size,8);
  assert.equal(categoryIcon('Произвольный текст: значение'),null);
- assert.match(IMAGE_VERSION,/v2/);assert.equal(renderImage(filtersPanel(defaults())[0]).icons,9);
+ assert.match(IMAGE_VERSION,/v3/);assert.equal(renderImage(content).icons,9);
+});
+
+test('commands replace the previous screen; older buttons use the current screen without deleting notices',async()=>{
+ const f=await graphics();await text(f,1,'/start');const first=f.graphics.last;
+ for(const command of ['/menu','/start','/strat','/help']){
+  const before=f.graphics.last.message_id;await text(f,1,command);assert.notEqual(f.graphics.last.message_id,before);assert(f.graphics.deleted.includes(before));assert.equal(f.graphics.messages.size,1);
+ }
+ const current=f.graphics.last.message_id,u=callback(1,'filters');u.callback_query.message=first;await new Bot(f).handle(u);assert.equal(f.graphics.last.message_id,current);assert.equal(f.graphics.messages.size,1);
+ const notice=await f.api.sendMessage({chat_id:1,text:'Найдены новые вакансии',reply_markup:{inline_keyboard:[]}});
+ await text(f,1,'/menu');assert(f.graphics.messages.has(notice.message_id));assert(!f.graphics.messages.has(current));
+});
+test('review screens render stars locally, hide public author details and keep publication controls',async()=>{
+ const {submitReview,decideReview}=await import('../tgcloud/lib/ratings.js');
+ const f=await graphics();await f.store.putJob(job(1),true);await f.store.ensure(77,77);
+ const actor={store:f.store,api:f.api,uid:77,chat:77,actor:{id:77,name:'Автор',username:'PrivateAuthor'}};
+ assert(await submitReview(actor,{job_id:1,stars:2,token:'drafttoken12'},'Мой опыт собеседования.'));
+ const [review]=await f.store.records('vacancy_review');
+ await text(f,OWNER_ID,'/admin');await click(f,OWNER_ID,`admin:ratings:view:${review.key}`);
+ assert(f.graphics.last.photo);assert(f.graphics.last.reply_markup.inline_keyboard.flat().some(b=>b.callback_data===`admin:ratings:p:${review.key}:${review.version}`));
+ assert(await decideReview({...actor,uid:OWNER_ID,chat:OWNER_ID,actor:{id:OWNER_ID}},review.key,review.version,'published'));
+ await text(f,77,'/menu');await click(f,77,'ratings:1:list');assert(f.graphics.last.photo);
+ const image=renderImage('<b>Отзывы о вакансии</b>\n<b>Низкий рейтинг</b>\n★★☆☆☆\nМой опыт собеседования.');
+ assert.deepEqual(image.starRows,['★★☆☆☆']);assert(image.height<1400);
+});
+test('failed deletion leaves old controls inert and never removes the replacement',async()=>{
+ const f=await graphics();await text(f,1,'/start');const id=f.graphics.last.message_id,disabled=[];
+ f.api.deleteMessage=async()=>{throw {code:400};};f.api.editMessageReplyMarkup=async p=>disabled.push(p);
+ await text(f,1,'/menu');assert.notEqual(f.graphics.last.message_id,id);assert(disabled.some(p=>p.message_id===id&&p.reply_markup.inline_keyboard.length===0));
+ assert(!disabled.some(p=>p.message_id===f.graphics.last.message_id));
 });

@@ -20,7 +20,7 @@ test('permit labels describe the employer requirement and preserve stored yes/no
  assert(rows.flat().some(b=>b.text==='✅ Не требуется'&&b.callback_data==='choose:residence_permit:no:1'));
  assert(summary({...defaults(),residence_permit:'yes'}).includes('Требование ВНЖ:</b> Обязателен'));
  assert(filtersPanel(defaults())[0].includes('действуют одновременно'));
- assert.equal(menu(defaults())[1].flat().length,5);
+ assert.equal(menu(defaults())[1].flat().length,4);
 });
 
 test('legacy no_serbian is visible and removable without silently changing its meaning',()=>{
