@@ -2,7 +2,7 @@
 import { zlibSync, unzlibSync } from './image-codec.js';
 import { HEADER } from './image-header.js';
 import { FONTS, FONT_DATA } from './image-fonts.js';
-export const IMAGE_VERSION='belgrade-v3-ratings';
+export const IMAGE_VERSION='belgrade-v3-rating-warning';
 const W=960, BG=[251,246,236], INK=[22,45,67], MUTED=[100,117,129], BLUE=[44,106,160];
 export function fromBase64(value) {
  const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/',out=[];let bits=0,n=0;
@@ -78,7 +78,7 @@ export function renderImage(html) {
    let [first,rest]=take(line.text.slice(colon+1).trim(),W-68-x);
    layout.push({text:label,face:'bold',x:left,y,color:INK});layout.push({text:first,face:'body',x,y:y+2,color:INK});y+=48;
    while(rest){const [part,tail]=take(rest,W-68-left);layout.push({text:part,face:'body',x:left,y,color:INK});y+=48;rest=tail;}
-  }else{const face=line.bold?'bold':'body';for(const text of wrap(line.text,face,W-68-left)){layout.push({text,face,x:left,y,color:/^Низкий рейтинг/.test(line.text)?[155,55,35]:line.bold?INK:MUTED});y+=48;}}
+  }else{const face=line.bold?'bold':'body';for(const text of wrap(line.text,face,W-68-left)){layout.push({text,face,x:left,y,color:/^(Низкий рейтинг|Прочитайте отзывы перед откликом\.)/.test(line.text)?[180,40,45]:line.bold?INK:MUTED});y+=48;}}
   y+=10;
  }
  const height=Math.max(660,y+64);if(height>8500)throw Error('Image panel exceeds safe height');

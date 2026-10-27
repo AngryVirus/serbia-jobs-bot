@@ -8,5 +8,5 @@ export async function ratingSummary(store,ids){
 export function ratingLine(r){
  if(!r?.count)return '⭐ Оценок пока нет';
  const average=Number(r.average),stars='⭐'.repeat(Math.max(1,Math.min(5,Math.round(average))));
- return `${stars} ${average.toFixed(1).replace('.',',')}/5 · отзывов: ${r.count}`+(average<=2?'\n<b>⚠️ Низкий рейтинг. Прочитайте отзывы перед откликом.</b>':'');
+ return `${stars} ${average.toFixed(1).replace('.',',')}/5 · отзывов: ${r.count}`+(average<=2?'\n\n<b>🔴 Низкий рейтинг</b>\nПрочитайте отзывы перед откликом.':'');
 }
