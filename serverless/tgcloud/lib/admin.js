@@ -154,11 +154,11 @@ export async function administer(input, ctx, deps) {
   }
   if(op==='ratings_check') {
     const sql=await store.db.get("WITH allowed AS MATERIALIZED (SELECT 1 AS n) SELECT n FROM allowed");
-    assert(sql.n===1&&typeof deps.api.sendDocument==='function','Review runtime support missing');
+    assert(sql.n===1,'Review runtime support missing');
     const summary=await ratingSummary(store,[-1]);
     assert(summary.count===0,'Unexpected diagnostic review');
     const groups=await store.db.all("SELECT json_extract(payload,'$.state') AS state,COUNT(*) AS n FROM sjc_records WHERE kind='vacancy_review' GROUP BY json_extract(payload,'$.state')");
-    return {ready:true,private_export:true,states:groups};
+    return {ready:true,team_audit:true,states:groups};
   }
   if(op==='health_tick'){await reviewNoticeTick(store,deps.api);const result=await healthTick(store,deps.api);try{await notifySourceIdeas(store,deps.api);}catch{/* Proposal notices must not prevent independent health monitoring. */}return result;}
   if(op==='ads_tick') {await reviewNoticeTick(store,deps.api);const notices=await banNoticeTick(store,deps.api,deps.InputFile),roles=await roleNoticeTick(store,deps.api);return {...await adTick(store,deps.api),ban_notices:notices,role_notices:roles};}
