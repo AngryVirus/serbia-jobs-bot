@@ -137,7 +137,7 @@ export class Bot {
     if (kind === 'hide' && arg !== undefined || kind === 'job' && !['full','short','ru_full','ru_short',undefined].includes(arg)) return this.home();
     const original = group?.members.find(j => j.id === id), j = original && decorate(group, original);
     if (!j) return this.panel('Вакансия больше не доступна.');
-    if (group.members.some(j=>j._moderated) && this.uid !== OWNER_ID) return this.panel('Объявление снято с выдачи после проверки.',[[button('🔎 Найти вакансии','search:0')],...BACK]);
+    if (group.members.some(j=>j._moderated) && this.uid !== OWNER_ID) return this.panel(group.members.some(j=>j._manual_closed)?'🔒 Вакансия закрыта командой бота.':'Объявление снято с выдачи после проверки.',[[button('🔎 Найти вакансии','search:0')],...BACK]);
     if (kind === 'hide') { ids.add(id); await this.patchInput({ hidden_jobs: [...ids] }); }
     if (group.members.some(j => ids.has(j.id))) return this.panel('<b>🙈 Вакансия скрыта</b>\n' + safe(j.title,100), [[button('↩️ Вернуть', `restore:${id}`), button('🙈 Скрытые', 'hidden:0')], ...BACK]);
     const mode = (arg?.startsWith('ru_') ? 'r' : '') + (arg?.endsWith('full') ? 'f' : 's');
@@ -181,7 +181,7 @@ export class Bot {
     if (action === 'admin' || action.startsWith('admin:')) return staffRoute(this,action);
     if ((m = /^actions:([1-9]\d*):(-1|\d+):(s|f|rs|rf)(?::(problem))?$/.exec(action)) && positive(Number(m[1])) && Number(m[2])<=1000000) {
       const group=groupJobs(await this.store.jobs()).find(g=>includesId(g,Number(m[1]))),j=group&&decorate(group,group.members.find(j=>j.id===Number(m[1])));
-      return j ? this.panel(...cardActions(j,Number(m[2]),m[3],null,await hasFavorite(this,j),m[4]==='problem')) : this.panel('Вакансия больше не найдена.');
+      return j ? this.panel(...cardActions(j,Number(m[2]),m[3],null,await hasFavorite(this,j),m[4]==='problem',rank(await accessRole(this))>=2&&!group.members.some(j=>j._moderated))) : this.panel('Вакансия больше не найдена.');
     }
     if ((m = /^report:([1-9]\d*):(choose|not_job|duplicate|outdated):(-1|\d+):(s|f|rs|rf)(?::([a-z0-9]{8}))?$/.exec(action)) && positive(Number(m[1])) && Number(m[3])<=1000000) return complaint(this,Number(m[1]),m[2]==='choose'?null:m[2],Number(m[3]),m[4],m[5]);
     if ((m = /^report:([1-9]\d*)(?::(not_job|duplicate|outdated))?$/.exec(action)) && positive(Number(m[1]))) return complaint(this,Number(m[1]),m[2]);
@@ -266,6 +266,7 @@ export class Bot {
       await this.store.captureUsername(this.uid,user.username);
       await activity(this.store,this.uid);
       if(this.s.bot_blocked) await this.patch({bot_blocked:false});
+      if(this.s.vacancy_close_draft&&(!callback||callback.data!=='admin:close:confirm:'+this.s.vacancy_close_draft.token))await this.patch({vacancy_close_draft:null});
       let action;
       if (callback) {
         action = typeof callback.data==='string'?callback.data:'';

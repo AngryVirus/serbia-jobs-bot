@@ -1,3 +1,4 @@
+import {accessRole,rank} from './permissions.js';
 // Bounded, per-user search sessions preserve the search and its previous-visit
 // boundary while users navigate, translate and hide vacancies.
 import { defaults, hidden, normalize, validUrl } from './filters.js';
@@ -141,7 +142,7 @@ async function render(bot, original, {action='show',jobId=null,index=0,mode='s',
     return bot.panel(await freshness(bot.store)+notice+text,[...more,...backRows(session)]);
   }
   const job=jobs[index];
-  if(['actions','problem'].includes(session.view))return bot.panel(...cardActions(job,index,mode,{token:session.token},await hasFavorite(bot,job),session.view==='problem'));
+  if(['actions','problem'].includes(session.view))return bot.panel(...cardActions(job,index,mode,{token:session.token},await hasFavorite(bot,job),session.view==='problem',rank(await accessRole(bot))>=2));
   if(session.view==='risk')return bot.panel(...reasons(job,callback(session,job,index,'show',mode)));
   const result=await translatedCard(job,mode,bot.fetch,bot.store);
   const newCount=session.kind==='all'?newJobs(jobs,session).length:0;
