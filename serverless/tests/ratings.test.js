@@ -49,13 +49,12 @@ test('a failed audit insert rolls back the decision and notification together',a
  await assert.rejects(decideReview(bot(f,2),r.key,r.version,'published'));
  assert.equal((await f.store.records('vacancy_review'))[0].state,'pending');assert.equal((await f.store.records('review_notice')).filter(n=>n.type==='published').length,0);
 });
-test('numeric roles, bans, mismatched chat and self-review are enforced',async()=>{
+test('numeric roles, bans and mismatched chats are enforced',async()=>{
  const f=await seed(),r=await add(f);
  for(const uid of [77,78])assert.equal(await decideReview(bot(f,uid),r.key,r.version,'published'),false);
  assert.equal(await decideReview({...bot(f,OWNER_ID),chat:77},r.key,r.version,'published'),false);
  await f.store.record('staff_role',2,{role:'user'});assert.equal(await decideReview(bot(f,2),r.key,r.version,'published'),false);
  await f.store.record('user_ban',3,{active:true});assert.equal(await decideReview(bot(f,3),r.key,r.version,'published'),false);
- await f.store.record('staff_role',77,{role:'moderator'});assert.equal(await decideReview(bot(f,77),r.key,r.version,'published'),false);
  await handle(f,callback(78,`admin:ratings:view:${r.key}`));assert.doesNotMatch(last(f).text,/Реальный опыт|VerifiedActor/);
  assert.equal((await f.store.records('staff_audit')).length,0);
 });
@@ -102,12 +101,30 @@ test('invalid stars/text, review flood, cancellation and profile deletion',async
  const r=await add(f);await decideReview(bot(f,2),r.key,r.version,'published');await f.store.deleteUser(77);
  assert.equal((await ratingSummary(f.store,[1])).count,0);assert.equal((await f.store.records('review_notice')).length,0);assert.equal((await f.store.records('vacancy_review')).length,0);
 });
-test('owner log is private JSONL with ten-day retention, actual actor and no review text',async()=>{
+test('publication and deletion appear in team actions with ten-day retention; no separate review log',async()=>{
  const f=await seed(),r=await add(f);await decideReview(bot(f,2),r.key,r.version,'published');
+ const published=(await f.store.records('vacancy_review'))[0];
+ await handle(f,callback(OWNER_ID,`admin:ratings:d:${r.key}:${published.version}`));
+ const confirm=last(f).reply_markup.inline_keyboard.flat().find(b=>b.callback_data?.startsWith('admin:ratings:c:'));
+ assert(confirm);await handle(f,callback(OWNER_ID,confirm.callback_data));
  await f.store.record('staff_audit','old',{at:new Date(Date.now()-11*86400000).toISOString(),action:'review_delete'});
- const files=[],panels=[];class InputFile{constructor(bytes,name){this.bytes=bytes;this.name=name;}}
- f.api.sendDocument=async p=>{files.push(p);return {message_id:1};};
- await ratingsAdmin({...bot(f,2),InputFile,panel:async text=>panels.push(text)},'admin:ratings:log:0');assert.equal(files.length,0);
- await ratingsAdmin({...bot(f,OWNER_ID),InputFile,panel:async text=>panels.push(text)},'admin:ratings:log:0');assert.equal(files.length,1);
- const event=JSON.parse(new TextDecoder().decode(files[0].document.bytes).trim());assert.equal(event.actor.id,2);assert.equal(event.action,'review_publish');assert.equal(event.target,77);assert.equal(event.text,undefined);assert.equal((await f.store.records('staff_audit')).length,1);
+ await handle(f,callback(OWNER_ID,'admin:audit:0'));
+ assert.match(last(f).text,/Отзыв опубликован/);assert.match(last(f).text,/Отзыв удалён/);assert.match(last(f).text,/Вакансия: #1 · Отзыв: 1:77/);assert.match(last(f).text,/Автор отзыва: 77/);
+ const events=await f.store.records('staff_audit');assert.equal(events.length,2);assert.equal(events.find(e=>e.action==='review_publish').actor.id,2);assert.equal(events.find(e=>e.action==='review_delete').actor.id,OWNER_ID);assert(events.every(e=>e.text===undefined));
+ f.api.sendDocument=async()=>assert.fail('Review file export has been removed');
+ for(const uid of [2,3,OWNER_ID]){
+  await handle(f,callback(uid,'admin:ratings:pending:0'));assert(!last(f).reply_markup.inline_keyboard.flat().some(b=>/log|audit/.test(b.callback_data)));assert.doesNotMatch(last(f).text,/jsonl/);
+  await handle(f,callback(uid,'admin:ratings:log:0'));assert.match(last(f).text,/Откройте отзывы заново/);
+ }
+});
+test('each staff role sees publish on its own pending review and the decision is audited',async()=>{
+ for(const uid of [2,3,OWNER_ID]){
+  const f=await seed(),r=await add(f,uid);
+  await handle(f,callback(uid,`admin:ratings:view:${r.key}`));
+  const publish=last(f).reply_markup.inline_keyboard.flat().find(b=>b.text==='✅ Опубликовать');assert(publish);
+  const update=callback(uid,publish.callback_data);await handle(f,update);await handle(f,update);
+  assert.equal((await f.store.records('vacancy_review'))[0].state,'published');assert.equal((await ratingSummary(f.store,[1])).count,1);
+  const events=await f.store.records('staff_audit');assert.equal(events.length,1);assert.equal(events[0].actor.id,uid);assert.equal(events[0].target,uid);
+  await reviewNoticeTick(f.store,f.api);assert.equal(f.api.sent.filter(p=>p.chat_id===uid&&p.text.includes('опубликован')).length,1);
+ }
 });

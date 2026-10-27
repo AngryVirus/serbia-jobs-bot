@@ -32,7 +32,7 @@ export async function submitReview(bot,draft,text){
 export async function decideReview(bot,key,version,state){
  const role=await accessRole(bot);if(!rank(role)||!['published','deleted'].includes(state))return false;
  const old=await load(bot.store,key);
- if(!old||old.uid===bot.uid||old.version!==version||!['pending','published'].includes(old.state)||old.state===state)return false;
+ if(!old||old.version!==version||!['pending','published'].includes(old.state)||old.state===state)return false;
  const at=new Date().toISOString(),next={...old,state,version:nonce().slice(-12),decided_at:at,moderator:actor(bot)};
  const event={at,action:state==='published'?'review_publish':'review_delete',actor:actor(bot),actor_role:role,target:old.uid,review:key,job_id:old.job_id,stars:old.stars,from:old.state,to:state};
  const rows=[entry('vacancy_review',key,next),entry('staff_audit','review:'+key+':'+next.version,event),entry('review_notice',key+':'+next.version+':'+old.uid,{uid:old.uid,key,version:next.version,type:state,state:'pending',at})];
@@ -104,23 +104,16 @@ export async function ratingsAdmin(bot,action){
   if(m[1]==='d')return bot.panel('Удалить отзыв? Он перестанет влиять на рейтинг. Автор получит уведомление.',[[button('🗑 Удалить',`admin:ratings:c:${m[2]}:${m[3]}`)],[button('⬅️ Назад',`admin:ratings:view:${m[2]}`)]]);
   const done=await decideReview(bot,m[2],m[3],m[1]==='p'?'published':'deleted');
   if(done)try{const r=await load(bot.store,m[2]);await reviewNoticeTick(bot.store,bot.api,Date.now(),r.uid);}catch{/* durable author notice remains queued */}
-  return bot.panel(done?'Решение сохранено. Уведомление автору поставлено в очередь.':'Отзыв уже изменён, права изменились или вы проверяете свой отзыв.',[[button('⭐ На проверке','admin:ratings:pending:0')],...BACK]);
+  return bot.panel(done?'Решение сохранено. Уведомление автору поставлено в очередь.':'Отзыв уже рассмотрен или ваши права изменились. Откройте актуальный список.',[[button('⭐ На проверке','admin:ratings:pending:0')],...BACK]);
  }
  if((m=/^admin:ratings:view:([1-9]\d*:[1-9]\d*)$/.exec(action))){
   const r=await load(bot.store,m[1]);if(!r)return bot.panel('Отзыв больше не найден.',BACK);
-  const rows=[];if(r.uid!==bot.uid){if(r.state==='pending')rows.push([button('✅ Опубликовать',`admin:ratings:p:${r.key}:${r.version}`)]);if(r.state!=='deleted')rows.push([button('🗑 Удалить',`admin:ratings:d:${r.key}:${r.version}`)]);}
+  const rows=[];if(r.state==='pending')rows.push([button('✅ Опубликовать',`admin:ratings:p:${r.key}:${r.version}`)]);if(r.state!=='deleted')rows.push([button('🗑 Удалить',`admin:ratings:d:${r.key}:${r.version}`)]);
   return bot.panel(`<b>⭐ Проверка отзыва · ${r.stars}/5</b>\n${safe(r.title,140)}\nСтатус: ${{pending:'на проверке',published:'опубликован',deleted:'удалён'}[r.state]}\nАвтор: ${safe(r.author.name,80)}${r.author.username?' · @'+safe(r.author.username,32):''}\nID: ${r.uid}\n\n${safe(r.text,800)}`,[...rows,[{text:'👤 Автор',url:'tg://user?id='+r.uid}],[button('⭐ На проверке','admin:ratings:pending:0')],...BACK],bot.mid,false);
- }
- if((m=/^admin:ratings:log:(\d{1,6})$/.exec(action))){
-  if(role!=='owner')return bot.panel('Выгрузка журнала доступна только владельцу.',BACK);
-  await bot.store.pruneStaffAudit();
-  const page=Number(m[1]),rows=await bot.store.db.all("SELECT payload FROM sjc_records WHERE kind='staff_audit' AND json_extract(payload,'$.action') IN ('review_publish','review_delete') ORDER BY json_extract(payload,'$.at') DESC,record_key DESC LIMIT 100 OFFSET :offset",{':offset':page*100});
-  if(rows.length){const bytes=new Uint8Array((encodeURIComponent(rows.map(r=>r.payload).join('\n')+'\n').match(/%[0-9A-F]{2}|[^%]/g)||[]).map(c=>c[0]==='%'?parseInt(c.slice(1),16):c.charCodeAt(0)));await bot.api.sendDocument({chat_id:bot.uid,document:new bot.InputFile(bytes,`reviews-log-${page+1}.jsonl`,{type:'application/x-ndjson'})});}
-  return bot.panel(rows.length?`Файл журнала отправлен: ${rows.length} событий. Хранение — 10 дней.`:'В журнале пока нет событий.',[...(rows.length===100?[[button('Следующий файл',`admin:ratings:log:${page+1}`)]]:[]),...BACK]);
  }
  m=/^admin:ratings:(pending|published|deleted):(\d{1,6})$/.exec(action);if(!m)return bot.panel('Откройте отзывы заново.',BACK);
  const state=m[1],where="kind='vacancy_review' AND json_extract(payload,'$.state')=:state",total=(await bot.store.db.get('SELECT COUNT(*) AS n FROM sjc_records WHERE '+where,{':state':state})).n,page=Math.min(Number(m[2]),Math.max(0,Math.ceil(total/5)-1));
  const rows=await bot.store.db.all('SELECT record_key,payload FROM sjc_records WHERE '+where+' ORDER BY record_key LIMIT 5 OFFSET :offset',{':state':state,':offset':page*5});
  const nav=[];if(page)nav.push(button('⬅️',`admin:ratings:${state}:${page-1}`));if((page+1)*5<total)nav.push(button('➡️',`admin:ratings:${state}:${page+1}`));
- return bot.panel(`<b>⭐ Отзывы · ${{pending:'на проверке',published:'опубликованные',deleted:'удалённые'}[state]}</b>\nВсего: ${total}`, [...rows.map(r=>{const v=JSON.parse(r.payload);return [button(`${v.stars} ⭐ · ${String(v.title).slice(0,35)}`,`admin:ratings:view:${r.record_key}`)];}),...(nav.length?[nav]:[]),...['pending','published','deleted'].filter(s=>s!==state).map(s=>[button({pending:'На проверке',published:'Опубликованные',deleted:'Удалённые'}[s],`admin:ratings:${s}:0`)]),...(role==='owner'?[[button('📥 Журнал отзывов (.jsonl)','admin:ratings:log:0')]]:[]),...BACK]);
+ return bot.panel(`<b>⭐ Отзывы · ${{pending:'на проверке',published:'опубликованные',deleted:'удалённые'}[state]}</b>\nВсего: ${total}`, [...rows.map(r=>{const v=JSON.parse(r.payload);return [button(`${v.stars} ⭐ · ${String(v.title).slice(0,35)}`,`admin:ratings:view:${r.record_key}`)];}),...(nav.length?[nav]:[]),...['pending','published','deleted'].filter(s=>s!==state).map(s=>[button({pending:'На проверке',published:'Опубликованные',deleted:'Удалённые'}[s],`admin:ratings:${s}:0`)]),...BACK]);
 }
