@@ -152,7 +152,8 @@ export class Store {
     return true;
   }
   async jobs() {
-    const blocked = new Set((await this.records('moderation')).filter(r => r.blocked).flatMap(r => r.ids));
+    const moderation=(await this.records('moderation')).filter(r=>r.blocked);
+    const blocked=new Set(moderation.flatMap(r=>r.ids)),closed=new Set(moderation.filter(r=>r.reason==='manual_closed').flatMap(r=>r.ids));
     // Bound each SDK database response: the growing catalog can exceed the
     // platform's response size even though the isolate can process all jobs.
     const rows=[]; let before=Number.MAX_SAFE_INTEGER;
@@ -162,7 +163,7 @@ export class Store {
       if(page.length<100) break;
       before=page[page.length-1].id;
     }
-    const jobs=rows.map(r => ({ ...JSON.parse(r.payload), id: r.id, ...(blocked.has(r.id) ? { _moderated: true } : {}) }));
+    const jobs=rows.map(r => ({ ...JSON.parse(r.payload), id: r.id, ...(blocked.has(r.id) ? { _moderated: true } : {}),...(closed.has(r.id)?{_manual_closed:true}:{}) }));
     await this.decorateJobs(jobs);
     return jobs.sort((a,b) => (Date.parse(b.created_at) - Date.parse(a.created_at) || b.id-a.id));
   }

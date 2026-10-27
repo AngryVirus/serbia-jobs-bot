@@ -83,6 +83,7 @@ export function card(j, expanded = false) {
     const name=safe(SOURCE_NAMES[s.source] || s.source || 'Источник',55);
     return validUrl(s.url) ? `<a href="${escape(s.url)}">${name}</a>` : name;
   });
+  if(j._manual_closed)lines.push('<b>🔒 Вакансия закрыта командой бота</b>');
   if (f.expires_ms != null && f.expires_ms <= Date.now()) lines.push('<b>⌛ Срок публикации истёк</b>');
   if (f.quality?.reason === 'closed') lines.push('<b>⌛ Работодатель сообщил о закрытии набора</b>');
   else if (f.quality?.reason) lines.push('<i>Объявление исключено из поиска проверкой качества.</i>');
@@ -109,7 +110,7 @@ export function viewerButtons(j, index, count, mode, failed) {
   if (nav.length) rows.push(nav);
   return rows;
 }
-export function cardActions(j, index, mode, context = null, favorite = false, problem = false) {
+export function cardActions(j, index, mode, context = null, favorite = false, problem = false, canClose = false) {
   const standalone=index===-1;
   const scoped=action=>`discover:${context.token}:${j.id}:${index}:${action}:${mode}`;
   const back=context ? scoped('show') : standalone ? `job:${j.id}:${mode.startsWith('r')?'ru_':''}${mode.endsWith('f')?'full':'short'}` : `view:${j.id}:${index}:show:${mode}`;
@@ -125,6 +126,7 @@ export function cardActions(j, index, mode, context = null, favorite = false, pr
     [button(favorite?'⭐ Убрать из избранного':'⭐ Сохранить',`favorite:${favorite?'remove':'add'}:${j.id}${context?':'+context.token+':'+index+':'+mode:''}`),button(mode.startsWith('r')?'🌐 Оригинал':'🇷🇺 Перевести',translate)],
     [button('⭐ Отзывы',`ratings:${j.id}:list`),button('🔎 Похожие',`similar:${j.id}${context?':'+context.token:''}`)],
     [button('⚠️ Проблема с вакансией',context?scoped('problem'):actions+':problem')],
+    ...(canClose?[[button('🔒 Закрыть вакансию',`admin:close:${j.id}:${index}:${mode}${context?':'+context.token:''}`)]]:[]),
     [button('↩️ К вакансии',back)],
   ]];
 }
