@@ -128,3 +128,20 @@ test('each staff role sees publish on its own pending review and the decision is
   await reviewNoticeTick(f.store,f.api);assert.equal(f.api.sent.filter(p=>p.chat_id===uid&&p.text.includes('опубликован')).length,1);
  }
 });
+test('compact moderation pages expose all pending reviews and public image pages contain one review',async()=>{
+ const f=await seed(),created=[];
+ for(let uid=10;uid<17;uid++){await f.store.ensure(uid,uid);created.push(await add(f,uid,(uid%5)+1));}
+ const seen=new Set();
+ for(let page=0;page<3;page++){
+  await handle(f,callback(2,`admin:ratings:pending:${page}`));
+  const buttons=last(f).reply_markup.inline_keyboard.flat();
+  const reviews=buttons.filter(b=>b.callback_data?.startsWith('admin:ratings:view:'));
+  assert.equal(reviews.length,page===2?1:3);reviews.forEach(b=>seen.add(b.callback_data));
+  assert.equal(buttons.some(b=>b.callback_data===`admin:ratings:pending:${page+1}`),page<2);
+ }
+ assert.equal(seen.size,7);
+ for(const review of created)assert(await decideReview(bot(f,2),review.key,review.version,'published'));
+ await handle(f,callback(78,'ratings:1:list:2'));assert.match(last(f).text,/Отзыв 3 из 7/);
+ assert.equal((last(f).text.match(/[★☆]{5}/g)||[]).length,1);
+ assert(!last(f).text.includes('VerifiedActor'));
+});

@@ -97,7 +97,7 @@ test('old anchors, hiding a copy, future reposts, unique hidden count and restor
   await handle(f,callback(1,'view:2:0:hide:f')); assert(f.api.edited.at(-1).text.includes('Подходящих вакансий нет'));
   await f.store.putJob(copy(3),true);
   await handle(f,callback(1,'job:3:full')); assert(f.api.edited.at(-1).text.includes('Вакансия скрыта'));
-  await f.store.patch(1,{hidden_jobs:[1,2]}); await handle(f,callback(1,'menu')); assert(f.api.edited.at(-1).text.includes('Скрытые вакансии: 1'));
+  await f.store.patch(1,{hidden_jobs:[1,2]}); await handle(f,callback(1,'library')); assert(f.api.edited.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.text==='🙈 Скрытые · 1'));
   await handle(f,callback(1,'hidden:0')); assert(f.api.edited.at(-1).text.includes('Скрытые вакансии · 1'));
   await handle(f,callback(1,'restore:3:0')); assert.deepEqual((await f.store.user(1)).settings.hidden_jobs,[]);
   await handle(f,callback(1,'search:0')); assert(f.api.edited.at(-1).text.includes('1 из 1'));
@@ -110,6 +110,7 @@ test('notification baseline suppresses reposts of the old catalog; sent and unce
   await f.store.putJob(copy(2),true); assert.equal((await notifyOne(f.store,f.api,1)).sent,0);
   await f.store.putJob(opening(3,{title:'Пекарь'}),true); assert.equal((await notifyOne(f.store,f.api,1)).sent,1);
   await f.store.putJob(copy(4,{title:'Пекарь'}),true); assert.equal((await notifyOne(f.store,f.api,1)).sent,0);
+ await f.db.run("UPDATE sjc_deliveries SET payload=json_set(payload,'$.delivered_at','2000-01-01T00:00:00.000Z')");
   await f.store.putJob(opening(5,{title:'Бариста'}),true); f.api.sendMessage=async()=>{throw new Error('timeout');};
   assert.equal((await notifyOne(f.store,f.api,1)).uncertain,true);
   await f.store.putJob(copy(6,{title:'Бариста'}),true); assert.equal((await notifyOne(f.store,f.api,1)).sent,0);
@@ -126,7 +127,7 @@ test('pre-existing historical delivery or hide of either copy suppresses the gro
 
 test('old daily-hour input redirects to instant notifications; expired cards and maps are clear', async () => {
   const f=await fixture(); await handle(f,message(1,'/start'));
-  await handle(f,callback(1,'input:hour')); assert(f.api.edited.at(-1).text.includes('после обнаружения'));
+  await handle(f,callback(1,'input:hour')); assert(f.api.edited.at(-1).text.includes('одно сообщение'));
   assert.equal((await f.store.user(1)).settings.pending_input,null);
   await f.store.patch(1,{pending_input:'hour'}); await handle(f,message(1,'10'));
   assert.equal((await f.store.user(1)).settings.pending_input,null);
@@ -142,7 +143,7 @@ test('all current menu/card/filter callbacks produce a usable response; translat
   f.fetch=async()=>({ok:true,json:async()=>[[['Переведённый текст']]]});
   const queue=['menu','notifications','delete'], seen=new Set();
   while(queue.length) {
-    const action=queue.shift(); if(seen.has(action)) continue; seen.add(action);
+    const action=queue.shift(),route=action.replace(/:[a-z0-9]{8}(?=:|$)/g,':TOKEN'); if(seen.has(route)) continue; seen.add(route);
     const before=f.api.edited.length+f.api.sent.length;
     // Explore every route independently; burst quotas have dedicated security tests.
     await f.db.run("DELETE FROM sjc_records WHERE kind='rate'");

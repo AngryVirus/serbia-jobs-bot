@@ -3,7 +3,7 @@ import { positive } from './store.js';
 import { button, safe } from './ui.js';
 import { imageHash, renderImage } from './image-renderer.js';
 import { deliveryForbidden } from './analytics.js';
-const BACK=[[button('🚫 Баны','admin:bans:0')],[button('📊 Админка','admin')]];
+const BACK=[[button('⬅️ Блокировки','admin:bans:0')]];
 const CONTACT={text:'💬 Связаться с @AngryVirus',url:'https://t.me/AngryVirus'};
 
 const active=row=>row && row.active!==false;
@@ -167,5 +167,5 @@ export async function banPanel(bot,action) {
  const rows=await bot.store.db.all('SELECT record_key,payload FROM sjc_records WHERE '+where+' ORDER BY record_key LIMIT 5 OFFSET :offset',{':offset':page*5});
  const controls=rows.map(r=>[button(`Разбанить ${JSON.parse(r.payload).target_username?'@'+JSON.parse(r.payload).target_username:r.record_key}`,`admin:bans:remove:${r.record_key}:${banVersion(JSON.parse(r.payload))}`)]),nav=[];
  if(page)nav.push(button('⬅️',`admin:bans:${page-1}`));if((page+1)*5<total)nav.push(button('➡️',`admin:bans:${page+1}`));
- return bot.panel(`<b>🚫 Баны пользователей</b>\n\nВсего: ${total}\n\n${rows.map(r=>r.record_key+(JSON.parse(r.payload).target_username?' · @'+safe(JSON.parse(r.payload).target_username,32):'')+' · '+safe(JSON.parse(r.payload).reason||'Причина не указана',90)).join('\n')||'Список пуст.'}\n\nО блокировке и разблокировке отправляется одно уведомление картинкой. Остальные обращения забаненных игнорируются. Удаление профиля не снимает бан.`,[[button('➕ Забанить по ID / @','admin:bans:new')],...controls,...(nav.length?[nav]:[]),[button('🔄 Обновить',`admin:bans:${page}`)],[button('📊 Админка','admin')]]);
+ return bot.panel(`<b>🚫 Баны пользователей</b>\n\nВсего: ${total}\n\n${rows.map(r=>r.record_key+(JSON.parse(r.payload).target_username?' · @'+safe(JSON.parse(r.payload).target_username,32):'')+' · '+safe(JSON.parse(r.payload).reason||'Причина не указана',90)).join('\n')||'Список пуст.'}\n\nО блокировке и разблокировке отправляется одно уведомление картинкой. Остальные обращения забаненных игнорируются. Удаление профиля не снимает бан.`,[[button('➕ Забанить по ID / @','admin:bans:new')],...controls,...(nav.length?[nav]:[]),[button('⬅️ Пользователи',role==='owner'?'admin:users':'admin:staffusers')]]);
 }

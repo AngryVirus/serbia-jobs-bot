@@ -55,6 +55,9 @@ export async function notifyOne(store, api, uid, catalog) {
     if (!user) return { sent: 0, done: true };
     let plans=notificationPlans(user.settings);
     if(!plans.length)return {sent:0,done:true};
+    // A new source or worker restart must not turn a collection into many messages.
+    const recent=await store.db.get("SELECT 1 AS n FROM sjc_deliveries WHERE user_id=:uid AND json_extract(payload,'$.digest') IS NOT NULL AND json_extract(payload,'$.delivered_at')>:since LIMIT 1",{':uid':uid,':since':new Date(Date.now()-3600000).toISOString()});
+    if(recent)return {sent:0,done:true,deferred:true};
     const uninitialized=plans.filter(plan=>plan.after_id==null);
     if(uninitialized.length){
       const baseline=await store.latest(),patch={};
@@ -73,37 +76,40 @@ export async function notifyOne(store, api, uid, catalog) {
       const groupId=Math.min(...j._duplicate_ids),existing=eligible.get(groupId);
       if(existing)existing.plans.push(plan);else eligible.set(groupId,{job:j,plans:[plan]});
     }
-    const next=[...eligible.entries()].sort((a,b)=>a[0]-b[0])[0]?.[1];
-    if(!next)return {sent:0,done:true};
-    const j=next.job,prefix=next.plans.some(plan=>plan.id==='main')?'':`<i>🔔 Поиск: ${next.plans.map(plan=>safe(plan.name||'Сохранённый поиск',40)).join(' · ')}</i>\n\n`;
-    // A catalog is shared only within one bounded batch. Moderation remains fresh.
-    const moderated=await store.db.get("SELECT 1 AS blocked FROM sjc_records,json_each(sjc_records.payload,'$.ids') AS ids WHERE kind='moderation' AND json_extract(sjc_records.payload,'$.blocked')=1 AND ids.value IN (SELECT value FROM json_each(:ids)) LIMIT 1",{':ids':JSON.stringify(j._duplicate_ids)});
-    if(moderated)return {sent:0,done:false};
-    const params = { ':uid': uid, ':jid': j.id }, payload = { user_id: uid, job_id: j.id, delivered_at: new Date().toISOString() };
-    const result = await store.db.run("INSERT INTO sjc_deliveries(user_id,job_id,state,payload) VALUES(:uid,:jid,'sending',:payload) ON CONFLICT(user_id,job_id) DO NOTHING", { ...params, ':payload': JSON.stringify(payload) });
-    if (result.rowsAffected !== 1) return { sent: 0 };
+    const selected=[...eligible.values()].slice(0,500).map(({job:j})=>({id:j.id,ids:j._duplicate_ids}));
+    if(!selected.length)return {sent:0,done:true};
+    const token=Date.now().toString(36)+Math.random().toString(36).slice(2,10),at=new Date().toISOString();
+    // Claim the whole digest atomically, under the same user lease as settings.
+    // Recheck moderation after loading the shared catalog. Unknown sends remain claimed.
+    const result=await store.db.run(`INSERT INTO sjc_deliveries(user_id,job_id,state,payload)
+      SELECT :uid,json_extract(j.value,'$.id'),'sending',json_object('user_id',:uid,'job_id',json_extract(j.value,'$.id'),'delivered_at',:at,'digest',:token)
+      FROM json_each(:jobs) j
+      WHERE EXISTS(SELECT 1 FROM sjc_locks WHERE key=:lock AND owner=:owner AND expires>:now)
+      AND NOT EXISTS(SELECT 1 FROM sjc_records m,json_each(m.payload,'$.ids') ids WHERE m.kind='moderation' AND json_extract(m.payload,'$.blocked')=1 AND ids.value IN (SELECT value FROM json_each(j.value,'$.ids')))
+      ON CONFLICT(user_id,job_id) DO NOTHING`,{':uid':uid,':at':at,':token':token,':jobs':JSON.stringify(selected),':lock':key,':owner':owner,':now':Date.now()});
+    if(!result.rowsAffected)return {sent:0,done:true};
+    const params={':uid':uid,':token':token},where="user_id=:uid AND json_extract(payload,'$.digest')=:token";
     try {
-      const message = await api.sendMessage({ chat_id: user.chat_id, text: prefix+card({...j,_rating:await ratingSummary(store,j._duplicate_ids||[j.id])}), parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: { inline_keyboard: jobButtons(j) } });
-      assert(positive(message?.message_id), 'Unconfirmed delivery');
-      await store.db.run("UPDATE sjc_deliveries SET state='sent' WHERE user_id=:uid AND job_id=:jid", params);
-      await store.db.run("UPDATE sjc_users SET payload=json_set(payload,'$.last_notified_at',:at) WHERE id=:uid",{':uid':uid,':at':payload.delivered_at});
-      return { sent: 1 };
-    } catch (error) {
-      if (error.code === 429) {
-        await store.db.run('DELETE FROM sjc_deliveries WHERE user_id=:uid AND job_id=:jid',params);
-        const retry = Math.min(3600, Math.max(5, Number(error.parameters?.retry_after) || 60));
+      const message=await api.sendMessage({chat_id:user.chat_id,text:`🔔 Найдены новые вакансии: ${result.rowsAffected}.\n\nОткройте подборку, когда вам удобно.`,reply_markup:{inline_keyboard:[[{text:'🔎 Посмотреть',callback_data:'notice:'+token}],[{text:'🔕 Отключить уведомления',callback_data:'notify:stop'}]]}});
+      assert(positive(message?.message_id),'Unconfirmed delivery');
+      await store.db.run("UPDATE sjc_deliveries SET state='sent' WHERE "+where,params);
+      await store.db.run("UPDATE sjc_users SET payload=json_set(payload,'$.last_notified_at',:at) WHERE id=:uid",{':uid':uid,':at':at});
+      return {sent:1,done:eligible.size<=500};
+    } catch(error) {
+      if(error.code===429){
+        await store.db.run('DELETE FROM sjc_deliveries WHERE '+where,params);
+        const retry=Math.min(3600,Math.max(5,Number(error.parameters?.retry_after)||60));
         await store.setMeta('notification_cooldown',Date.now()+retry*1000);
-        return { sent: 0, retry_after: retry };
+        return {sent:0,retry_after:retry};
       }
-      if (error.code === 403) {
+      if(error.code===403){
         await deliveryForbidden(store,uid,error);
-        await store.patch(uid, { notifications: 'off',saved_searches:savedSearches(user.settings).map(saved=>({...saved,notifications:'off'})) });
-        await store.db.run("UPDATE sjc_deliveries SET state='blocked' WHERE user_id=:uid AND job_id=:jid",params);
-        return { sent: 0, done: true, blocked: true };
+        await store.patch(uid,{notifications:'off',saved_searches:savedSearches(user.settings).map(saved=>({...saved,notifications:'off'}))});
+        await store.db.run("UPDATE sjc_deliveries SET state='blocked' WHERE "+where,params);
+        return {sent:0,done:true,blocked:true};
       }
-      // A timeout may follow a successful send. Never automatically resend it.
-      await store.db.run("UPDATE sjc_deliveries SET state='uncertain' WHERE user_id=:uid AND job_id=:jid",params);
-      return { sent: 0, uncertain: true };
+      await store.db.run("UPDATE sjc_deliveries SET state='uncertain' WHERE "+where,params);
+      return {sent:0,uncertain:true,done:eligible.size<=500};
     }
   } finally { await store.unlock(key,owner); }
 }
@@ -141,7 +147,7 @@ export async function administer(input, ctx, deps) {
     assert(typeof deps.InputFile==='function','Runtime image upload unsupported');
     const s=settings((await store.user(OWNER_ID))?.settings),start=Date.now(),panels=[menu(s)[0],filtersPanel(s)[0],choicePanel(s,'city')[0]];
     const sizes=panels.map(text=>{const image=renderImage(text);assert(image.bytes.length<10000000 && image.width+image.height<=10000,'Image exceeds Telegram limits');return {width:image.width,height:image.height,bytes:image.bytes.length,icons:image.icons};});
-    return {rendered:sizes.length,elapsed_ms:Date.now()-start,images:sizes};
+    return {rendered:sizes.length,elapsed_ms:Date.now()-start,images:sizes,home_buttons:menu(s)[1].flat().length,filter_buttons:filtersPanel(s)[1].flat().length};
   }
   if(op==='menu_image_preview') {
     assert(typeof deps.InputFile==='function','Runtime image upload unsupported');
@@ -272,7 +278,7 @@ export async function administer(input, ctx, deps) {
       const bot=new Bot(deps);bot.uid=OWNER_ID;bot.chat=OWNER_ID;bot.s=settings((await store.ensure(OWNER_ID,OWNER_ID)).settings);bot.mid=null;bot.isPhoto=false;
       await bot.home();return {sent:1};
     }
-    const s = settings((await store.user(340780041))?.settings), [text, rows] = menu(s, hiddenGroups(groupJobs(await store.jobs()), s).length);
+    const s = settings((await store.user(340780041))?.settings), [text, rows] = menu(s);
     await deps.api.sendMessage({ chat_id: 340780041, text: '<i>Проверка переноса в Telegram Serverless</i>\n\n'+text, parse_mode: 'HTML', reply_markup: { inline_keyboard: rows } });
     return { sent: 1 };
   }

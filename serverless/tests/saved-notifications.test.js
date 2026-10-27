@@ -10,17 +10,18 @@ const saved=(id,filters={},extra={})=>({id,name:`Поиск ${id}`,filters:snaps
 async function subscribe(f,plans,fields={},uid=1){await f.store.ensure(uid,uid);await f.store.patch(uid,{notifications:'off',saved_searches:plans,...fields});}
 const cli=(f,operation,fields={})=>administer({operation,...fields},{ownerRun:true},f);
 
-test('three saved searches deliver independently while main notifications and unrelated current filters are off',async()=>{
+test('three saved searches are combined in one digest while main notifications and unrelated current filters are off',async()=>{
  const f=await fixture();
  await subscribe(f,[saved('cook',{keywords:['повар'],city:['belgrade']}),saved('waiter',{keywords:['официант'],city:['novi_sad']}),saved('remote',{remote:['only']})],{keywords:['несуществующее'],city:['nis']});
  await f.store.putJob(job(1),true);
  await f.store.putJob(job(2,{title:'Официант',description:'Нужен официант.',location:'Novi Sad'}),true);
  await f.store.putJob(job(3,{title:'Разработчик',description:'Разработка приложений.',remote:true}),true);
  await f.store.putJob(job(4,{title:'Водитель',description:'Грузовые перевозки.'}),true);
- for(let i=0;i<3;i++)assert.equal((await notifyOne(f.store,f.api,1)).sent,1);
+ assert.equal((await notifyOne(f.store,f.api,1)).sent,1);
  assert.equal((await notifyOne(f.store,f.api,1)).done,true);
- assert.equal(f.api.sent.length,3);
- assert.match(f.api.sent[0].text,/Поиск cook/);assert.match(f.api.sent[1].text,/Поиск waiter/);assert.match(f.api.sent[2].text,/Поиск remote/);
+ assert.equal(f.api.sent.length,1);
+ assert.match(f.api.sent[0].text,/Найдены новые вакансии: 3/);
+ assert.deepEqual((await f.db.all('SELECT job_id FROM sjc_deliveries ORDER BY job_id')).map(r=>r.job_id),[1,2,3]);
  assert.equal((await f.store.user(1)).settings.notifications,'off');
 });
 
@@ -30,6 +31,7 @@ test('initializing a saved baseline skips history only for that plan and retains
  assert.equal((await notifyOne(f.store,f.api,1)).sent,1);
  let s=(await f.store.user(1)).settings;assert.equal(s.saved_searches[0].notifications_after_id,10);assert.equal(s.notifications_after_id,0);
  await f.store.patch(1,{notifications:'off'});assert.equal((await notifyOne(f.store,f.api,1)).sent,0);
+ await f.db.run("UPDATE sjc_deliveries SET payload=json_set(payload,'$.delivered_at','2000-01-01T00:00:00.000Z')");
  await f.store.putJob(job(11,{title:'Другая вакансия'}),true);assert.equal((await notifyOne(f.store,f.api,1)).sent,1);
  s=(await f.store.user(1)).settings;assert.equal(s.saved_searches[0].notifications_after_id,10);
 });
@@ -42,13 +44,13 @@ test('initializing a main baseline does not swallow a ready saved search and mis
  assert.equal((await notifyOne(new Store(f.db),f.api,1)).sent,0);
 });
 
-test('overlapping searches matching different copies send one group and escape saved names',async()=>{
+test('overlapping searches matching different copies send one digest without exposing saved names',async()=>{
  const f=await fixture();await subscribe(f,[saved('b',{city:['belgrade']},{name:'<Белград & работа>'}),saved('n',{city:['novi_sad']})]);
  const url='https://radim.rs/jobs/777';
  await f.store.putJob(job(1,{url,source:'radim'}),true);
  await f.store.putJob(job(2,{url:'https://t.me/radim_serbia/777',source:'tg_radim_serbia',location:'Novi Sad',description:`Подробнее и откликнуться: ${url}`}),true);
  assert.equal((await notifyOne(f.store,f.api,1)).sent,1);
- assert.match(f.api.sent[0].text,/&lt;Белград &amp; работа&gt;/);assert.match(f.api.sent[0].text,/Поиск n/);
+ assert.match(f.api.sent[0].text,/Найдены новые вакансии: 1/);assert(!f.api.sent[0].text.includes('Белград'));
  assert.equal((await notifyOne(f.store,f.api,1)).sent,0);
  const rows=await f.db.all('SELECT job_id,state FROM sjc_deliveries');assert.equal(rows.length,1);assert.equal(rows[0].state,'sent');
 });
@@ -94,6 +96,7 @@ test('parallel saved delivery, retry_after and ambiguous failures preserve globa
  await f.store.setMeta('notification_cooldown',0);
  const retried=await Promise.all([notifyOne(f.store,f.api,1),notifyOne(new Store(f.db),f.api,1)]);
  assert.equal(retried.reduce((n,result)=>n+result.sent,0),1);assert.equal(sends,1);
+ await f.db.run("UPDATE sjc_deliveries SET payload=json_set(payload,'$.delivered_at','2000-01-01T00:00:00.000Z')");
  await f.store.putJob(job(2,{title:'Другая вакансия'}),true);f.api.sendMessage=async()=>{sends++;throw new Error('timeout after Telegram accepted message');};
  assert.equal((await notifyOne(f.store,f.api,1)).uncertain,true);
  assert.equal((await notifyOne(new Store(f.db),f.api,1)).sent,0);assert.equal(sends,2);

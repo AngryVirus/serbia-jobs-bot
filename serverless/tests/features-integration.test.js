@@ -9,8 +9,8 @@ async function save(f,name){await handle(f,callback(1,'plans'));await handle(f,c
 
 test('ordinary entry stays simple and saving a named search survives a failed response without duplication',async()=>{
  const f=await fixture();await handle(f,message(1,'/start'));
- assert.equal(f.api.sent.at(-1).reply_markup.inline_keyboard.flat().length,5);assert(!JSON.stringify(f.api.sent.at(-1)).includes('plans'));
- await f.store.patch(1,{keywords:['повар']});await handle(f,callback(1,'filters'));assert(buttons(f).some(b=>b.callback_data==='plans'));
+ assert.equal(f.api.sent.at(-1).reply_markup.inline_keyboard.flat().length,4);assert(!JSON.stringify(f.api.sent.at(-1)).includes('plans'));
+ await f.store.patch(1,{keywords:['повар']});await handle(f,callback(1,'library'));assert(buttons(f).some(b=>b.callback_data==='plans'));
  await handle(f,callback(1,'plans'));await handle(f,callback(1,'plans:create'));
  const update=message(1,'Кухня Белграда'),send=f.api.sendMessage;let fail=true;
  f.api.sendMessage=async p=>{if(fail&&p.chat_id===1&&p.text.includes('Кухня Белграда')){fail=false;throw {code:429};}return send(p);};
@@ -26,7 +26,7 @@ test('saved result news and complaint navigation keep the saved scope independen
  await handle(f,callback(1,'search:0'));assert.match(panel(f).text,/Водитель/);
  await f.store.putJob(job(3,{title:'Повар новой кухни'}),true);await f.store.putJob(job(4,{title:'Водитель новой смены',description:'Нужен водитель для доставки'}),true);
  await handle(f,callback(1,`plans:open:${plan.id}`));await handle(f,callback(1,action(f,'С прошлого просмотра')));assert.match(panel(f).text,/Повар новой кухни/);assert.match(panel(f).text,/Новое с прошлого просмотра/);
- await handle(f,callback(1,action(f,'Ещё')));const report=action(f,'Пожаловаться');assert.match(report,/:s:[a-z0-9]{8}$/);
+ await handle(f,callback(1,action(f,'Действия')));await handle(f,callback(1,action(f,'Проблема')));const report=action(f,'Пожаловаться');assert.match(report,/:s:[a-z0-9]{8}$/);
  const token=report.split(':').at(-1);await handle(f,callback(1,report));assert(buttons(f).some(b=>b.callback_data.startsWith(`discover:${token}:`)));
  await handle(f,callback(1,buttons(f).find(b=>b.callback_data.includes(':outdated:')).callback_data));
  const proceed=action(f,'Продолжить поиск');assert(proceed.startsWith(`discover:${token}:`));await handle(f,callback(1,proceed));assert.match(panel(f).text,/Новых вакансий с прошлого просмотра нет/);
@@ -35,7 +35,7 @@ test('saved result news and complaint navigation keep the saved scope independen
 
 test('leaving deletion confirmation invalidates it, and deleted searches cannot reopen from old result buttons',async()=>{
  const f=await fixture();await handle(f,message(1,'/start'));await f.store.putJob(job(1),true);const plan=await save(f,'Работа');
- await handle(f,callback(1,`plans:open:${plan.id}`));const old=action(f,'Ещё');
+ await handle(f,callback(1,`plans:open:${plan.id}`));const old=action(f,'Действия');
  await handle(f,callback(1,`plans:delete:${plan.id}`));let confirm=action(f,'Подтвердить');await handle(f,callback(1,'menu'));await handle(f,callback(1,confirm));assert.equal(savedSearches((await f.store.user(1)).settings).length,1);
  await handle(f,callback(1,`plans:delete:${plan.id}`));confirm=action(f,'Подтвердить');await handle(f,callback(1,confirm));assert.equal(savedSearches((await f.store.user(1)).settings).length,0);
  await handle(f,callback(1,old));assert.match(panel(f).text,/подборка устарела/);

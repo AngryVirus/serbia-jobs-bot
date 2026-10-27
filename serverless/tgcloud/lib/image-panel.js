@@ -39,8 +39,8 @@ export async function imagePanel(bot,text,rows,mid) {
   // Bound both lifetime and count. Never store the rendered text or a plaintext image.
   await bot.store.db.run("DELETE FROM sjc_records WHERE kind='menu_image' AND record_key LIKE :prefix AND (json_extract(payload,'$.expires')<=:now OR record_key NOT IN (SELECT record_key FROM sjc_records WHERE kind='menu_image' AND record_key LIKE :prefix ORDER BY json_extract(payload,'$.created_at') DESC,record_key DESC LIMIT 30))",{':prefix':bot.uid+':%',':now':now});
  }
- if(mid && message.message_id!==mid)await removeOld(bot,mid);
  await remember(bot,message.message_id,'photo');
+ for(const old of new Set([mid,bot.previousPanelId]))if(old!==message.message_id)await removeOld(bot,old);
 }
 export async function textPanel(bot,text,rows,mid) {
  const params={chat_id:bot.chat,text,parse_mode:'HTML',reply_markup:{inline_keyboard:rows},link_preview_options:{is_disabled:true}};
@@ -50,6 +50,6 @@ export async function textPanel(bot,text,rows,mid) {
  }
  const message=await bot.api.sendMessage(params);
  if(!positive(message?.message_id))throw Error('Unconfirmed text panel');
- if(mid && bot.isPhoto)await removeOld(bot,mid);
  await remember(bot,message.message_id,'text');
+ for(const old of new Set([mid,bot.previousPanelId]))if(old!==message.message_id)await removeOld(bot,old);
 }

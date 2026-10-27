@@ -14,14 +14,17 @@ import { positive } from './store.js';
 export { OWNER_ID } from './permissions.js';
 export const REASONS = { not_job: 'Не вакансия / реклама', duplicate: 'Повтор объявления', outdated: 'Набор закрыт / устарело' };
 const SOURCE_PAGE=4;
-const OWNER_BACK = [[button('⬅️ Отчёт владельца', 'admin')], [button('🏠 Главное меню', 'menu')]];
-const OWNER_HOME = [[button('📋 Вакансии','admin:vacancies')],[button('👥 Пользователи','admin:users')],[button('🛡 Команда','admin:staff')],[button('📡 Сбор вакансий','admin:collection')],[button('📣 Реклама','ads')],[button('🔄 Обновить отчёт','admin:refresh')],[button('🏠 Главное меню','menu')]];
+const OWNER_BACK = [[button('⬅️ Панель управления','admin')]];
+const OWNER_HOME = [[button('📝 Проверить','admin:vacancies')],[button('👥 Люди','admin:users')],[button('⚙️ Управление','admin:manage')],[button('⬅️ Главное меню','menu')]];
 const OWNER_SECTIONS = {
-  'admin:vacancies': ['<b>📋 Вакансии</b>\n\nРассматривайте жалобы на объявления. Снятые вами вакансии можно вернуть в общую выдачу.', [[button('⭐ Отзывы','admin:ratings:pending:0')],[button('🚩 Жалобы','admin:reports:0')],[button('🙈 Снятые вакансии','admin:blocked:0')]]],
-  'admin:users': ['<b>👥 Пользователи</b>\n\nВыберите человека в списке, посмотрите статистику или откройте действующие блокировки.', [[button('🔎 Список пользователей','admin:people:0')],[button('📈 Статистика пользователей','admin:stats')],[button('🚫 Блокировки','admin:bans:0')]]],
-  'admin:staff': ['<b>🛡 Команда</b>\n\nНазначайте администраторов и модераторов. В журнале — блокировки и изменения прав за последние 10 дней.', [[button('👥 Состав команды','admin:team:0')],[button('📋 Действия команды','admin:audit:0')]]],
-  'admin:collection': ['<b>📡 Сбор вакансий</b>\n\nПроверяйте состояние автоматического сбора, источников и базы вакансий. Отчёты показывают сохранённые данные.', [[button('⚠️ Проблемы источников','admin:sources:0')],[button('📡 Все источники','admin:quality:sources:0')],[button('📥 Предложения источников','admin:ideas:pending:0')],[button('🧹 Проверка базы','admin:quality')],[button('📋 Подробный отчёт','admin:details')]]]
+  'admin:vacancies': ['<b>Проверить</b>\n\nРассмотрите отзывы и жалобы. Снятые вакансии можно вернуть после проверки.', [[button('⭐ Отзывы','admin:ratings:pending:0')],[button('🚩 Жалобы','admin:reports:0')],[button('🙈 Снятые вакансии','admin:blocked:0')]]],
+  'admin:users': ['<b>Люди</b>\n\nПользователи, блокировки и сотрудники бота.', [[button('👤 Пользователи','admin:people:0'),button('🚫 Блокировки','admin:bans:0')],[button('🛡 Команда','admin:staff'),button('📈 Статистика','admin:stats')]]],
+  'admin:staff': ['<b>Команда</b>\n\nНазначайте сотрудников и проверяйте их действия. История хранится 10 дней.', [[button('👥 Состав команды','admin:team:0')],[button('📋 Действия команды','admin:audit:0')]]],
+  'admin:manage': ['<b>Управление</b>\n\nПроверьте работу бота, обновление вакансий или откройте рекламные рассылки.',[[button('📊 Состояние бота','admin:status')],[button('📡 Сбор вакансий','admin:collection')],[button('📣 Реклама','ads')]]],
+  'admin:collection': ['<b>Сбор вакансий</b>\n\nСостояние источников и запрос внепланового сбора. Данные показывают последнюю завершённую проверку.',[[button('⚠️ Проблемы источников','admin:sources:0')],[button('📡 Все источники','admin:quality:sources:0')],[button('🔧 Диагностика','admin:diagnostics')]]],
+  'admin:diagnostics': ['<b>Диагностика</b>\n\nПодробные сведения о базе и источниках.',[[button('📥 Предложения источников','admin:ideas:pending:0')],[button('🔎 Проверка базы','admin:quality')],[button('📋 Подробный отчёт','admin:details')]]],
 };
+const sectionBack=action=>[[button('⬅️ Назад',({'admin:staff':'admin:users','admin:manage':'admin','admin:collection':'admin:manage','admin:diagnostics':'admin:collection'})[action]||'admin')]];
 const date = (value,seconds=false) => Number.isFinite(Date.parse(value)) ? new Date(Date.parse(value)+belgradeOffset(Date.parse(value))).toISOString().replace('T',' ').slice(0,seconds?19:16) + ' (Белград)' : 'нет данных';
 const STATES = { ok:'работает', empty:'нет подходящих объявлений', partial:'частичный сбор', blocked:'доступ заблокирован', robots_disallowed:'автосбор запрещён', unsupported:'нет доступной ленты', requires_permission:'нужно разрешение', excluded:'не подходит название канала', error:'ошибка', unknown:'не проверен' };
 const REPORT_GROUP="(json_extract(payload,'$.job_id') IN (SELECT value FROM json_each(:ids)) OR json_extract(payload,'$.group_id') IN (SELECT value FROM json_each(:ids)))";
@@ -187,9 +190,14 @@ export async function ownerRoute(bot, action, prepared = null) {
     const [text,rows]=OWNER_SECTIONS[action];
     if(action==='admin:collection') {
       const wake=await wakeStatus(bot.store);
-      return bot.panel(text+'\n\nРезервный запуск из бота: '+(wake.enabled?'подключён.':'не подключён.')+(wake.state==='denied'?'\n⚠️ Требуется проверить доступ к GitHub.':''),[...(wake.enabled?[[button('▶️ Запросить сбор сейчас','admin:collection:wake')]]:[]),...rows,...OWNER_BACK]);
+      return bot.panel(text+'\n\nРезервный запуск из бота: '+(wake.enabled?'подключён.':'не подключён.')+(wake.state==='denied'?'\n⚠️ Требуется проверить доступ к GitHub.':''),[...(wake.enabled?[[button('▶️ Запросить сбор сейчас','admin:collection:wake')]]:[]),...rows,...sectionBack(action)]);
     }
-    return bot.panel(text,[...rows,...OWNER_BACK]);
+    return bot.panel(text,[...rows,...sectionBack(action)]);
+  }
+  if(action==='admin'){
+    const pending=(await bot.store.db.get("SELECT COUNT(*) AS n FROM sjc_records WHERE kind='report' AND json_extract(payload,'$.state')='open'")).n;
+    const waiting=(await bot.store.db.get("SELECT COUNT(*) AS n FROM sjc_records WHERE kind='vacancy_review' AND json_extract(payload,'$.state')='pending'")).n;
+    return bot.panel('<b>Управление ботом</b>\n\n<b>Проверить</b> — отзывы и жалобы.\n<b>Люди</b> — пользователи и команда.\n<b>Управление</b> — состояние, сбор и реклама.\n\nНа проверке: отзывов '+waiting+', жалоб '+pending+'.',OWNER_HOME);
   }
   const data = prepared || await ownerReport(bot.store);
   const authors=/^admin:reporters:([1-9]\d{0,15}):(\d{1,6})$/.exec(action);
@@ -199,8 +207,8 @@ export async function ownerRoute(bot, action, prepared = null) {
   }
   if(action==='admin:stats' || action.startsWith('admin:stats:') || action.startsWith('admin:quality'))return analyticsPanel(bot,action,data);
   const refreshed=action==='admin:refresh'||action==='admin:details:refresh'?'✅ Отчёт обновлён из сохранённых данных.\n\n':'';
-  if (action === 'admin' || action === 'admin:refresh') return bot.panel(refreshed+data.text,OWNER_HOME);
-  if (action === 'admin:details' || action === 'admin:details:refresh') return bot.panel(refreshed+data.details,[[button('🔄 Обновить отчёт','admin:details:refresh')],...OWNER_BACK]);
+  if(action==='admin:status'||action==='admin:refresh')return bot.panel(refreshed+data.text,[[button('🔄 Обновить состояние','admin:refresh')],[button('⬅️ Управление','admin:manage')]]);
+  if (action === 'admin:details' || action === 'admin:details:refresh') return bot.panel(refreshed+data.details,[[button('🔄 Обновить отчёт','admin:details:refresh')],[button('⬅️ Диагностика','admin:diagnostics')]]);
   let m;
   if ((m=/^admin:sources:(\d+)$/.exec(action))) {
     const page=Math.min(Number(m[1]),Math.max(0,Math.ceil(data.issues.length/SOURCE_PAGE)-1));
@@ -223,7 +231,7 @@ export async function ownerRoute(bot, action, prepared = null) {
     const rows=[...links(group.members[0],false),...(!blocked&&summary.total?[[button('👤 Авторы жалоб · '+summary.total,`admin:reporters:${group.id}:0`)]]:[]), blocked ? [button('↩️ Вернуть в выдачу',`admin:restore:${group.id}`)] : [button('Убрать из выдачи',`admin:block:${group.id}`),button('Оставить',`admin:keep:${group.id}`)]];
     const route=blocked?'blocked':'reports';
     const nav=[]; if(index>0) nav.push(button('⬅️',`admin:${route}:${index-1}`)); if(index+1<groups.length) nav.push(button('➡️',`admin:${route}:${index+1}`));
-    return bot.panel(text,[...rows,...(nav.length?[nav]:[]),...OWNER_BACK],bot.mid,false);
+    return bot.panel(text,[...rows,...(nav.length?[nav]:[]),[button('⬅️ Проверить','admin:vacancies')]],bot.mid,false);
   }
   if ((m=/^admin:(block|keep|restore):([1-9]\d*)$/.exec(action))) {
     const group=data.groups.find(g=>includesId(g,Number(m[2])));

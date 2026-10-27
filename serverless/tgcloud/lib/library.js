@@ -2,7 +2,7 @@ import {ratingSummary} from './rating-data.js';
 import { defaults, hidden } from './filters.js';
 import { groupJobs, visibleJobs, includesId, hiddenGroups } from './catalog.js';
 import { button, BACK, safe, clip, card, jobButtons } from './ui.js';
-const HOME=[[button('📂 Мои вакансии','library')],...BACK];
+const HOME=[[button('⬅️ Мои вакансии','library')]];
 export async function hasFavorite(bot,job) {
  const ids=new Set(await bot.store.favoriteIds(bot.uid));
  return (job._duplicate_ids||[job.id]).some(id=>ids.has(id));
@@ -12,7 +12,7 @@ export async function libraryRoute(bot,action,catalog=null) {
  const selected=groups.filter(g=>g.members.some(j=>saved.has(j.id)));
  const present=new Set(selected.flatMap(g=>g.members.map(j=>j.id)));
  const missing=[...saved].filter(id=>!present.has(id));
- if(action==='library')return bot.panel('<b>📂 Мои вакансии</b>\n\nИзбранные — объявления, к которым хотите вернуться. Скрытые — убранные из вашего поиска и уведомлений.',[[button(`⭐ Избранные · ${selected.length+missing.length}`,'favorites:0')],[button(`🙈 Скрытые · ${hiddenGroups(groups,bot.s).length}`,'hidden:0')],...BACK]);
+ if(action==='library')return bot.panel('<b>📂 Мои вакансии</b>\n\nИзбранные — объявления, к которым хотите вернуться. Скрытые — убранные из вашего поиска и уведомлений. Сохранённые поиски — отдельные наборы условий.',[[button(`⭐ Избранные · ${selected.length+missing.length}`,'favorites:0')],[button(`🙈 Скрытые · ${hiddenGroups(groups,bot.s).length}`,'hidden:0')],[button('📂 Сохранённые поиски','plans')],...BACK]);
  let m;
  if((m=/^favorite:(add|remove):([1-9]\d*)(?::([a-z0-9]{8}):(\d{1,7}):(s|f|rs|rf))?$/.exec(action))) {
   const id=Number(m[2]);if(!Number.isSafeInteger(id))return libraryRoute(bot,'library');
@@ -38,7 +38,7 @@ export async function libraryRoute(bot,action,catalog=null) {
   const entries=[...selected.map(g=>({id:g.id,title:g.members[0].title})),...missing.map(id=>({id,title:'Объявление больше не найдено'}))].sort((a,b)=>b.id-a.id);
   const page=Math.min(Number(m[1]),Math.max(0,Math.ceil(entries.length/5)-1)),slice=entries.slice(page*5,page*5+5),rows=[];
   const lines=['<b>⭐ Избранные вакансии</b>','Сохранённые объявления доступны здесь независимо от выбранных фильтров.'];
-  if(!entries.length)lines.push('Пока пусто. В карточке вакансии откройте «Ещё» → «В избранное».');
+  if(!entries.length)lines.push('Пока пусто. В карточке вакансии откройте «Действия» → «В избранное».');
   for(const [i,e] of slice.entries()){const j=available.find(j=>j._duplicate_ids.includes(e.id));lines.push(`${page*5+i+1}. ${safe(e.title,130)}${j?'':' · недоступна'}`);rows.push([button(`📄 ${page*5+i+1}. ${clip(e.title,40)}`,`favorites:show:${e.id}`)]);}
   const nav=[];if(page)nav.push(button('⬅️',`favorites:${page-1}`));if((page+1)*5<entries.length)nav.push(button('➡️',`favorites:${page+1}`));
   return bot.panel(lines.join('\n\n'),[...rows,...(nav.length?[nav]:[]),...HOME]);

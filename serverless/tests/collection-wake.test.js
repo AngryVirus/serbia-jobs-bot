@@ -80,7 +80,7 @@ test('public callback and forged owner context cannot configure or manually trig
 test('stale search requests wake without exposing it or adding buttons to user menu',async()=>{
  const f=await enabled();await f.store.putJob(job(1),true);let calls=0;f.fetch=async()=>{assert(f.api.edited.length>0,'Search must be displayed before GitHub request');calls++;return {status:204};};
  await handle(f,callback(1,'search:0'));assert.equal(calls,1);assert.match(f.api.edited.at(-1).text,/Вакансия/);
- await handle(f,callback(1,'menu'));assert.equal(f.api.edited.at(-1).reply_markup.inline_keyboard.flat().length,5);
+ await handle(f,callback(1,'menu'));assert.equal(f.api.edited.at(-1).reply_markup.inline_keyboard.flat().length,4);
  assert(!JSON.stringify(f.api).includes(credential));
 });
 test('configuration returns a boolean only and requires explicit enable choice',async()=>{

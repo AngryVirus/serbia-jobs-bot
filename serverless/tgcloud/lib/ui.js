@@ -32,15 +32,16 @@ export function summary(s, compact = false) {
   if (s.include_unknown_salary === false || !compact) lines.push('<b>💶 Без зарплаты:</b> ' + (s.include_unknown_salary === false ? 'скрывать' : 'показывать'));
   return lines.join('\n');
 }
-export function menu(s, hiddenCount = hidden(s).size) {
-  const on = s.notifications !== 'off';
-  const plans = Array.isArray(s.saved_searches) ? s.saved_searches.slice(0,3) : [], enabled = plans.filter(p => p?.notifications && p.notifications !== 'off').length;
-  return ['<b>Работа в Сербии</b>\n\n<b>Условия поиска</b>\n<blockquote>' + summary(s, true) + '</blockquote>\n\n<b>Ваши настройки</b>\n' + (plans.length ? 'Уведомления текущего поиска: ' : 'Уведомления: ') + (on ? 'включены' : 'выключены') + (enabled ? `\nУведомления сохранённых поисков: ${enabled}` : '') + `\nСкрытые вакансии: ${hiddenCount}\n\n<i>Откройте вакансии или измените условия поиска.</i>`,
-    [[button('🔎 Найти вакансии', 'search:0')], [button('⚙️ Фильтры', 'filters'), button(on ? '🔔 Уведомления ✓' : '🔕 Уведомления —', 'notifications')], [button('📂 Мои вакансии', 'library'), button('💬 Помощь', 'help')]]];
+export function menu(s) {
+  return ['<b>Работа в Сербии</b>\n\nНайдите вакансию, настройте поиск или вернитесь к сохранённым объявлениям.\n\n<blockquote>'+summary(s,true)+'</blockquote>',
+    [[button('🔎 Найти вакансии','search:0')],[button('⚙️ Настроить поиск','filters'),button('📂 Мои вакансии','library')],[button('☰ Настройки и помощь','preferences')]]];
 }
-export function filtersPanel(s) {
-  return ['<b>Фильтры поиска</b>\n\n<blockquote>' + summary(s) + '</blockquote>\n\n<i>Условия разных параметров действуют одновременно. Выберите параметр ниже. Изменения сохраняются сразу.</i>',
-    [[button('🔎 Ключевые слова', 'input:keywords'), button('🚫 Исключения', 'input:exclusions')], [button('📍 Города', 'city'), button('💻 Формат', 'remote')], [button('🗣 Языки', 'language'), button('💶 Зарплата', 'input:salary')], [button('🕒 Возраст вакансии', 'freshness'), button('🪪 ВНЖ', 'residence_permit')], [button('💶 Без зарплаты: ' + (s.include_unknown_salary ? 'показывать' : 'скрывать'), 'toggle_salary')], [button('📂 Мои поиски', 'plans')], [button('🔎 Найти вакансии', 'search:0'),button('↩️ Сбросить', 'reset')], ...BACK]];
+export function filtersPanel(s,section='main') {
+  const back=[button('⬅️ К условиям поиска','filters')];
+  if(section==='pay')return ['<b>Оплата</b>\n\nМинимум в месяц: '+(s.min_salary!=null?safe(`${s.min_salary} ${s.currency}`,60):'любой')+'\nВакансии без указанной зарплаты: '+(s.include_unknown_salary?'показывать':'скрывать'),[[button('💶 Указать минимум','input:salary')],[button(s.include_unknown_salary?'Без зарплаты: показывать ✓':'Без зарплаты: скрывать','toggle_salary')],back]];
+  if(section==='details')return ['<b>Другие условия поиска</b>\n\n'+summary(s,true)+'\n\nВсе параметры необязательны. Условия разных параметров действуют одновременно.',[[button('🗣 Языки','language'),button('💻 Формат работы','remote')],[button('🕒 Дата публикации','freshness'),button('🪪 ВНЖ','residence_permit')],[button('🚫 Исключить слова','input:exclusions')],[button('↩️ Сбросить все условия','reset')],back]];
+  return ['<b>Настроить поиск</b>\n\nВыберите профессию и город. При необходимости добавьте зарплату и другие условия.\n\n<blockquote>'+summary(s,true)+'</blockquote>\n\nИзменения сохраняются сразу. Условия разных параметров действуют одновременно.',
+    [[button('💼 Кем работать','input:keywords'),button('📍 Город','city')],[button('💶 Зарплата','filters:pay'),button('⚙️ Другие условия','filters:details')],[button('🔎 Показать вакансии','search:0')],[button('⬅️ Главное меню','menu')]]];
 }
 export function choicePanel(s, field) {
   const values = selected(s, field), single = ['residence_permit','freshness'].includes(field);
@@ -49,7 +50,7 @@ export function choicePanel(s, field) {
   if(field==='language'&&values.includes('no_serbian'))text+='\n\nСохранён прежний фильтр: только объявления, где явно не требуется сербский. «Не важно» снимает это ограничение.';
   const choices=Object.entries(OPTIONS[field]).map(([value, title]) => button((values.includes(value) ? '✅ ' : '') + title, `choose:${field}:${value}:${!single && values.includes(value) && value !== 'any' ? 0 : 1}`));
   const rows=[]; for(let i=0;i<choices.length;i+=2) rows.push(choices.slice(i,i+2));
-  return [text, [...rows, [button('✅ Готово', 'filters'),button('🏠 Меню','menu')]]];
+  return [text, [...rows, [button('✅ Готово',field==='city'?'filters':'filters:details')]]];
 }
 export function emptyText(jobs, s) {
   const d = catalogDiagnostics(jobs, s);
@@ -74,7 +75,7 @@ export function card(j, expanded = false) {
   lines.push('🪪 ВНЖ: ' + (f.permit === true ? 'нужен' : f.permit === false ? 'не нужен' : 'не указано'));
   if (f.experience === true || f.experience === false) lines.push('🛠 Опыт: ' + (f.experience ? 'требуется' : 'можно без опыта'));
   if (f.paperwork_assistance === true || f.paperwork_assistance === false) lines.push('📄 Помощь с документами: ' + (f.paperwork_assistance ? 'указана работодателем' : 'не предоставляется'));
-  if ((j._warnings || vacancyWarnings(j)).length) lines.push('\n⚠️ В тексте есть условия, требующие осторожности. Подробнее — в «Ещё».');
+  if ((j._warnings || vacancyWarnings(j)).length) lines.push('\n⚠️ В тексте есть условия, требующие осторожности. Подробнее — «Действия» → «Проблема с вакансией».');
   lines.push('\n'+ratingLine(j._rating));
   if (j.description) lines.push('\n<blockquote>' + safe(j.description, expanded ? 1800 : 150, expanded) + '</blockquote>');
   if (j.contacts?.length) lines.push('📞 Контакты: ' + safe(j.contacts.join(' · '), expanded ? 200 : 90));
@@ -96,11 +97,11 @@ export function links(j, report = false) {
 }
 export const browserUrl = j => 'https://translate.google.com/translate?sl=auto&tl=ru&u=' + encodeURIComponent(j.url);
 export function jobButtons(j, mode = 's') {
-  return [...links(j), [button(mode.endsWith('f') ? '🔼 Свернуть' : '🔽 Подробнее', `job:${j.id}:${mode.startsWith('r') ? 'ru_' : ''}${mode.endsWith('f') ? 'short' : 'full'}`), button('☰ Ещё',`actions:${j.id}:-1:${mode}`)], [button('🔎 Вакансии', 'search:0'), button('🏠 Меню', 'menu')]];
+  return [...links(j), [button(mode.endsWith('f') ? '🔼 Свернуть' : '🔽 Подробнее', `job:${j.id}:${mode.startsWith('r') ? 'ru_' : ''}${mode.endsWith('f') ? 'short' : 'full'}`), button('☰ Действия',`actions:${j.id}:-1:${mode}`)], [button('🔎 Вакансии', 'search:0'), button('🏠 Меню', 'menu')]];
 }
 export function viewerButtons(j, index, count, mode, failed) {
   const b = (label, action) => button(label, `view:${j.id}:${index}:${action}:${mode}`);
-  const rows = [...links(j), [b(mode.endsWith('f') ? '🔼 Свернуть' : '🔽 Подробнее', 'details'), button('☰ Ещё',`actions:${j.id}:${index}:${mode}`)]];
+  const rows = [...links(j), [b(mode.endsWith('f') ? '🔼 Свернуть' : '🔽 Подробнее', 'details'), button('☰ Действия',`actions:${j.id}:${index}:${mode}`)]];
   if (failed && validUrl(j.url)) rows.push([{ text: '🌐 Перевести в браузере', url: browserUrl(j) }]);
   const nav = [];
   if (index) nav.push(b('⬅️', 'prev'));
@@ -108,18 +109,22 @@ export function viewerButtons(j, index, count, mode, failed) {
   if (nav.length) rows.push(nav);
   return rows;
 }
-export function cardActions(j, index, mode, context = null, favorite = false) {
+export function cardActions(j, index, mode, context = null, favorite = false, problem = false) {
   const standalone=index===-1;
   const scoped=action=>`discover:${context.token}:${j.id}:${index}:${action}:${mode}`;
   const back=context ? scoped('show') : standalone ? `job:${j.id}:${mode.startsWith('r')?'ru_':''}${mode.endsWith('f')?'full':'short'}` : `view:${j.id}:${index}:show:${mode}`;
   const translate=context ? scoped('translate') : standalone ? `job:${j.id}:${mode.startsWith('r')?'':'ru_'}${mode.endsWith('f')?'full':'short'}` : `view:${j.id}:${index}:translate:${mode}`;
-  return ['<b>Действия с вакансией</b>\n\n'+safe(j.title,140),[
-    [button(favorite?'🗑 Убрать из избранного':'⭐ В избранное',`favorite:${favorite?'remove':'add'}:${j.id}${context?':'+context.token+':'+index+':'+mode:''}`)],
-    [button(mode.startsWith('r')?'🌐 Оригинал':'🇷🇺 Перевести',translate),button('🙈 Скрыть',context ? scoped('hide') : standalone?`hide:${j.id}`:`view:${j.id}:${index}:hide:${mode}`)],
-    [button('🔎 Похожие',`similar:${j.id}${context?':'+context.token:''}`),button('🚩 Пожаловаться',`report:${j.id}:choose:${index}:${mode}${context?':'+context.token:''}`)],
-    ...(vacancyWarnings(j).length ? [[button('⚠️ Почему осторожнее',`risk:${j.id}${context?`:${context.token}:${index}:${mode}`:''}`)]] : []),
-    [button('⭐ Оценки и отзывы',`ratings:${j.id}:list`)],
-    [button('⚙️ Фильтры','filters'),button('🏠 Меню','menu')],
+  const actions=context?scoped('actions'):`actions:${j.id}:${index}:${mode}`;
+  if(problem)return ['<b>Проблема с вакансией</b>\n\n'+safe(j.title,100),[
+    [button('🚩 Пожаловаться',`report:${j.id}:choose:${index}:${mode}${context?':'+context.token:''}`)],
+    [button('🙈 Скрыть из моего поиска',context?scoped('hide'):standalone?`hide:${j.id}`:`view:${j.id}:${index}:hide:${mode}`)],
+    ...(vacancyWarnings(j).length?[[button('⚠️ Почему осторожнее',`risk:${j.id}${context?`:${context.token}:${index}:${mode}`:''}`)]]:[]),
+    [button('⬅️ К действиям',actions)],
+  ]];
+  return ['<b>Действия с вакансией</b>\n\n'+safe(j.title,100),[
+    [button(favorite?'⭐ Убрать из избранного':'⭐ Сохранить',`favorite:${favorite?'remove':'add'}:${j.id}${context?':'+context.token+':'+index+':'+mode:''}`),button(mode.startsWith('r')?'🌐 Оригинал':'🇷🇺 Перевести',translate)],
+    [button('⭐ Отзывы',`ratings:${j.id}:list`),button('🔎 Похожие',`similar:${j.id}${context?':'+context.token:''}`)],
+    [button('⚠️ Проблема с вакансией',context?scoped('problem'):actions+':problem')],
     [button('↩️ К вакансии',back)],
   ]];
 }

@@ -4,7 +4,7 @@ import { button, safe, summary } from './ui.js';
 
 export const MAX_SEARCHES=3;
 const ID=/^[a-z0-9]{1,12}$/;
-const BACK=[[button('⚙️ Фильтры','filters')],[button('🏠 Меню','menu')]];
+const BACK=[[button('⬅️ Мои вакансии','library')]];
 const LIST=[[button('📂 Мои поиски','plans')],...BACK];
 const counter=value=>Number.isSafeInteger(value)&&value>=0?value:null;
 const name=value=>typeof value==='string'?value.replace(/\s+/gu,' ').trim():'';

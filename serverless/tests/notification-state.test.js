@@ -5,11 +5,11 @@ import { notificationState } from '../tgcloud/lib/notification-state.js';
 import { administer,notifyOne } from '../tgcloud/lib/admin.js';
 import { OWNER_ID } from '../tgcloud/lib/permissions.js';
 
-test('opening notifications from the five-item menu does not toggle or reset a subscription',async()=>{
+test('opening notifications from the four-item menu does not toggle or reset a subscription',async()=>{
  const f=await fixture();await f.store.ensure(1,1);await f.store.patch(1,{notifications:'instant',notifications_after_id:4});
  await handle(f,callback(1,'menu'));
  const buttons=f.api.edited.at(-1).reply_markup.inline_keyboard.flat();
- assert.equal(buttons.length,5);assert(buttons.some(b=>b.callback_data==='notifications'));
+ assert.equal(buttons.length,4);assert(buttons.some(b=>b.callback_data==='preferences'));
  assert(!buttons.some(b=>b.callback_data==='notify:off'));
  await handle(f,callback(1,'notifications'));
  assert.equal((await f.store.user(1)).settings.notifications,'instant');
