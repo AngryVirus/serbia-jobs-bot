@@ -16,9 +16,9 @@ const callbacks=p=>p.reply_markup.inline_keyboard.flat().map(b=>b.callback_data)
 
 test('role-specific panels hide every unavailable owner, team and unban function',async()=>{
  const f=await fixture();await seed(f,1,'moderator');await seed(f,2,'administrator');
- await handle(f,callback(1,'admin'));assert.deepEqual(callbacks(last(f)),['admin:bans:new','menu']);
+ await handle(f,callback(1,'admin'));assert.deepEqual(callbacks(last(f)),['admin:ratings:pending:0','admin:bans:new','menu']);
  await handle(f,callback(1,'admin:bans:0'));assert(!callbacks(last(f)).some(x=>x.includes('remove')||x.includes('team')||x.includes('audit')));
- await handle(f,callback(2,'admin'));assert.deepEqual(callbacks(last(f)),['admin:bans:new','admin:bans:0','admin:team:0','menu']);
+ await handle(f,callback(2,'admin'));assert.deepEqual(callbacks(last(f)),['admin:ratings:pending:0','admin:bans:new','admin:bans:0','admin:team:0','menu']);
  await handle(f,callback(2,'admin:team:0'));assert(callbacks(last(f)).includes('admin:team:add:moderator'));assert(!JSON.stringify(last(f)).includes('admin:team:add:administrator'));
  for(const uid of [1,2])for(const action of ['admin:stats','admin:quality','admin:details','admin:reports:0','admin:audit:0','admin:vacancies','admin:users','admin:staff','admin:collection','admin:refresh','admin:details:refresh','ads']){await handle(f,callback(uid,action));assert(!callbacks(last(f)).some(x=>/^ads:(new|start)|admin:(stats|quality|reports|audit|vacancies|users|staff|collection|refresh|details)/.test(x)));}
  await handle(f,callback(OWNER_ID,'admin'));assert(callbacks(last(f)).includes('admin:staff'));

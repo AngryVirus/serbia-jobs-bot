@@ -1,3 +1,4 @@
+import {ratingsAdmin} from './ratings.js';
 import { OWNER_ID,accessRole,rawRole,roleRecord,rank,mayBan as mayBanUser,mayManage,staffDecision,nonce,ROLE_NAMES } from './permissions.js';
 import { ownerRoute } from './owner.js';
 import { banPanel,banInput,banRecord,banVersion,resolveBanUsername,moderatorSnapshot } from './bans.js';
@@ -12,8 +13,8 @@ export function roleNoticeText(before,after,by){
  else if(before==='administrator'&&after==='moderator')lines.push('Вы понижены с администратора до модератора @SerbiaJobsBot.');
  else if(after==='user')lines.push(`С вас сняты полномочия ${before==='moderator'?'модератора':'администратора'} @SerbiaJobsBot.`);
  else lines.push(`Вы назначены ${after==='moderator'?'модератором':'администратором'} @SerbiaJobsBot.`);
- if(after==='moderator')lines.push('Вы можете блокировать обычных пользователей.');
- if(after==='administrator')lines.push('Вы можете блокировать и разблокировать пользователей, назначать и снимать модераторов.');
+ if(after==='moderator')lines.push('Вы можете проверять отзывы и блокировать обычных пользователей.');
+ if(after==='administrator')lines.push('Вы можете проверять отзывы, блокировать и разблокировать пользователей, назначать и снимать модераторов.');
  lines.push(`Кто изменил права: ${by?.name||'Сотрудник'}${by?.username?' · @'+by.username:''} · ID ${by?.id}.`);
  lines.push(after==='user'?'Раздел управления командой и модерацией для вас закрыт.':'Для работы откройте панель управления кнопкой ниже.');
  return lines.join('\n\n');
@@ -58,12 +59,13 @@ async function roleDraft(bot,uid,desired,current,currentRole,username=null){
  return bot.panel(`<b>Подтвердить изменение прав?</b>\n\nПользователь: ${safe(await memberName(bot,uid),100)}\nТекущая роль: ${ROLE_NAMES[currentRole]}\nНовая роль: ${ROLE_NAMES[desired]}`,[[button('✅ Подтвердить',`admin:team:confirm:${draft.token}`)],[button('⬅️ Команда','admin:team:0')],...BACK]);
 }
 export function staffHomeDocument(role){
- if(role==='moderator')return ['<b>🛡 Модератор</b>\n\nВы можете блокировать обычных пользователей. Разблокировка и управление сотрудниками недоступны.',[[button('🚫 Забанить пользователя','admin:bans:new')],[button('🏠 Меню','menu')]]];
- return ['<b>🛡 Администратор</b>\n\nВы можете блокировать и разблокировать пользователей, назначать и снимать модераторов.',[[button('🚫 Забанить пользователя','admin:bans:new')],[button('🔓 Баны и разблокировка','admin:bans:0')],[button('👥 Модераторы','admin:team:0')],[button('🏠 Меню','menu')]]];
+ if(role==='moderator')return ['<b>🛡 Модератор</b>\n\nВы можете проверять отзывы и блокировать обычных пользователей. Разблокировка и управление сотрудниками недоступны.',[[button('⭐ Отзывы','admin:ratings:pending:0')],[button('🚫 Забанить пользователя','admin:bans:new')],[button('🏠 Меню','menu')]]];
+ return ['<b>🛡 Администратор</b>\n\nВы можете проверять отзывы, блокировать и разблокировать пользователей, назначать и снимать модераторов.',[[button('⭐ Отзывы','admin:ratings:pending:0')],[button('🚫 Забанить пользователя','admin:bans:new')],[button('🔓 Баны и разблокировка','admin:bans:0')],[button('👥 Модераторы','admin:team:0')],[button('🏠 Меню','menu')]]];
 }
 export async function staffRoute(bot,action){
  const role=await accessRole(bot);
  if(!rank(role))return bot.panel('Этот раздел доступен только владельцу бота и назначенным сотрудникам.',[[button('🏠 Меню','menu')]]);
+ if(action.startsWith('admin:ratings:'))return ratingsAdmin(bot,action);
  if(action.startsWith('admin:people:'))return usersPanel(bot,action);
  if(action.startsWith('admin:team:'))return teamPanel(bot,action);
  if(action.startsWith('admin:audit:'))return auditPanel(bot,action);
@@ -214,7 +216,7 @@ export async function auditPanel(bot,action){
  if(!bot.readOnly)await bot.store.pruneStaffAudit();
  const total=(await bot.store.db.get("SELECT COUNT(*) AS n FROM sjc_records WHERE kind='staff_audit'")).n,page=Math.min(Number(match[1]),Math.max(0,Math.ceil(total/5)-1));
  const rows=await bot.store.db.all("SELECT payload FROM sjc_records WHERE kind='staff_audit' ORDER BY json_extract(payload,'$.at') DESC,record_key DESC LIMIT 5 OFFSET :offset",{':offset':page*5});
- const names={promote:'Повышен до администратора',demote:'Понижен до модератора',ban:'Бан',unban:'Разбан',grant_moderator:'Назначен модератор',grant_administrator:'Назначен администратор',revoke_moderator:'Снят модератор',revoke_administrator:'Снят администратор'};
+ const names={review_publish:'Отзыв опубликован',review_delete:'Отзыв удалён',promote:'Повышен до администратора',demote:'Понижен до модератора',ban:'Бан',unban:'Разбан',grant_moderator:'Назначен модератор',grant_administrator:'Назначен администратор',revoke_moderator:'Снят модератор',revoke_administrator:'Снят администратор'};
  const text=rows.map(r=>{const e=JSON.parse(r.payload),stamp=Date.parse(e.at),date=new Date(stamp+belgradeOffset(stamp)).toISOString().replace('T',' ').slice(0,16);return `<b>${names[e.action]||'Действие'}</b> · ${date} (Белград)\nКто: ${safe(e.actor?.username?'@'+e.actor.username:e.actor?.name||'Сотрудник',80)} · ID ${e.actor.id} · ${ROLE_NAMES[e.actor_role]}\nПользователь: ${e.target}${e.reason?'\nПричина: '+safe(e.reason,140):''}`;}).join('\n\n');
  const nav=[];if(page)nav.push(button('⬅️',`admin:audit:${page-1}`));if((page+1)*5<total)nav.push(button('➡️',`admin:audit:${page+1}`));
  return bot.panel('<b>📋 Журнал действий команды</b>\nХранятся последние 10 дней.\n\n'+(text||'Действий пока нет.'),[...(nav.length?[nav]:[]),[button('🔄 Обновить',`admin:audit:${page}`)],...BACK]);

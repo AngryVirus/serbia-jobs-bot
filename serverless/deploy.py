@@ -5,9 +5,9 @@ from pathlib import Path
 import sys
 from cloud import call, cli, invoke, routing_identity
 
-# Reviewed predecessor: def7dd6, confirmed active in deployment 39683175216.
+# Reviewed predecessor: c86b03d, revision 34, installed and verified on 2026-10-21.
 # A later release must explicitly review and update its predecessor digest.
-PREVIOUS_DIGEST = 'c7385e25936923b9fa477f75a8e7f3655b4127658bddda85366681b63bdcb323'  # pragma: allowlist secret
+PREVIOUS_DIGEST = 'ab8c8d2c116d1671b7f5cd0124e4f9dd131061e1d7da43b60282d24e78d98919'  # pragma: allowlist secret
 
 
 def digest(modules):
@@ -26,6 +26,7 @@ def deploy():
         raise RuntimeError('Unexpected deployed code; review changes before updating')
     if {k for k in remote if k.startswith('handlers/')} != {k for k in local if k.startswith('handlers/')} or 'schema' in local:
         raise RuntimeError('This updater cannot change handlers or database schema')
+    rating_audit = invoke('ratings_check')
     image_audit = invoke('menu_image_audit')  # Rendering and InputFile support before changing live handlers.
     audit = invoke('audit')  # Run the new code read-only against the real catalog first.
     if remote != local:
@@ -44,7 +45,7 @@ def deploy():
     if not after['active']:
         raise RuntimeError('Bot is paused; inspect status')
     print(json.dumps({'deployed': True, 'modules': len(local), 'digest': digest(local), 'active': after['active'],
-                      'routing_unchanged': True, 'counts': after['counts'], 'catalog': audit, 'image_rendering': image_audit}, ensure_ascii=False))
+                      'routing_unchanged': True, 'counts': after['counts'], 'catalog': audit, 'image_rendering': image_audit, 'ratings': rating_audit}, ensure_ascii=False))
 
 
 if __name__ == '__main__':

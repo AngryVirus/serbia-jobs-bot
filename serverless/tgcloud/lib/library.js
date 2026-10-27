@@ -1,3 +1,4 @@
+import {ratingSummary} from './rating-data.js';
 import { defaults, hidden } from './filters.js';
 import { groupJobs, visibleJobs, includesId, hiddenGroups } from './catalog.js';
 import { button, BACK, safe, clip, card, jobButtons } from './ui.js';
@@ -30,6 +31,7 @@ export async function libraryRoute(bot,action,catalog=null) {
   if(!group&&!missing.includes(id))return bot.panel('Этой вакансии уже нет в вашем избранном.',HOME);
   const job=available.find(j=>j._duplicate_ids.includes(id));
   if(!job)return bot.panel('<b>⭐ Сохранённая вакансия недоступна</b>\n\nОбъявление закрыто, снято с выдачи или больше не найдено. Его можно убрать из избранного.',[[button('🗑 Убрать из избранного',`favorite:remove:${id}`)],[button('⭐ К избранным','favorites:0')],...HOME]);
+  job._rating=await ratingSummary(bot.store,job._duplicate_ids||[job.id]);
   return bot.panel('<i>⭐ Избранное'+(job._duplicate_ids.some(i=>hidden(bot.s).has(i))?' · скрыта из вашего поиска':'')+'</i>\n\n'+card(job),[[button('🗑 Убрать из избранного',`favorite:remove:${id}`)],...jobButtons(job),[button('⭐ К избранным','favorites:0')]],bot.mid,false);
  }
  if((m=/^favorites:(\d{1,6})$/.exec(action))) {

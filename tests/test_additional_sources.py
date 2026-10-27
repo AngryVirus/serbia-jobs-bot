@@ -178,7 +178,8 @@ class AdditionalSourceTests(unittest.TestCase):
         pages = {s.listing_url: listing, **{url: fixture('nsz', 'detail') for url in urls}}
         raw, accepted = {}, set()
         for _ in range(8):
-            jobs, status = collect_additional(s, FakeFetcher(pages), 8, crawl_state=raw, page_limit=1)
+            # Pagination coverage must not expire with the dated public fixture.
+            jobs, status = collect_additional(s, FakeFetcher(pages), 8, crawl_state=raw, page_limit=1, include_expired=True)
             raw = status['crawl_state']
             accepted.update(job.url for job in jobs)
         self.assertEqual(accepted, set(urls))

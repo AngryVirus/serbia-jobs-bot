@@ -1,3 +1,4 @@
+import {ratingSummary} from './rating-data.js';
 import { banPanel } from './bans.js';
 import { analyticsPanel,successfulCollection,collectionMetrics,sourceHealthy } from './analytics.js';
 import { SOURCE_NAMES } from './config.js';
@@ -16,7 +17,7 @@ const SOURCE_PAGE=4;
 const OWNER_BACK = [[button('⬅️ Отчёт владельца', 'admin')], [button('🏠 Главное меню', 'menu')]];
 const OWNER_HOME = [[button('📋 Вакансии','admin:vacancies')],[button('👥 Пользователи','admin:users')],[button('🛡 Команда','admin:staff')],[button('📡 Сбор вакансий','admin:collection')],[button('📣 Реклама','ads')],[button('🔄 Обновить отчёт','admin:refresh')],[button('🏠 Главное меню','menu')]];
 const OWNER_SECTIONS = {
-  'admin:vacancies': ['<b>📋 Вакансии</b>\n\nРассматривайте жалобы на объявления. Снятые вами вакансии можно вернуть в общую выдачу.', [[button('🚩 Жалобы','admin:reports:0')],[button('🙈 Снятые вакансии','admin:blocked:0')]]],
+  'admin:vacancies': ['<b>📋 Вакансии</b>\n\nРассматривайте жалобы на объявления. Снятые вами вакансии можно вернуть в общую выдачу.', [[button('⭐ Отзывы','admin:ratings:pending:0')],[button('🚩 Жалобы','admin:reports:0')],[button('🙈 Снятые вакансии','admin:blocked:0')]]],
   'admin:users': ['<b>👥 Пользователи</b>\n\nВыберите человека в списке, посмотрите статистику или откройте действующие блокировки.', [[button('🔎 Список пользователей','admin:people:0')],[button('📈 Статистика пользователей','admin:stats')],[button('🚫 Блокировки','admin:bans:0')]]],
   'admin:staff': ['<b>🛡 Команда</b>\n\nНазначайте администраторов и модераторов. В журнале — блокировки и изменения прав за последние 10 дней.', [[button('👥 Состав команды','admin:team:0')],[button('📋 Действия команды','admin:audit:0')]]],
   'admin:collection': ['<b>📡 Сбор вакансий</b>\n\nПроверяйте состояние автоматического сбора, источников и базы вакансий. Отчёты показывают сохранённые данные.', [[button('⚠️ Проблемы источников','admin:sources:0')],[button('📡 Все источники','admin:quality:sources:0')],[button('📥 Предложения источников','admin:ideas:pending:0')],[button('🧹 Проверка базы','admin:quality')],[button('📋 Подробный отчёт','admin:details')]]]
@@ -217,6 +218,7 @@ export async function ownerRoute(bot, action, prepared = null) {
     if(!group) return bot.panel(blocked?'Снятых с выдачи вакансий нет.':'Новых жалоб нет.',OWNER_BACK);
     const summary=await reportSummary(bot.store,group);
     const purpose=blocked?'Вакансии, снятые владельцем из общей выдачи. Можно вернуть после проверки.':'Проверьте жалобы: оставьте вакансию или снимите её из общей выдачи.';
+    group.members[0]._rating=await ratingSummary(bot.store,group.members.map(j=>j.id));
     const text=`<b>${blocked?'🙈 Снятые с выдачи':'🚩 Жалобы'} · ${index+1}/${groups.length}</b>\n${purpose}\n${safe(summary.reasons,180)}${summary.total ? ` · ${summary.total} жалоб` : ''}\n\n`+card(group.members[0],true);
     const rows=[...links(group.members[0],false),...(!blocked&&summary.total?[[button('👤 Авторы жалоб · '+summary.total,`admin:reporters:${group.id}:0`)]]:[]), blocked ? [button('↩️ Вернуть в выдачу',`admin:restore:${group.id}`)] : [button('Убрать из выдачи',`admin:block:${group.id}`),button('Оставить',`admin:keep:${group.id}`)]];
     const route=blocked?'blocked':'reports';

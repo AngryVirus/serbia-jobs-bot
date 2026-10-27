@@ -3,6 +3,7 @@ import { availabilityTarget } from './catalog.js';
 import { sourceEnabled } from './source-policy.js';
 export const TABLES = ['users', 'jobs', 'deliveries', 'favorites', 'source_status'];
 const SCHEMA = [
+
   `CREATE TABLE IF NOT EXISTS sjc_meta (key TEXT PRIMARY KEY, payload TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS sjc_users (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS sjc_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, source_key TEXT NOT NULL UNIQUE, payload TEXT NOT NULL)`,
@@ -10,6 +11,9 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS sjc_records (kind TEXT NOT NULL, record_key TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(kind,record_key))`,
   `CREATE TABLE IF NOT EXISTS sjc_locks (key TEXT PRIMARY KEY, owner TEXT NOT NULL, expires INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS sjc_updates (key TEXT PRIMARY KEY, state TEXT NOT NULL, expires INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS sjc_review_job ON sjc_records(json_extract(payload,'$.job_id'),json_extract(payload,'$.uid')) WHERE kind='vacancy_review'`,
+  `CREATE INDEX IF NOT EXISTS sjc_review_queue ON sjc_records(json_extract(payload,'$.state'),record_key) WHERE kind='vacancy_review'`,
+  `CREATE INDEX IF NOT EXISTS sjc_review_notices ON sjc_records(json_extract(payload,'$.state'),record_key) WHERE kind='review_notice'`,
   `CREATE INDEX IF NOT EXISTS sjc_updates_expires ON sjc_updates(expires)`,
   `CREATE INDEX IF NOT EXISTS sjc_rate_expires ON sjc_records(json_extract(payload,'$.end')) WHERE kind='rate'`,
   `CREATE INDEX IF NOT EXISTS sjc_input_effect_expires ON sjc_records(json_extract(payload,'$.expires')) WHERE kind='input_effect'`,
@@ -24,6 +28,7 @@ export class Store {
     await this.db.run("INSERT INTO sjc_meta(key,payload) VALUES('availability_started_at',:at) ON CONFLICT(key) DO NOTHING",{':at':JSON.stringify(new Date().toISOString())});
   }
   async pruneStaffAudit(now=Date.now()) {
+    await this.db.run("DELETE FROM sjc_records WHERE kind='review_notice' AND json_extract(payload,'$.state')!='pending' AND json_extract(payload,'$.at')<:cutoff",{':cutoff':new Date(now-10*86400000).toISOString()});
     await this.db.run("DELETE FROM sjc_records WHERE kind='staff_audit' AND julianday(json_extract(payload,'$.at'))<julianday(:cutoff)",{':cutoff':new Date(now-10*86400000).toISOString()});
   }
   async meta(key) { const row = await this.db.get('SELECT payload FROM sjc_meta WHERE key=:key', { ':key': key }); return row ? JSON.parse(row.payload) : null; }
@@ -141,6 +146,8 @@ export class Store {
     await this.db.run('DELETE FROM sjc_deliveries WHERE user_id=:id', { ':id': uid });
     await this.db.run("DELETE FROM sjc_records WHERE kind='favorites' AND record_key LIKE :prefix", { ':prefix': uid + ':' + '%' });
     await this.db.run("DELETE FROM sjc_records WHERE kind='report' AND record_key LIKE :prefix", { ':prefix': uid + ':' + '%' });
+    await this.db.run("DELETE FROM sjc_records WHERE kind='review_notice' AND (json_extract(payload,'$.uid')=:uid OR json_extract(payload,'$.key') IN (SELECT record_key FROM sjc_records WHERE kind='vacancy_review' AND json_extract(payload,'$.uid')=:uid))",{':uid':uid});
+    await this.db.run("DELETE FROM sjc_records WHERE kind='vacancy_review' AND json_extract(payload,'$.uid')=:uid",{':uid':uid});
     await this.db.run('DELETE FROM sjc_users WHERE id=:id', { ':id': uid });
     return true;
   }

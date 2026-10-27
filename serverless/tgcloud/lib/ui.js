@@ -1,3 +1,4 @@
+import {ratingSummary,ratingLine} from './rating-data.js';
 import { OPTIONS, TITLES, SOURCE_NAMES } from './config.js';
 import { selected, hidden, validUrl } from './filters.js';
 import { catalogDiagnostics } from './catalog.js';
@@ -74,6 +75,7 @@ export function card(j, expanded = false) {
   if (f.experience === true || f.experience === false) lines.push('🛠 Опыт: ' + (f.experience ? 'требуется' : 'можно без опыта'));
   if (f.paperwork_assistance === true || f.paperwork_assistance === false) lines.push('📄 Помощь с документами: ' + (f.paperwork_assistance ? 'указана работодателем' : 'не предоставляется'));
   if ((j._warnings || vacancyWarnings(j)).length) lines.push('\n⚠️ В тексте есть условия, требующие осторожности. Подробнее — в «Ещё».');
+  lines.push('\n'+ratingLine(j._rating));
   if (j.description) lines.push('\n<blockquote>' + safe(j.description, expanded ? 1800 : 150, expanded) + '</blockquote>');
   if (j.contacts?.length) lines.push('📞 Контакты: ' + safe(j.contacts.join(' · '), expanded ? 200 : 90));
   const sources = (j._sources || [{source:j.source,url:j.url}]).slice(0,4).map(s => {
@@ -116,11 +118,13 @@ export function cardActions(j, index, mode, context = null, favorite = false) {
     [button(mode.startsWith('r')?'🌐 Оригинал':'🇷🇺 Перевести',translate),button('🙈 Скрыть',context ? scoped('hide') : standalone?`hide:${j.id}`:`view:${j.id}:${index}:hide:${mode}`)],
     [button('🔎 Похожие',`similar:${j.id}${context?':'+context.token:''}`),button('🚩 Пожаловаться',`report:${j.id}:choose:${index}:${mode}${context?':'+context.token:''}`)],
     ...(vacancyWarnings(j).length ? [[button('⚠️ Почему осторожнее',`risk:${j.id}${context?`:${context.token}:${index}:${mode}`:''}`)]] : []),
+    [button('⭐ Оценки и отзывы',`ratings:${j.id}:list`)],
     [button('⚙️ Фильтры','filters'),button('🏠 Меню','menu')],
     [button('↩️ К вакансии',back)],
   ]];
 }
 export async function translatedCard(j, mode, fetch, store) {
+  if(store?.db)j={...j,_rating:await ratingSummary(store,j._duplicate_ids||[j.id])};
   if (!mode.startsWith('r')) return { text: card(j, mode.endsWith('f')), mode, failed: false };
   try {
     const [title, description] = await translateVacancy(j.id,clip(j.title,140),clip(j.description,1800,true),fetch,store);
