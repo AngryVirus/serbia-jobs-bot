@@ -62,7 +62,7 @@ test('owner dashboard groups existing tools into readable sections with a route 
     ['📋 Вакансии','admin:vacancies'],['👥 Пользователи','admin:users'],['🛡 Команда','admin:staff'],['📡 Сбор вакансий','admin:collection'],['📣 Реклама','ads'],['🔄 Обновить отчёт','admin:refresh'],['🏠 Главное меню','menu']
   ]);
   for(const [action,purpose,targets] of [
-    ['admin:vacancies','жалобы',['admin:reports:0','admin:blocked:0']],
+    ['admin:vacancies','жалобы',['admin:ratings:pending:0','admin:reports:0','admin:blocked:0']],
     ['admin:users','блокировки',['admin:people:0','admin:stats','admin:bans:0']],
     ['admin:staff','изменения прав',['admin:team:0','admin:audit:0']],
     ['admin:collection','сохранённые данные',['admin:sources:0','admin:quality:sources:0','admin:ideas:pending:0','admin:quality','admin:details']]

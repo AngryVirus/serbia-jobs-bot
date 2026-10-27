@@ -1,3 +1,5 @@
+import {reviewNoticeTick} from './ratings.js';
+import {ratingSummary} from './rating-data.js';
 import { teamPanel,auditPanel,staffHomeDocument,usersPanel } from './staff.js';
 import { roleNoticeTick } from './staff.js';
 import { banPanel, banNoticeTick, banNoticeText } from './bans.js';
@@ -81,7 +83,7 @@ export async function notifyOne(store, api, uid, catalog) {
     const result = await store.db.run("INSERT INTO sjc_deliveries(user_id,job_id,state,payload) VALUES(:uid,:jid,'sending',:payload) ON CONFLICT(user_id,job_id) DO NOTHING", { ...params, ':payload': JSON.stringify(payload) });
     if (result.rowsAffected !== 1) return { sent: 0 };
     try {
-      const message = await api.sendMessage({ chat_id: user.chat_id, text: prefix+card(j), parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: { inline_keyboard: jobButtons(j) } });
+      const message = await api.sendMessage({ chat_id: user.chat_id, text: prefix+card({...j,_rating:await ratingSummary(store,j._duplicate_ids||[j.id])}), parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: { inline_keyboard: jobButtons(j) } });
       assert(positive(message?.message_id), 'Unconfirmed delivery');
       await store.db.run("UPDATE sjc_deliveries SET state='sent' WHERE user_id=:uid AND job_id=:jid", params);
       await store.db.run("UPDATE sjc_users SET payload=json_set(payload,'$.last_notified_at',:at) WHERE id=:uid",{':uid':uid,':at':payload.delivered_at});
@@ -150,8 +152,16 @@ export async function administer(input, ctx, deps) {
     await bot.home();assert(bot.mid===id,'Menu was not restored in place');
     return {sent:1,edited_in_place:3,owner_only:true};
   }
-  if(op==='health_tick'){const result=await healthTick(store,deps.api);try{await notifySourceIdeas(store,deps.api);}catch{/* Proposal notices must not prevent independent health monitoring. */}return result;}
-  if(op==='ads_tick') {const notices=await banNoticeTick(store,deps.api,deps.InputFile),roles=await roleNoticeTick(store,deps.api);return {...await adTick(store,deps.api),ban_notices:notices,role_notices:roles};}
+  if(op==='ratings_check') {
+    const sql=await store.db.get("WITH allowed AS MATERIALIZED (SELECT 1 AS n) SELECT n FROM allowed");
+    assert(sql.n===1&&typeof deps.api.sendDocument==='function','Review runtime support missing');
+    const summary=await ratingSummary(store,[-1]);
+    assert(summary.count===0,'Unexpected diagnostic review');
+    const groups=await store.db.all("SELECT json_extract(payload,'$.state') AS state,COUNT(*) AS n FROM sjc_records WHERE kind='vacancy_review' GROUP BY json_extract(payload,'$.state')");
+    return {ready:true,private_export:true,states:groups};
+  }
+  if(op==='health_tick'){await reviewNoticeTick(store,deps.api);const result=await healthTick(store,deps.api);try{await notifySourceIdeas(store,deps.api);}catch{/* Proposal notices must not prevent independent health monitoring. */}return result;}
+  if(op==='ads_tick') {await reviewNoticeTick(store,deps.api);const notices=await banNoticeTick(store,deps.api,deps.InputFile),roles=await roleNoticeTick(store,deps.api);return {...await adTick(store,deps.api),ban_notices:notices,role_notices:roles};}
   if (op === 'init') {
     await store.init();
     if(!await store.meta('analytics_started'))await store.setMeta('analytics_started',new Date().toISOString().slice(0,10));

@@ -33,7 +33,7 @@ class DeploymentTests(unittest.TestCase):
     def test_reviewed_update_uses_revision_checked_push_no_data_import(self):
         admin, cli = self.run_deploy([self.old, self.old, self.local])
         self.assertEqual([c.args for c in cli.call_args_list], [('fetch',), ('push',)])
-        self.assertEqual([c.args for c in admin.call_args_list], [('status',), ('menu_image_audit',), ('audit',), ('init',), ('status',)])
+        self.assertEqual([c.args for c in admin.call_args_list], [('status',), ('ratings_check',), ('menu_image_audit',), ('audit',), ('init',), ('status',)])
 
     def test_same_release_is_idempotent(self):
         _, cli = self.run_deploy([self.local, self.local])
