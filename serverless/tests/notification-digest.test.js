@@ -48,3 +48,12 @@ test('new sources are throttled for an hour across restarts without losing unsen
  t.mock.timers.tick(3599999);assert.equal((await notifyOne(new Store(f.db),f.api,1)).sent,0);
  t.mock.timers.tick(1);assert.equal((await notifyOne(new Store(f.db),f.api,1)).sent,1);assert.match(f.api.sent.at(-1).text,/вакансии: 1/);
 });
+test('delivery health counts digest messages rather than every vacancy in a failed digest',async()=>{
+ const {healthTick}=await import('../tgcloud/lib/health.js'),f=await setup(),at=new Date().toISOString();
+ await f.store.setMeta('last_successful_collection',at);
+ for(let id=1;id<=8;id++)await f.db.run("INSERT INTO sjc_deliveries VALUES(1,:id,'uncertain',:payload)",{':id':id,':payload':JSON.stringify({digest:'same',delivered_at:at})});
+ await healthTick(f.store,f.api);assert.equal(f.api.sent.length,0);
+ for(let uid=2;uid<=5;uid++)await f.db.run("INSERT INTO sjc_deliveries VALUES(:uid,1,'uncertain',:payload)",{':uid':uid,':payload':JSON.stringify({digest:'same',delivered_at:at})});
+ await healthTick(f.store,f.api);assert.equal(f.api.sent.length,1);assert.match(f.api.sent[0].text,/ошибок доставки уведомлений/);
+ await healthTick(new Store(f.db),f.api);assert.equal(f.api.sent.length,1);
+});
