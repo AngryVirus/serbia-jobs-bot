@@ -4,6 +4,13 @@ import { displayLanguages } from '../tgcloud/lib/language-display.js';
 import { card,translatedCard } from '../tgcloud/lib/ui.js';
 import { fixture,job } from './fixtures.js';
 const nsz='Језик:\nЕнглески: Читање: Почетни(A1); Писање: Почетни(A1); Говор: Почетни(A1); - Пожељно';
+test('Smile ON mixed Cyrillic CEFR letters preserve both languages and minimum levels',()=>{
+ for(const [ru,sr] of [['C1','B1'],['С1','В1'],['С1','B1']]) {
+  const j=job(1,{description:`Русский язык родной/свободный (не ниже ${ru}), сербский язык - не ниже ${sr}.`,_cloud:{languages:['ru','sr'],required_languages:['ru','sr']}});
+  assert.equal(displayLanguages(j),'Русский — не ниже C1 (обяз.), Сербский — не ниже B1 (обяз.)');
+ }
+ assert.equal(displayLanguages(job(1,{description:'English at least В2; Serbian А1 preferred.',_cloud:{languages:['en','sr'],required_languages:['en']}})), 'Английский — не ниже B2 (обяз.), Сербский — A1 (желателен)');
+});
 test('NSZ 104197 language row shows A1 and preferred without inventing Serbian',()=>{
  const j=job(1,{description:nsz,_cloud:{...job(1)._cloud,languages:['en'],required_languages:[]}});
  assert.equal(displayLanguages(j),'Английский — A1 (желателен)');

@@ -50,12 +50,12 @@ test('old vacancy buttons and malformed actions always return a usable panel',as
     assert.equal(f.api.edited.length,before+1); assert(f.api.edited.at(-1).text.includes('Работа в Сербии'));
   }
 });
-test('stale viewer anchors do not translate a different job; original map survives translation failure',async()=>{
+test('stale viewer anchors do not translate a different job; original source button survives translation failure',async()=>{
   const f=await fixture(); await f.store.putJob(job(7,{title:'Chef',description:'We are hiring a chef with experience.'}),true);
   await handle(f,message(1,'/start')); await handle(f,callback(1,'view:999:0:translate:s'));
   assert(f.api.edited.at(-1).text.includes('Подборка изменилась')); assert(!f.api.edited.at(-1).text.includes('Перевод сейчас'));
   await handle(f,callback(1,'view:7:0:translate:s'));
-  assert(f.api.edited.at(-1).text.includes('Перевод сейчас недоступен')); assert(f.api.edited.at(-1).text.includes('maps/search'));
+  assert(f.api.edited.at(-1).text.includes('Перевод сейчас недоступен')); assert.doesNotMatch(f.api.edited.at(-1).text,/maps\/search|href=/); assert(f.api.edited.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.url==='https://t.me/rabotavserbii/7'));
 });
 test('notifications baseline, filters, deduplication and edit do not resend',async()=>{
   const f=await fixture(); await f.store.putJob(job(5),true);
@@ -104,7 +104,7 @@ test('migration preserves IDs and history, new jobs continue after imported IDs'
 });
 test('HTML is escaped and UTF-16 truncation keeps intact emoji',()=>{
   assert(card(job(1)).includes('Повар &lt;&amp;&gt;')); assert.equal(clip('😀😀😀',4),'😀…');
-  assert(card(job(1)).includes('https://www.google.com/maps/'));
+  assert.doesNotMatch(card(job(1)),/https?:\/\//);
 });
 test('display order follows original creation time; update keeps first publication',async()=>{
   const f=await fixture();

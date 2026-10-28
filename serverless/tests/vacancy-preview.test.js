@@ -45,6 +45,6 @@ test('overlong photo caption falls back to selectable text instead of losing lin
  assert.equal(vacancyVisual({...r,caption:'x'.repeat(1025)}),false);
  assert.match(vacancyVisual(r,'Вакансия 2 из 205').text,/Вакансия 2 из 205/);
  assert.doesNotMatch(vacancyVisual(r,'Вакансия 2 из 205').caption,/Вакансия/);
- assert.match(r.text,/href=/);
+ assert.doesNotMatch(r.text,/href=/);
  assert.equal(vacancyVisual(await translatedCard(job(1),'f',f.fetch,f.store)),false);
 });

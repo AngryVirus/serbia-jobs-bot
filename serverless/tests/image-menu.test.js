@@ -5,10 +5,10 @@ import { inflateSync } from 'node:zlib';
 import { readFileSync } from 'node:fs';
 import { fixture,callback,message,job } from './fixtures.js';
 import { Bot } from '../tgcloud/lib/bot.js';
-import { renderImage,imageHash,imageDocument } from '../tgcloud/lib/image-renderer.js';
+import { renderImage,imageHash,imageDocument,categoryIcon } from '../tgcloud/lib/image-renderer.js';
 import { CODEC_SOURCE } from '../tgcloud/lib/image-codec.js';
 import { defaults } from '../tgcloud/lib/filters.js';
-import { filtersPanel,choicePanel,summary } from '../tgcloud/lib/ui.js';
+import { filtersPanel,choicePanel,summary,vacancyPresentation,vacancyVisual } from '../tgcloud/lib/ui.js';
 import { OWNER_ID } from '../tgcloud/lib/owner.js';
 import { administer } from '../tgcloud/lib/admin.js';
 
@@ -27,6 +27,17 @@ async function graphics(){
 }
 async function click(f,uid,data){const update=callback(uid,data);if(f.graphics.last)update.callback_query.message={...f.graphics.last};await new Bot(f).handle(update);return update;}
 async function text(f,uid,value){await new Bot(f).handle(message(uid,value));}
+
+test('experience has a vector icon and NEW is an image badge, never a duplicate text heading',()=>{
+ const j=job(1,{_is_new:true,_cloud:{...job(1)._cloud,experience:true}});
+ const visual=vacancyVisual(vacancyPresentation(j,'s'),'Вакансия 2 из 5\n');
+ assert.equal(categoryIcon('Опыт: требуется'),'briefcase');
+ const doc=imageDocument(visual.text);assert(doc.badge);assert(doc.title.includes('Повар'));
+ assert(!doc.lines.some(x=>x.text==='NEW'));assert.equal(renderImage(visual.text).badge,true);
+ assert(!visual.caption.includes('NEW'));
+ const old=vacancyPresentation({...j,_is_new:false},'s');assert.equal(renderImage(old.image).badge,false);
+ assert(renderImage(visual.text).icons>renderImage(vacancyPresentation({...j,_cloud:{...j._cloud,experience:null}},'s').image).icons);
+});
 
 test('PNG is valid, Cyrillic text is local, hashes are SHA-256 and codec matches the lock',()=>{
  for(const s of ['','abc','Белград 🪪'])assert.equal(imageHash(s),createHash('sha256').update(s).digest('hex'));
@@ -59,7 +70,7 @@ test('start, settings choices, reset and persisted text input are image-only and
 });
 test('short vacancies are images with contact-only captions; full details are text and replace the panel',async()=>{
  const f=await graphics();await f.store.putJob(job(1,{contacts:['contact@example.com']}),true);await text(f,1,'/start');const imageId=f.graphics.last.message_id;
- await click(f,1,'search:0');assert(f.graphics.last.photo);assert.equal(f.graphics.last.caption,'📞 contact@example.com');assert.doesNotMatch(f.graphics.last.caption,/href=|Повар|Вакансия/);
+ await click(f,1,'search:0');assert(f.graphics.last.photo);assert.equal(f.graphics.last.caption,'✉️ contact@example.com');assert.doesNotMatch(f.graphics.last.caption,/href=|Повар|Вакансия/);
  assert.equal(f.graphics.last.message_id,imageId);
  await click(f,1,'job:1:full');assert(f.graphics.last.text.includes('Нужен повар'));assert(f.graphics.deleted.includes(imageId));
  const textId=f.graphics.last.message_id;

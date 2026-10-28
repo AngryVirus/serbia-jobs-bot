@@ -2,7 +2,7 @@
 import { zlibSync, unzlibSync } from './image-codec.js';
 import { HEADER } from './image-header.js';
 import { FONTS, FONT_DATA } from './image-fonts.js';
-export const IMAGE_VERSION='belgrade-v3-rating-warning-vacancy-map-metadata';
+export const IMAGE_VERSION='belgrade-v3-rating-warning-vacancy-map-metadata-new';
 const W=960, BG=[251,246,236], INK=[22,45,67], MUTED=[100,117,129], BLUE=[44,106,160];
 export function fromBase64(value) {
  const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/',out=[];let bits=0,n=0;
@@ -24,7 +24,7 @@ export function imageHash(text) {
 const decode=s=>s.replace(/&#(x[0-9a-f]+|\d+);/gi,(_,n)=>{const c=n[0].toLowerCase()==='x'?parseInt(n.slice(1),16):Number(n);return c>=0&&c<=0x10ffff?String.fromCodePoint(c):'□';}).replace(/&(lt|gt|amp|quot|apos|#x27);/g,(_,n)=>({lt:'<',gt:'>',amp:'&',quot:'"',apos:"'",'#x27':"'"})[n]);
 export function categoryIcon(text) {
  const label=text.split(':')[0].trim();
- return {'Города':'pin','Формат работы':'laptop','Языки':'chat','Возраст вакансии':'clock','Дата объявления':'clock','Наличие ВНЖ':'id','Требование ВНЖ':'id','ВНЖ':'id','Ключевые слова':'search','Исключения':'exclude','Зарплата':'coins','Без зарплаты':'coins','Уведомления':'bell','Скрытые вакансии':'eye'}[label] || null;
+ return {'Города':'pin','Формат работы':'laptop','Опыт':'briefcase','Языки':'chat','Возраст вакансии':'clock','Дата объявления':'clock','Наличие ВНЖ':'id','Требование ВНЖ':'id','ВНЖ':'id','Ключевые слова':'search','Исключения':'exclude','Зарплата':'coins','Без зарплаты':'coins','Уведомления':'bell','Скрытые вакансии':'eye'}[label] || null;
 }
 // Small antialiased vector glyphs, drawn locally without emoji fonts or requests.
 function drawIcon(pixel,kind,cx,cy) {
@@ -34,6 +34,7 @@ function drawIcon(pixel,kind,cx,cy) {
  const path=points=>{for(let i=1;i<points.length;i++)line(...points[i-1],...points[i]);};
  const circle=(x,y,r)=>{const points=[];for(let i=0;i<=48;i++)points.push([x+r*Math.cos(i*Math.PI/24),y+r*Math.sin(i*Math.PI/24)]);path(points);};
  disc(0,0,24,background);
+ if(kind==='briefcase'){path([[-15,-7],[15,-7],[15,12],[-15,12],[-15,-7]]);path([[-6,-7],[-6,-13],[6,-13],[6,-7]]);line(-15,1,15,1);line(-3,0,3,0);line(-3,4,3,4);}
  if(kind==='map'){path([[-15,-10],[-5,-14],[5,-10],[15,-14],[15,10],[5,14],[-5,10],[-15,14],[-15,-10]]);line(-5,-14,-5,10);line(5,-10,5,14);}
  if(kind==='pin'){circle(0,-5,9);path([[-8,0],[0,14],[8,0]]);circle(0,-5,3);}
  if(kind==='laptop'){path([[-12,-10],[12,-10],[12,7],[-12,7],[-12,-10]]);path([[-15,11],[15,11]]);}
@@ -47,10 +48,11 @@ function drawIcon(pixel,kind,cx,cy) {
  if(kind==='eye'){path([[-15,0],[-8,-8],[0,-11],[8,-8],[15,0],[8,8],[0,11],[-8,8],[-15,0]]);circle(0,0,4);}
 }
 export function imageDocument(html) {
- const lines=String(html).replace(/<\/?blockquote>/g,'\n').split('\n').map(s=>({bold:/<b>/.test(s),icon:/^(?:<[^>]+>)*(?:📍|🗺)/u.test(s.trim())?'map':null,text:decode(s.replace(/<[^>]*>/g,'')).replace(/[\p{Extended_Pictographic}\uFE0F\u200D\u20E3]/gu,'').normalize('NFC').trim()}));
+ const badge=String(html).includes('<badge>NEW</badge>');
+ const lines=String(html).replace('<badge>NEW</badge>','').replace(/<\/?blockquote>/g,'\n').split('\n').map(s=>({bold:/<b>/.test(s),icon:/^(?:<[^>]+>)*(?:📍|🗺)/u.test(s.trim())?'map':null,text:decode(s.replace(/<[^>]*>/g,'')).replace(/[\p{Extended_Pictographic}\uFE0F\u200D\u20E3]/gu,'').normalize('NFC').trim()}));
  while(lines.length&&!lines[0].text)lines.shift();
  const title=lines.shift()?.text || 'Работа в Сербии';while(lines.length&&!lines[0].text)lines.shift();
- return {title,lines};
+ return {title,lines,badge};
 }
 const glyph=(c,face)=>FONTS[face].glyphs[c.codePointAt(0)] || FONTS[face].glyphs['9633'];
 const width=(s,face)=>[...s].reduce((n,c)=>n+glyph(c,face)[4],0);
@@ -66,6 +68,7 @@ function png(rgb,height){const stride=W*3,scan=new Uint8Array((stride+1)*height)
  return concat([new Uint8Array([137,80,78,71,13,10,26,10]),chunk('IHDR',concat([u32(W),u32(height),new Uint8Array([8,2,0,0,0])])),chunk('IDAT',zlibSync(scan,{level:3})),chunk('IEND',new Uint8Array())]);}
 export function renderImage(html) {
  assets();const doc=imageDocument(html),layout=[];let y=348;
+ if(doc.badge)layout.push({text:'NEW',face:'bold',x:W-164,y:262,color:[255,255,255]});
  const titles=wrap(doc.title,'title',W-112);for(const line of titles){layout.push({text:line,face:'title',x:56,y,color:INK});y+=58;}
  y+=12;const ruleY=y;y+=30;
  const take=(text,max)=>{let count=0,n=0,lastSpace=-1;for(const c of text){const next=width(c,'body');if(n+next>max)break;n+=next;count+=c.length;if(c===' ')lastSpace=count;}if(count<text.length && lastSpace>0)count=lastSpace;return [text.slice(0,count).trim(),text.slice(count).trim()];};
@@ -87,6 +90,7 @@ export function renderImage(html) {
  const pixel=(x,y,c,alpha=255)=>{x=Math.round(x);y=Math.round(y);if(x<0||y<0||x>=W||y>=height)return;const p=(y*W+x)*3;for(let k=0;k<3;k++)rgb[p+k]=Math.round((c[k]*alpha+rgb[p+k]*(255-alpha))/255);};
  const rect=(x,y,w,h,c)=>{for(let yy=y;yy<y+h;yy++)for(let xx=x;xx<x+w;xx++)pixel(xx,yy,c);};
  for(let p=0;p<headerPixels.length;p++){const i=headerPixels[p]*3;rgb.set(HEADER.palette.slice(i,i+3),p*3);}
+ if(doc.badge)rect(W-180,254,124,56,[30,115,85]);
  rect(56,ruleY,100,4,[184,51,63]);rect(156,ruleY,100,4,BLUE);rect(256,ruleY,W-312,2,[226,219,207]);
  const star=(cx,cy,filled)=>{
   const points=Array.from({length:10},(_,i)=>{const a=-Math.PI/2+i*Math.PI/5,r=i%2?13:29;return [cx+Math.cos(a)*r,cy+Math.sin(a)*r];});
@@ -96,5 +100,5 @@ export function renderImage(html) {
   }
  };
  for(const line of layout){if(line.stars){[...line.stars].forEach((s,i)=>star(line.x+i*76,line.y,s==='★'));continue;}if(line.icon){drawIcon(pixel,line.icon,line.x,line.y);continue;}let x=line.x;const check=line.text.startsWith('✓') || line.text.startsWith('Выбрано:');if(check)rect(48,line.y-2,W-96,50,[225,237,242]);for(const c of line.text){const [w,h,left,top,advance,offset]=glyph(c,line.face);for(let yy=0;yy<h;yy++)for(let xx=0;xx<w;xx++){const a=fontPixels[offset+yy*w+xx];if(a)pixel(x+left+xx,line.y+top+yy,line.color,a);}x+=advance;}}
- return {bytes:png(rgb,height),width:W,height,title:doc.title,icons:layout.filter(l=>l.icon).length,starRows:layout.filter(l=>l.stars).map(l=>l.stars)};
+ return {bytes:png(rgb,height),width:W,height,title:doc.title,badge:doc.badge,icons:layout.filter(l=>l.icon).length,starRows:layout.filter(l=>l.stars).map(l=>l.stars)};
 }

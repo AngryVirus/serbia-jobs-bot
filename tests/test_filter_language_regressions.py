@@ -19,6 +19,17 @@ class LanguageRegressionTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(language_facts(text), (languages, []))
 
+    def test_cyrillic_and_mixed_cefr_letters_and_minimum_requirements(self):
+        for ru, sr in [('C1', 'B1'), ('С1', 'В1'), ('С1', 'B1')]:
+            text = f'Русский язык родной/свободный (не ниже {ru}), сербский язык - не ниже {sr}.'
+            with self.subTest(text=text):
+                self.assertEqual(language_facts(text), (['ru', 'sr'], ['ru', 'sr']))
+                self.assertEqual(job_language_facts({'languages': ['ru'], 'description': text}),
+                                 (['ru', 'sr'], ['ru', 'sr']))
+        self.assertEqual(language_facts('English А2 preferred; Serbian В1 not required.'), (['en'], []))
+        self.assertEqual(language_facts('English С1 textbooks required.'), ([], []))
+        self.assertEqual(language_facts('English В2, minimum 3 years of experience.'), (['en'], []))
+
     def test_labelled_lists_and_explicit_skill_levels(self):
         for text in ('Languages: English, Serbian', 'Языки: английский, сербский',
                      'Jezici: engleski, srpski', 'Језици: енглески, српски'):

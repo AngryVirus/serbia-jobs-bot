@@ -100,7 +100,7 @@ async function render(bot, original, {action='show',jobId=null,index=0,mode='s',
   if(['actions','problem'].includes(session.view))return bot.panel(...cardActions(job,index,mode,{token:session.token},await hasFavorite(bot,job),session.view==='problem',rank(await accessRole(bot))>=2));
   if(session.view==='open')return bot.panel(...sourceChoice(job,callback(session,job,index,'show',mode)));
   if(session.view==='risk')return bot.panel(...reasons(job,callback(session,job,index,'show',mode)));
-  const result=await translatedCard(job,mode,bot.fetch,bot.store);
+  const result=await translatedCard({...job,_is_new:session.kind==='notice'||newJobs([job],session).length>0},mode,bot.fetch,bot.store);
   const newCount=session.kind==='all'?newJobs(jobs,session).length:0;
   const heading=(session.kind==='notice'?'<b>🔔 Новые вакансии из уведомления</b>\n':session.kind==='new'?'<b>🆕 Новое с прошлого просмотра</b>\n':'')
     +(!['main','notice'].includes(session.scope)?'<b>Поиск: '+safe(scopePlan(s,session.scope)?.name || 'Сохранённый',60)+'</b>\n':'');
