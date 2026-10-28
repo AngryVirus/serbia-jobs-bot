@@ -28,6 +28,76 @@ jobs:
           python-version: '3.12'
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: serverless
-      - run: python3 serverless/health_check.py
+      - name: Verify contact-only captions and source selection without writes
+        run: |
+          PYTHONPATH=serverless python3 - <<'CHECK'
+          from pathlib import Path
+          from cloud import call,invoke,routing_identity
+          from deploy import digest
+          root=Path('serverless/tgcloud')
+          local={p.relative_to(root).with_suffix('').as_posix():p.read_text() for p in root.rglob('*.js')}
+          remote=call('remote')
+          matches=remote.get('canonical_modules')==local
+          print({'revision':remote.get('revision'),'matches_local':matches,'modules':len(local),'digest':digest(local)},flush=True)
+          if not matches:raise SystemExit('Installed code does not match the reviewed release')
+          routing=call('routing')
+          print({'routing_in_sync':routing.get('in_sync'),'pending':routing.get('pending_update_count')},flush=True)
+          if not routing.get('in_sync'):raise SystemExit('Routing is not synchronized')
+          status=invoke('status')
+          print({'active':status['active']},flush=True)
+          if not status['active']:raise SystemExit('Bot is paused')
+          print('Ratings check:',invoke('ratings_check'),flush=True)
+          CHECK
+          node --input-type=module <<'PROBE'
+          import {readdirSync,readFileSync} from 'node:fs';
+          import {join,relative} from 'node:path';
+          const root='serverless/tgcloud',sources={};
+          function walk(dir){for(const item of readdirSync(dir,{withFileTypes:true})){const p=join(dir,item.name);if(item.isDirectory())walk(p);else if(p.endsWith('.js'))sources[relative(root,p).slice(0,-3)]=readFileSync(p,'utf8');}}
+          walk(root);
+          const name='endpoints/ratings_controls_probe';
+          sources[name]=`import {db,api} from 'sdk';
+          import {Store} from '../lib/store.js';
+          import {openingLinks,links,sourceChoice,vacancyPresentation,vacancyVisual,translatedCard} from '../lib/ui.js';
+          import {defaults} from '../lib/filters.js';
+          import {renderImage,imageDocument} from '../lib/image-renderer.js';
+          import {groupJobs,visibleJobs} from '../lib/catalog.js';
+          import {Bot} from '../lib/bot.js';
+          export default async function(input,ctx){
+           if(ctx?.ownerRun!==true||ctx.initData||ctx.update)throw Error('Private probe only');
+           const me=await api.getMe();if(me.id!==8802394224||me.username?.toLowerCase()!=='serbiajobsbot')throw Error('Wrong bot');
+           const store=new Store(db),all=await store.jobs(),jobs=visibleJobs(groupJobs(all),defaults());
+           if(!jobs.length)throw Error('No catalogue sample');
+           let rendered=0,max_height=0,max_bytes=0,contact_only=0,direct_links=0,choice_links=0;
+           for(const j of jobs.slice(0,3)){
+            const result=await translatedCard(j,'s',null,store),visual=vacancyVisual(result,'Вакансия 2 из 205');
+            if(!visual||!visual.text.includes('Вакансия 2 из 205')||!visual.text.includes('Дата объявления:'))throw Error('Missing image metadata');
+            if(visual.caption!==result.caption||visual.caption&&(!visual.caption.startsWith('📞 ')||visual.caption.includes('<a ')))throw Error('Caption contains duplicate metadata');
+            if(!imageDocument(visual.text).lines.some(l=>l.icon==='map'))throw Error('Missing location');
+            const image=renderImage(visual.text);rendered++;contact_only++;max_height=Math.max(max_height,image.height);max_bytes=Math.max(max_bytes,image.bytes.length);
+            const targets=openingLinks(j),rows=links(j),button=rows[0]?.[0];
+            if(targets.site&&targets.telegram){if(!button?.callback_data)throw Error('Missing chooser');choice_links++;}
+            else if(targets.site||targets.telegram){if(!button?.url)throw Error('Missing direct URL');direct_links++;}
+           }
+           const dual=jobs.find(j=>{const x=openingLinks(j);return x.site&&x.telegram;});let actual_dual_checked=false;
+           const view=new Bot({api,db});view.uid=340780041;view.chat=340780041;view.s=defaults();view.store.jobs=async()=>all;
+           if(dual){
+            let choices=[],back='';view.panel=async(text,rows)=>{choices=rows.flat().filter(b=>b.url);back=rows.flat().find(b=>b.text.includes('К вакансии'))?.callback_data;};
+            await view.vacancy('job:'+dual.id+':short',true);
+            if(choices.length!==2||back!=='job:'+dual.id+':short')throw Error('Runtime dual-source controls invalid');actual_dual_checked=true;
+           }
+           const j=jobs[0];let caption='',visual_card=false;
+           view.panel=async(text,rows,mid,visual)=>{visual_card=Boolean(visual?.text);caption=visual?.caption;};
+           await view.vacancy('job:'+j.id+':short');if(!visual_card||caption&& !caption.startsWith('📞 '))throw Error('Runtime short card invalid');
+           for(const url of ['https://nsz.gov.rs/employee/jobs/preview/104197','https://t.me/example/1']){
+            if(links({...j,url,_sources:[]})[0][0].url!==url)throw Error('Single source should open directly');
+           }
+           return {rendered,max_height,max_bytes,contact_only,direct_links,choice_links,actual_dual_checked,visual_card,metadata_in_image:true,single_source_direct:true,sends:0,writes:0};
+          }`;
+          try{
+           const client=await import('./serverless/node_modules/@tgcloud/cli/src/api/endpoints.js');
+           const response=await client.runFunction(process.env.TGCLOUD_TOKEN,name,sources,{},{ownerRun:true});
+           console.log('Metadata and sources:',JSON.stringify(response.result));
+          }catch(e){console.log('Metadata and sources failed:',JSON.stringify({status:e.status||null}));process.exitCode=1;}
+          PROBE
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_PROBE_TOKEN }}
