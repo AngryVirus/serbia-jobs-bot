@@ -2,7 +2,7 @@
 import { zlibSync, unzlibSync } from './image-codec.js';
 import { HEADER } from './image-header.js';
 import { FONTS, FONT_DATA } from './image-fonts.js';
-export const IMAGE_VERSION='belgrade-v3-rating-warning';
+export const IMAGE_VERSION='belgrade-v3-rating-warning-vacancy-map';
 const W=960, BG=[251,246,236], INK=[22,45,67], MUTED=[100,117,129], BLUE=[44,106,160];
 export function fromBase64(value) {
  const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/',out=[];let bits=0,n=0;
@@ -34,6 +34,7 @@ function drawIcon(pixel,kind,cx,cy) {
  const path=points=>{for(let i=1;i<points.length;i++)line(...points[i-1],...points[i]);};
  const circle=(x,y,r)=>{const points=[];for(let i=0;i<=48;i++)points.push([x+r*Math.cos(i*Math.PI/24),y+r*Math.sin(i*Math.PI/24)]);path(points);};
  disc(0,0,24,background);
+ if(kind==='map'){path([[-15,-10],[-5,-14],[5,-10],[15,-14],[15,10],[5,14],[-5,10],[-15,14],[-15,-10]]);line(-5,-14,-5,10);line(5,-10,5,14);}
  if(kind==='pin'){circle(0,-5,9);path([[-8,0],[0,14],[8,0]]);circle(0,-5,3);}
  if(kind==='laptop'){path([[-12,-10],[12,-10],[12,7],[-12,7],[-12,-10]]);path([[-15,11],[15,11]]);}
  if(kind==='chat'){path([[-13,-10],[13,-10],[13,6],[0,6],[-7,13],[-7,6],[-13,6],[-13,-10]]);line(-7,-4,7,-4);line(-7,1,4,1);}
@@ -46,7 +47,7 @@ function drawIcon(pixel,kind,cx,cy) {
  if(kind==='eye'){path([[-15,0],[-8,-8],[0,-11],[8,-8],[15,0],[8,8],[0,11],[-8,8],[-15,0]]);circle(0,0,4);}
 }
 export function imageDocument(html) {
- const lines=String(html).replace(/<\/?blockquote>/g,'\n').split('\n').map(s=>({bold:/<b>/.test(s),text:decode(s.replace(/<[^>]*>/g,'')).replace(/[\p{Extended_Pictographic}\uFE0F\u200D\u20E3]/gu,'').normalize('NFC').trim()}));
+ const lines=String(html).replace(/<\/?blockquote>/g,'\n').split('\n').map(s=>({bold:/<b>/.test(s),icon:/^(?:<[^>]+>)*(?:📍|🗺)/u.test(s.trim())?'map':null,text:decode(s.replace(/<[^>]*>/g,'')).replace(/[\p{Extended_Pictographic}\uFE0F\u200D\u20E3]/gu,'').normalize('NFC').trim()}));
  while(lines.length&&!lines[0].text)lines.shift();
  const title=lines.shift()?.text || 'Работа в Сербии';while(lines.length&&!lines[0].text)lines.shift();
  return {title,lines};
@@ -71,7 +72,7 @@ export function renderImage(html) {
  for(const line of doc.lines){
   if(!line.text){y+=20;continue;}
   if(/^[★☆]{5}$/.test(line.text)){layout.push({stars:line.text,x:92,y:y+30});y+=80;continue;}
-  const colon=line.text.indexOf(':'),icon=colon>0?categoryIcon(line.text):null,left=icon?132:68;
+  const colon=line.text.indexOf(':'),icon=line.icon || (colon>0?categoryIcon(line.text):null),left=icon?132:68;
   if(icon)layout.push({icon,x:88,y:y+24});
   if(line.bold && colon>0 && width(line.text.slice(0,colon+1),'bold')<W-300-(icon?64:0)){
    const label=line.text.slice(0,colon+1),x=left+width(label,'bold')+12;

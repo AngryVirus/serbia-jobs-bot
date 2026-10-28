@@ -23,7 +23,7 @@ async function seed() {
   return f;
 }
 
-test('changed main filters expire old result actions, recommendations, warnings and replay',async()=>{
+test('changed main filters expire old result actions, warnings and replay',async()=>{
   const f=await seed();await handle(f,callback(1,'choose:city:belgrade:1'));
   await handle(f,callback(1,'search:0'));const token=await current(f);
   // /start creates another menu while the earlier result message can remain.
@@ -33,7 +33,7 @@ test('changed main filters expire old result actions, recommendations, warnings 
   for(const action of ['show','details','translate','hide','actions','new','all']) {
     await handle(f,callback(1,`discover:${token}:1:0:${action}:s`));expired(f);
   }
-  for(const action of [`similar:1:${token}`,`risk:1:${token}:0:s`]) {
+  for(const action of [`risk:1:${token}:0:s`]) {
     await handle(f,callback(1,action));expired(f);
   }
   await replay(f);expired(f);
@@ -70,7 +70,6 @@ test('saved sessions use their own filters and survive main, name, notification 
   const changed=(await state(f)).saved_searches.map(p=>({...p,filters:{...p.filters,city:['novi_sad']}}));
   await f.store.patch(1,{saved_searches:changed});
   await handle(f,callback(1,`discover:${token}:1:0:show:s`));expired(f);
-  await handle(f,callback(1,`similar:1:${token}`));expired(f);
   await handle(f,callback(1,`report:1:not_job:0:s:${token}`));expired(f);
   assert.deepEqual(await f.store.records('report'),[]);
   await replay(f);expired(f);

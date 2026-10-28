@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Bot } from '../tgcloud/lib/bot.js';
 import { defaults,settings } from '../tgcloud/lib/filters.js';
 import { groupJobs,visibleJobs } from '../tgcloud/lib/catalog.js';
-import { openDiscovery,discoveryRoute,replayDiscovery,similarJobs } from '../tgcloud/lib/discovery.js';
+import { openDiscovery,discoveryRoute,replayDiscovery } from '../tgcloud/lib/discovery.js';
 import { menu,filtersPanel,cardActions,translatedCard } from '../tgcloud/lib/ui.js';
 import { fixture,job,handle,message,callback as updateCallback } from './fixtures.js';
 
@@ -67,27 +67,28 @@ test('saved searches have independent view markers and keep their scope through 
   await f.store.putJob(job(3,{title:'Повар пиццерии'}),true);
   await openDiscovery(await context(f),'chef');await click(f,data(f,'С прошлого просмотра'));
   assert.match(panel(f).text,/Повар пиццерии/);await click(f,data(f,'Подробнее'));assert.match(panel(f).text,/Поиск: Кухня/);
-  await click(f,data(f,'Действия'));const translation=data(f,'Перевести');assert(translation.startsWith('discover:'));
+  await click(f,data(f,'Ещё'));const translation=data(f,'Перевести');assert(translation.startsWith('discover:'));
   await click(f,translation);assert.match(panel(f).text,/Перевод сейчас недоступен/);assert.match(panel(f).text,/Поиск: Кухня/);
-  await click(f,data(f,'Действия'));await click(f,data(f,'Проблема'));await click(f,data(f,'Скрыть'));
+  await click(f,data(f,'Ещё'));await click(f,data(f,'Проблема'));await click(f,data(f,'Скрыть'));
   assert.match(panel(f).text,/Новых вакансий.*нет/);assert.deepEqual((await f.store.user(1)).settings.hidden_jobs,[3]);
   saved=(await f.store.user(1)).settings.saved_searches;assert.equal(saved[1].last_viewed_id,null);assert.equal((await f.store.user(1)).settings.last_viewed_id,undefined);
 });
 
-test('similar jobs exclude every seed copy, reject generic overlap and keep other filters',async()=>{
-  const f=await fixture();
-  const raw=[job(1,{title:'Повар',url:'https://example.rs/jobs/1',description:'Готовим ужины'}),job(2,{title:'Chef',url:'http://www.example.rs/jobs/1',description:'Готовим ужины'}),
-    job(3,{title:'Kuvar',description:'Kuhinja u restoranu'}),job(4,{title:'Повар',location:'Novi Sad'}),job(5,{title:'Водитель',description:'Доставка продуктов'}),job(6,{title:'Повар'}),job(7,{title:'Повар'})];
-  for(const j of raw)await f.store.putJob(j,true);
-  await f.store.ensure(1,1);await f.store.patch(1,{keywords:['готовим'],city:['belgrade'],hidden_jobs:[6]});
-  await f.store.record('moderation','7',{blocked:true,ids:[7]});
-  await openDiscovery(await context(f));await click(f,data(f,'Действия'));assert(data(f,'Похожие'));
-  await click(f,data(f,'Похожие'));assert.match(panel(f).text,/Kuvar/);assert.match(panel(f).text,/1 из 1/);
-  assert(!JSON.stringify(panel(f)).includes('view:'));assert(data(f,'исходной'));
-  const generic=job(10,{title:'Требуется сотрудник ресторана',description:'Хорошие условия и оплата'});
-  assert.equal(similarJobs([job(11,{title:'Требуется сотрудник ресторана',description:'Другие условия'})],generic).length,0);
-  assert.equal(similarJobs([job(12,{title:'Junior Accountant',description:'Bookkeeping'})],job(13,{title:'Junior Developer',description:'Software'})).length,0);
-  assert.equal(similarJobs([job(14,{title:'Шеф-редактор',description:'Выпуск журнала'})],job(15,{title:'Повар',description:'Готовить блюда'})).length,0);
+test('removed similar search has no button, route, live session or catalogue reads',async()=>{
+  const f=await fixture();await f.store.putJob(job(1),true);const bot=await context(f);
+  await openDiscovery(bot);await click(f,data(f,'Ещё'));assert(!data(f,'Похожие'));
+  const before=(await f.store.user(1)).settings;
+  const stale={...before.discovery_sessions[0],kind:'similar'};
+  await f.store.patch(1,{discovery_sessions:[stale]});
+  const old=await context(f);old.store.jobs=async()=>assert.fail('removed search must not scan jobs');
+  await old.route('similar:1');assert.match(panel(f).text,/Работа в Сербии/);
+  await old.route('similar:1:'+stale.token);assert.match(panel(f).text,/Работа в Сербии/);
+  await replayDiscovery(old);assert.match(panel(f).text,/подборка устарела/);
+  await discoveryRoute(old,`discover:${stale.token}:1:0:show:s`);assert.match(panel(f).text,/подборка устарела/);
+  await openDiscovery(old,'main','similar');assert.match(panel(f).text,/подборка устарела/);
+  assert.equal((await f.store.user(1)).settings.last_viewed_id,before.last_viewed_id);
+  await openDiscovery(await context(f));assert.match(panel(f).text,/Вакансия 1 из 1/);
+  assert((await f.store.user(1)).settings.discovery_sessions.every(x=>x.kind!=='similar'));
 });
 
 test('session tokens are private, expire, stay bounded and callback payloads fit Telegram',async()=>{
@@ -132,7 +133,7 @@ test('the real update handler replays a committed scoped hide after 429 without 
 test('safety warning is contextual, factual and survives translation; hidden jobs expose no reasons',async()=>{
   const f=await fixture(),j=job(1,{title:'Повар',description:'Для получения работы необходимо заплатить предоплату 100 евро.'});
   await f.store.putJob(j,true);await openDiscovery(await context(f));assert.match(panel(f).text,/требующие осторожности/);
-  assert(!data(f,'Почему'));await click(f,data(f,'Действия'));await click(f,data(f,'Проблема'));const risk=data(f,'Почему');assert(risk);
+  assert(!data(f,'Почему'));await click(f,data(f,'Ещё'));await click(f,data(f,'Проблема'));const risk=data(f,'Почему');assert(risk);
   await click(f,risk);assert.match(panel(f).text,/автоматическая подсказка/);assert(!panel(f).text.includes('это мошенник'));
   assert(data(f,'К вакансии').startsWith('discover:'));
   const translated=await translatedCard(j,'rf',async()=>({ok:true,json:async()=>[[['Безобидный перевод']]]}),f.store);

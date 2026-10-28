@@ -26,7 +26,7 @@ test('saved result news and complaint navigation keep the saved scope independen
  await handle(f,callback(1,'search:0'));assert.match(panel(f).text,/Водитель/);
  await f.store.putJob(job(3,{title:'Повар новой кухни'}),true);await f.store.putJob(job(4,{title:'Водитель новой смены',description:'Нужен водитель для доставки'}),true);
  await handle(f,callback(1,`plans:open:${plan.id}`));await handle(f,callback(1,action(f,'С прошлого просмотра')));assert.match(panel(f).text,/Повар новой кухни/);assert.match(panel(f).text,/Новое с прошлого просмотра/);
- await handle(f,callback(1,action(f,'Действия')));await handle(f,callback(1,action(f,'Проблема')));const report=action(f,'Пожаловаться');assert.match(report,/:s:[a-z0-9]{8}$/);
+ await handle(f,callback(1,action(f,'Ещё')));await handle(f,callback(1,action(f,'Проблема')));const report=action(f,'Пожаловаться');assert.match(report,/:s:[a-z0-9]{8}$/);
  const token=report.split(':').at(-1);await handle(f,callback(1,report));assert(buttons(f).some(b=>b.callback_data.startsWith(`discover:${token}:`)));
  await handle(f,callback(1,buttons(f).find(b=>b.callback_data.includes(':outdated:')).callback_data));
  const proceed=action(f,'Продолжить поиск');assert(proceed.startsWith(`discover:${token}:`));await handle(f,callback(1,proceed));assert.match(panel(f).text,/Новых вакансий с прошлого просмотра нет/);
@@ -35,7 +35,7 @@ test('saved result news and complaint navigation keep the saved scope independen
 
 test('leaving deletion confirmation invalidates it, and deleted searches cannot reopen from old result buttons',async()=>{
  const f=await fixture();await handle(f,message(1,'/start'));await f.store.putJob(job(1),true);const plan=await save(f,'Работа');
- await handle(f,callback(1,`plans:open:${plan.id}`));const old=action(f,'Действия');
+ await handle(f,callback(1,`plans:open:${plan.id}`));const old=action(f,'Ещё');
  await handle(f,callback(1,`plans:delete:${plan.id}`));let confirm=action(f,'Подтвердить');await handle(f,callback(1,'menu'));await handle(f,callback(1,confirm));assert.equal(savedSearches((await f.store.user(1)).settings).length,1);
  await handle(f,callback(1,`plans:delete:${plan.id}`));confirm=action(f,'Подтвердить');await handle(f,callback(1,confirm));assert.equal(savedSearches((await f.store.user(1)).settings).length,0);
  await handle(f,callback(1,old));assert.match(panel(f).text,/подборка устарела/);
@@ -47,5 +47,5 @@ test('saved search panels edit PNG in place and result cards remain text',async(
  f.api.editMessageMedia=async p=>{edits++;return {message_id:p.message_id,photo:[{file_id:'edited-png'}]};};f.api.deleteMessage=async()=>{};
  await handle(f,message(1,'/start'));await handle(f,callback(1,'filters'));await handle(f,callback(1,'plans'));await handle(f,callback(1,'plans:create'));
  const before=photos;await handle(f,message(1,'Поиск в Сербии'));assert.equal(photos,before);assert(edits>=4);assert.equal((await f.store.user(1)).settings.ui_panel_kind,'photo');
- await f.store.putJob(job(1),true);const id=savedSearches((await f.store.user(1)).settings)[0].id;const open=callback(1,`plans:open:${id}`);open.callback_query.message.photo=[{file_id:'edited-png'}];open.callback_query.message.message_id=(await f.store.user(1)).settings.ui_panel_id;await handle(f,open);assert.equal((await f.store.user(1)).settings.ui_panel_kind,'text');assert.match(f.api.sent.at(-1).text,/Вакансия 1 из 1/);
+ await f.store.putJob(job(1),true);const id=savedSearches((await f.store.user(1)).settings)[0].id;const open=callback(1,`plans:open:${id}`);open.callback_query.message.photo=[{file_id:'edited-png'}];open.callback_query.message.message_id=(await f.store.user(1)).settings.ui_panel_id;await handle(f,open);assert.equal((await f.store.user(1)).settings.ui_panel_kind,'photo');
 });

@@ -61,13 +61,13 @@ export function emptyText(jobs, s) {
   text += d.relaxed.length ? '\nМожно изменить в фильтрах:' + d.relaxed.slice(0,2).map(x => `\n• Без ограничения «${labels[x.field]}» — ${x.count}.`).join('') : '\nНужно расширить несколько условий.';
   return text;
 }
-export function card(j, expanded = false) {
+export function card(j, expanded = false, visual = false) {
   const f = j._cloud, lines = ['<b>💼 ' + safe(j.title || 'Вакансия', expanded ? 140 : 90) + '</b>'];
   let place = safe(j.location || (j.remote === true ? 'Удалённо' : 'Место не указано'), expanded ? 110 : 55);
   if (validUrl(f.location_url) && !validUrl(f.map_url)) place = `<a href="${escape(f.location_url)}">${j.location ? place : 'На карте'}</a>`;
   if (j.company) lines.push('🏢 ' + safe(j.company, expanded ? 80 : 40));
   lines.push('📍 ' + place);
-  if (validUrl(f.map_url)) lines.push(`🗺 <a href="${escape(f.map_url)}">${safe(f.address || 'На карте', 180)}</a>`);
+  if (!visual && validUrl(f.map_url)) lines.push(`🗺 <a href="${escape(f.map_url)}">${safe(f.address || 'На карте', 180)}</a>`);
   const periods = { month: 'месяц', hour: 'час', year: 'год' };
   const salary = j.salary_display || (j.salary_min != null ? `от ${j.salary_min} ${j.salary_currency || ''} / ${periods[j.salary_period || 'month'] || 'период не указан'}` : 'Зарплата не указана');
   lines.push('\n<b>💶 ' + safe(salary, expanded ? 120 : 80) + '</b>');
@@ -75,10 +75,10 @@ export function card(j, expanded = false) {
   lines.push('🪪 ВНЖ: ' + (f.permit === true ? 'нужен' : f.permit === false ? 'не нужен' : 'не указано'));
   if (f.experience === true || f.experience === false) lines.push('🛠 Опыт: ' + (f.experience ? 'требуется' : 'можно без опыта'));
   if (f.paperwork_assistance === true || f.paperwork_assistance === false) lines.push('📄 Помощь с документами: ' + (f.paperwork_assistance ? 'указана работодателем' : 'не предоставляется'));
-  if ((j._warnings || vacancyWarnings(j)).length) lines.push('\n⚠️ В тексте есть условия, требующие осторожности. Подробнее — «Действия» → «Проблема с вакансией».');
+  if ((j._warnings || vacancyWarnings(j)).length) lines.push('\n⚠️ В тексте есть условия, требующие осторожности. Подробнее — «Ещё» → «Проблема с вакансией».');
   lines.push('\n'+ratingLine(j._rating));
-  if (j.description) lines.push('\n<blockquote>' + safe(j.description, expanded ? 1800 : 150, expanded) + '</blockquote>');
-  if (j.contacts?.length) lines.push('📞 Контакты: ' + safe(j.contacts.join(' · '), expanded ? 200 : 90));
+  if (!visual && j.description) lines.push('\n<blockquote>' + safe(j.description, expanded ? 1800 : 150, expanded) + '</blockquote>');
+  if (!visual && j.contacts?.length) lines.push('📞 Контакты: ' + safe(j.contacts.join(' · '), expanded ? 200 : 90));
   const sources = (j._sources || [{source:j.source,url:j.url}]).slice(0,4).map(s => {
     const name=safe(SOURCE_NAMES[s.source] || s.source || 'Источник',55);
     return validUrl(s.url) ? `<a href="${escape(s.url)}">${name}</a>` : name;
@@ -87,8 +87,8 @@ export function card(j, expanded = false) {
   if (f.expires_ms != null && f.expires_ms <= Date.now()) lines.push('<b>⌛ Срок публикации истёк</b>');
   if (f.quality?.reason === 'closed') lines.push('<b>⌛ Работодатель сообщил о закрытии набора</b>');
   else if (f.quality?.reason) lines.push('<i>Объявление исключено из поиска проверкой качества.</i>');
-  lines.push('\n📅 <i>' + safe(f.date_label || 'Дата не указана',30) + '</i>');
-  lines.push('🔗 ' + (sources.length>1?'Источники: ':'Источник: ') + sources.join(' · '));
+  if (!visual) lines.push('\n📅 <i>' + safe(f.date_label || 'Дата не указана',30) + '</i>');
+  if (!visual) lines.push('🔗 ' + (sources.length>1?'Источники: ':'Источник: ') + sources.join(' · '));
   return lines.join('\n');
 }
 export function links(j, report = false) {
@@ -98,16 +98,17 @@ export function links(j, report = false) {
 }
 export const browserUrl = j => 'https://translate.google.com/translate?sl=auto&tl=ru&u=' + encodeURIComponent(j.url);
 export function jobButtons(j, mode = 's') {
-  return [...links(j), [button(mode.endsWith('f') ? '🔼 Свернуть' : '🔽 Подробнее', `job:${j.id}:${mode.startsWith('r') ? 'ru_' : ''}${mode.endsWith('f') ? 'short' : 'full'}`), button('☰ Действия',`actions:${j.id}:-1:${mode}`)], [button('🔎 Вакансии', 'search:0'), button('🏠 Меню', 'menu')]];
+  return [...links(j), [button(mode.endsWith('f') ? '🔼 Свернуть' : '🔽 Подробнее', `job:${j.id}:${mode.startsWith('r') ? 'ru_' : ''}${mode.endsWith('f') ? 'short' : 'full'}`), button('⭐ Отзывы',`ratings:${j.id}:list`)], [button('☰ Ещё',`actions:${j.id}:-1:${mode}`), button('🏠 Главное меню', 'menu')]];
 }
 export function viewerButtons(j, index, count, mode, failed) {
   const b = (label, action) => button(label, `view:${j.id}:${index}:${action}:${mode}`);
-  const rows = [...links(j), [b(mode.endsWith('f') ? '🔼 Свернуть' : '🔽 Подробнее', 'details'), button('☰ Действия',`actions:${j.id}:${index}:${mode}`)]];
-  if (failed && validUrl(j.url)) rows.push([{ text: '🌐 Перевести в браузере', url: browserUrl(j) }]);
-  const nav = [];
+  const rows = [...links(j)], nav = [];
   if (index) nav.push(b('⬅️', 'prev'));
   if (index + 1 < count) nav.push(b('➡️', 'next'));
   if (nav.length) rows.push(nav);
+  rows.push([b(mode.endsWith('f') ? '🔼 Свернуть' : '🔽 Подробнее', 'details'), button('⭐ Отзывы',`ratings:${j.id}:list`)]);
+  rows.push([button('☰ Ещё',`actions:${j.id}:${index}:${mode}`)]);
+  if (failed && validUrl(j.url)) rows.push([{ text: '🌐 Перевести в браузере', url: browserUrl(j) }]);
   return rows;
 }
 export function cardActions(j, index, mode, context = null, favorite = false, problem = false, canClose = false) {
@@ -120,23 +121,55 @@ export function cardActions(j, index, mode, context = null, favorite = false, pr
     [button('🚩 Пожаловаться',`report:${j.id}:choose:${index}:${mode}${context?':'+context.token:''}`)],
     [button('🙈 Скрыть из моего поиска',context?scoped('hide'):standalone?`hide:${j.id}`:`view:${j.id}:${index}:hide:${mode}`)],
     ...(vacancyWarnings(j).length?[[button('⚠️ Почему осторожнее',`risk:${j.id}${context?`:${context.token}:${index}:${mode}`:''}`)]]:[]),
-    [button('⬅️ К действиям',actions)],
+    [button('⬅️ К разделу «Ещё»',actions)],
   ]];
   return ['<b>Действия с вакансией</b>\n\n'+safe(j.title,100),[
     [button(favorite?'⭐ Убрать из избранного':'⭐ Сохранить',`favorite:${favorite?'remove':'add'}:${j.id}${context?':'+context.token+':'+index+':'+mode:''}`),button(mode.startsWith('r')?'🌐 Оригинал':'🇷🇺 Перевести',translate)],
-    [button('⭐ Отзывы',`ratings:${j.id}:list`),button('🔎 Похожие',`similar:${j.id}${context?':'+context.token:''}`)],
     [button('⚠️ Проблема с вакансией',context?scoped('problem'):actions+':problem')],
     ...(canClose?[[button('🔒 Закрыть вакансию',`admin:close:${j.id}:${index}:${mode}${context?':'+context.token:''}`)]]:[]),
     [button('↩️ К вакансии',back)],
   ]];
 }
+// Keep links and contacts selectable; the image contains only the overview.
+export function vacancyPresentation(j, mode, failed = false, prefix = '') {
+  const text=prefix+card(j,mode.endsWith('f'));
+  if(mode.endsWith('f'))return {text,mode,failed};
+  const caption=[prefix.trim(),'<b>'+safe(j.title || 'Вакансия',90)+'</b>'];
+  if(j.contacts?.length)caption.push('📞 '+safe(j.contacts.join(' · '),200));
+  const f=j._cloud;
+  const map=validUrl(f.map_url)?f.map_url:validUrl(f.location_url)?f.location_url:null;
+  if(map)caption.push('<a href="'+escape(map)+'">📍 '+safe(f.address || j.location || 'На карте',80)+'</a>');
+  caption.push('📅 '+safe(f.date_label || 'Дата не указана',30));
+  const sources=(j._sources || [{source:j.source,url:j.url}]).slice(0,4).map(s=>{
+    const name=safe(SOURCE_NAMES[s.source] || s.source || 'Источник',55);
+    return validUrl(s.url)?'<a href="'+escape(s.url)+'">'+name+'</a>':name;
+  });
+  caption.push('🔗 '+sources.join(' · '));
+  let image=card(j,false,true).replace(/€/g,'EUR');
+  const rating=j._rating;
+  if(rating?.count){
+    const n=Math.max(1,Math.min(5,Math.round(Number(rating.average))));
+    let block='★'.repeat(n)+'☆'.repeat(5-n)+'\n'+ratingLine(rating);
+    if(rating.latest_text)block+='\n\n<b>Последний отзыв · '+Number(rating.latest_stars)+'/5</b>\n«'+safe(rating.latest_text,160)+'»';
+    image=image.replace(ratingLine(rating),block);
+  } else image=image.replace(ratingLine(rating),'☆☆☆☆☆\nНет отзывов');
+  return {text,mode,failed,image,caption:caption.filter(Boolean).join('\n')};
+}
+export function vacancyVisual(result,prefix='') {
+  if(!result.image)return false;
+  const caption=prefix+result.caption;
+  // Telegram photo captions are limited to 1024 characters after parsing.
+  // Counting entities literally is conservative; keep the full text fallback.
+  if(caption.replace(/<[^>]*>/g,'').length>1024)return false;
+  return {text:result.image,caption};
+}
 export async function translatedCard(j, mode, fetch, store) {
-  if(store?.db)j={...j,_rating:await ratingSummary(store,j._duplicate_ids||[j.id])};
-  if (!mode.startsWith('r')) return { text: card(j, mode.endsWith('f')), mode, failed: false };
+  if(store?.db)j={...j,_rating:await ratingSummary(store,j._duplicate_ids||[j.id],!mode.endsWith('f'))};
+  if (!mode.startsWith('r')) return vacancyPresentation(j,mode);
   try {
     const [title, description] = await translateVacancy(j.id,clip(j.title,140),clip(j.description,1800,true),fetch,store);
-    return { text: '<i>🇷🇺 Перевод на русский</i>\n\n' + card({ ...j, title, description, _language_original:j.description, _language_title:j.title, _warnings: vacancyWarnings(j) }, mode.endsWith('f')), mode, failed: false };
+    return vacancyPresentation({ ...j, title, description, _language_original:j.description, _language_title:j.title, _warnings: vacancyWarnings(j) },mode,false,'<i>🇷🇺 Перевод на русский</i>\n\n');
   } catch {
-    return { text: 'Перевод сейчас недоступен. Попробуйте ещё раз или откройте его в браузере.\n\n' + card(j, mode.endsWith('f')), mode: mode.slice(1), failed: true };
+    return vacancyPresentation(j,mode.slice(1),true,'Перевод сейчас недоступен. Попробуйте ещё раз или откройте его в браузере.\n\n');
   }
 }
