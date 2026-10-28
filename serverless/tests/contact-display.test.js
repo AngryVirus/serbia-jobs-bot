@@ -12,13 +12,12 @@ test('publication links never masquerade as phone numbers, employer contact uses
  assert.equal(links(j)[0][0].url,j.url);
  assert.equal(cardActions(j,0,'s')[1].flat().filter(x=>x.url).length,1);
 });
-test('only complete phones and emails stay selectable, native copy button copies the same values',()=>{
+test('phones and emails stay plain clickable text without code blocks or copy buttons',()=>{
  const j=job(1,{contacts:['+381 11 3409 343','person@example.com','https://example.com/jobs/123456789','28.10.2026']});
  assert.deepEqual(contactDetails(j),{phones:['+381 11 3409 343'],emails:['person@example.com']});
  assert.equal(vacancyPresentation(j,'s').caption,'📞 +381 11 3409 343\n✉️ person@example.com');
- const copy=contactButtons(j).flat().find(x=>x.copy_text);
- assert.equal(copy.copy_text.text,'+381 11 3409 343\nperson@example.com');
- assert(!copy.callback_data);assert(!copy.url);
+ assert(!cardActions(j,0,'s')[1].flat().some(x=>x.copy_text||x.text.includes('Скопировать')));
+ assert.doesNotMatch(vacancyPresentation(j,'s').caption,/<(?:pre|code|blockquote)/);
  assert.deepEqual(contactDetails(job(2,{contacts:['064/2649-375','https://t.me/channel/234567890']})).phones,['064/2649-375']);
 });
 test('expanded descriptions preserve phone/email but remove web and Telegram links without altering data',()=>{

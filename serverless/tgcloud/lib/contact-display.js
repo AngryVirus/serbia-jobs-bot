@@ -36,9 +36,6 @@ export function contactButtons(job) {
   if(seen.has(key)||sources.some(s=>s===key||(name&&name===channel(s))))continue;
   seen.add(key);rows.push([{text:name?'💬 Контакт в Telegram':'🌐 Сайт для связи',url}]);
  }
- const {phones,emails}=contactDetails(job),values=[...phones,...emails];
- const copy=values.join('\n');
- if(copy&&copy.length<=256)rows.push([{text:'📋 Скопировать контакты',copy_text:{text:copy}}]);
  return rows;
 }
 export function vacancyDescription(job) {
