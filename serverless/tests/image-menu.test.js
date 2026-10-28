@@ -57,9 +57,9 @@ test('start, settings choices, reset and persisted text input are image-only and
  await click(f,1,'reset');assert.deepEqual((await f.store.user(1)).settings.keywords,[]);
  assert.equal(f.graphics.sends.length,1);assert(f.graphics.edits.every(p=>p.media && !p.text));
 });
-test('short vacancies are images with clickable captions; full details are text and replace the panel',async()=>{
- const f=await graphics();await f.store.putJob(job(1),true);await text(f,1,'/start');const imageId=f.graphics.last.message_id;
- await click(f,1,'search:0');assert(f.graphics.last.photo);assert.match(f.graphics.last.caption,/Повар &lt;&amp;&gt;/);assert.match(f.graphics.last.caption,/<a href=/);
+test('short vacancies are images with contact-only captions; full details are text and replace the panel',async()=>{
+ const f=await graphics();await f.store.putJob(job(1,{contacts:['contact@example.com']}),true);await text(f,1,'/start');const imageId=f.graphics.last.message_id;
+ await click(f,1,'search:0');assert(f.graphics.last.photo);assert.equal(f.graphics.last.caption,'📞 contact@example.com');assert.doesNotMatch(f.graphics.last.caption,/href=|Повар|Вакансия/);
  assert.equal(f.graphics.last.message_id,imageId);
  await click(f,1,'job:1:full');assert(f.graphics.last.text.includes('Нужен повар'));assert(f.graphics.deleted.includes(imageId));
  const textId=f.graphics.last.message_id;

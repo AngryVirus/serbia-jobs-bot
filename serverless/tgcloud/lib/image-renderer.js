@@ -2,7 +2,7 @@
 import { zlibSync, unzlibSync } from './image-codec.js';
 import { HEADER } from './image-header.js';
 import { FONTS, FONT_DATA } from './image-fonts.js';
-export const IMAGE_VERSION='belgrade-v3-rating-warning-vacancy-map';
+export const IMAGE_VERSION='belgrade-v3-rating-warning-vacancy-map-metadata';
 const W=960, BG=[251,246,236], INK=[22,45,67], MUTED=[100,117,129], BLUE=[44,106,160];
 export function fromBase64(value) {
  const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/',out=[];let bits=0,n=0;
@@ -24,7 +24,7 @@ export function imageHash(text) {
 const decode=s=>s.replace(/&#(x[0-9a-f]+|\d+);/gi,(_,n)=>{const c=n[0].toLowerCase()==='x'?parseInt(n.slice(1),16):Number(n);return c>=0&&c<=0x10ffff?String.fromCodePoint(c):'□';}).replace(/&(lt|gt|amp|quot|apos|#x27);/g,(_,n)=>({lt:'<',gt:'>',amp:'&',quot:'"',apos:"'",'#x27':"'"})[n]);
 export function categoryIcon(text) {
  const label=text.split(':')[0].trim();
- return {'Города':'pin','Формат работы':'laptop','Языки':'chat','Возраст вакансии':'clock','Наличие ВНЖ':'id','Требование ВНЖ':'id','ВНЖ':'id','Ключевые слова':'search','Исключения':'exclude','Зарплата':'coins','Без зарплаты':'coins','Уведомления':'bell','Скрытые вакансии':'eye'}[label] || null;
+ return {'Города':'pin','Формат работы':'laptop','Языки':'chat','Возраст вакансии':'clock','Дата объявления':'clock','Наличие ВНЖ':'id','Требование ВНЖ':'id','ВНЖ':'id','Ключевые слова':'search','Исключения':'exclude','Зарплата':'coins','Без зарплаты':'coins','Уведомления':'bell','Скрытые вакансии':'eye'}[label] || null;
 }
 // Small antialiased vector glyphs, drawn locally without emoji fonts or requests.
 function drawIcon(pixel,kind,cx,cy) {

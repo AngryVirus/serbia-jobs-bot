@@ -29,8 +29,8 @@ test('preview uses only latest published distinct-author review, escapes and cli
 test('location has a rendered map icon; reviews have one entry on each card and none in actions',async()=>{
  const {jobButtons,viewerButtons,cardActions}=await import('../tgcloud/lib/ui.js');
  const j=job(1),f=await fixture(),r=await translatedCard(j,'s',f.fetch,f.store);
- const location=imageDocument(r.image).lines.find(l=>l.text==='Beograd');assert.equal(location.icon,'map');
- assert.equal(renderImage(r.image).icons,3);
+ const location=imageDocument(r.image).lines.find(l=>l.text.startsWith('Beograd ·'));assert.equal(location.icon,'map');
+ assert.equal(renderImage(r.image).icons,4);
  for(const rows of [jobButtons(j),viewerButtons(j,0,2,'s',false)]){
   assert.equal(rows.flat().filter(b=>b.callback_data==='ratings:1:list').length,1);
   assert(rows.flat().some(b=>b.callback_data?.startsWith('actions:')));
@@ -42,7 +42,9 @@ test('overlong photo caption falls back to selectable text instead of losing lin
  const {vacancyVisual}=await import('../tgcloud/lib/ui.js');
  const f=await fixture(),r=await translatedCard(job(1),'s',f.fetch,f.store);
  assert(vacancyVisual(r));
- assert.equal(vacancyVisual(r,'Описание '.repeat(150)),false);
+ assert.equal(vacancyVisual({...r,caption:'x'.repeat(1025)}),false);
+ assert.match(vacancyVisual(r,'Вакансия 2 из 205').text,/Вакансия 2 из 205/);
+ assert.doesNotMatch(vacancyVisual(r,'Вакансия 2 из 205').caption,/Вакансия/);
  assert.match(r.text,/href=/);
  assert.equal(vacancyVisual(await translatedCard(job(1),'f',f.fetch,f.store)),false);
 });

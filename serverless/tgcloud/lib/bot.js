@@ -16,7 +16,7 @@ import { OWNER_ID, complaint } from './owner.js';
 import { adRoute, adInput } from './ads.js';
 import { searchRoute, searchInput, replaySearches } from './searches.js';
 import { openDiscovery, discoveryRoute, replayDiscovery } from './discovery.js';
-import { button, BACK, safe, menu, filtersPanel, choicePanel, emptyText, jobButtons, translatedCard, viewerButtons, browserUrl, cardActions, vacancyVisual } from './ui.js';
+import { button, BACK, safe, menu, filtersPanel, choicePanel, emptyText, jobButtons, translatedCard, viewerButtons, browserUrl, cardActions, vacancyVisual, sourceChoice } from './ui.js';
 const DELETED_TEXT='Ваши данные удалены. Уведомления выключены. /start — начать заново.';
 const discoveryAction=action=>/^(notice:|discover:|risk:|search:0$|plans:(?:open|new):)/.test(action||'');
 const inputMutation=action=>typeof action==='string' && (discoveryAction(action)||/^plans(?::|$)/.test(action)||/^(notify:(off|instant|daily|stop)|toggle_salary|reset|delete_confirm)$/.test(action) || /^(choose:|set:|hide:|restore:)/.test(action) || /^view:[^:]+:[^:]+:hide:/.test(action) || action.startsWith('input:') && Object.hasOwn(PROMPTS,action.slice(6)));
@@ -112,7 +112,7 @@ export class Bot {
     if(jobId===null && action==='show') {await usage(this.store,'searches');if(!jobs.length)await usage(this.store,'empty');}
     if (!jobs.length) return this.panel(notice + (all.length ? emptyText(groups, this.s) : '⏳ База ещё наполняется. Попробуйте поиск через несколько минут.'), [[button('⚙️ Фильтры', 'filters'), button('🙈 Скрытые', 'hidden:0')], ...BACK]);
     const current = jobs.findIndex(isAnchor);
-    if (jobId !== null && current < 0 && ['show','details','translate'].includes(action)) { notice = '<i>Подборка изменилась — показана актуальная вакансия.</i>\n\n'; action = 'show'; mode = 's'; }
+    if (jobId !== null && current < 0 && ['show','details','translate','open'].includes(action)) { notice = '<i>Подборка изменилась — показана актуальная вакансия.</i>\n\n'; action = 'show'; mode = 's'; }
     if (current >= 0) index = current + (action === 'next' ? 1 : action === 'prev' ? -1 : 0);
     else if (action === 'prev') index--;
     if (afterId !== null) { const anchor = all.findIndex(j => j.id === afterId); if (anchor >= 0) { const before = new Set(all.slice(0, anchor+1).map(j => j.id)); index = jobs.filter(j => j._duplicate_ids.some(id => before.has(id))).length; } }
@@ -120,10 +120,11 @@ export class Bot {
     if (action === 'details') mode = mode.slice(0,-1) + (mode.endsWith('f') ? 's' : 'f');
     else if (action === 'translate') mode = mode.startsWith('r') ? mode.slice(1) : 'r'+mode;
     else if (['next','prev','hide'].includes(action)) mode = 's';
+    if(action==='open')return this.panel(...sourceChoice(jobs[index],`view:${jobs[index].id}:${index}:show:${mode}`));
     const result = await translatedCard(jobs[index], mode, this.fetch, this.store);
     await this.panel(notice + `<i>Вакансия ${index+1} из ${jobs.length}</i>\n\n` + result.text, viewerButtons(jobs[index], index, jobs.length, result.mode, result.failed),this.mid,vacancyVisual(result,notice+`<i>Вакансия ${index+1} из ${jobs.length}</i>\n`));
   }
-  async vacancy(action) {
+  async vacancy(action,open = false) {
     const m = /^(job|hide|restore):([1-9]\d*)(?::(full|short|ru_full|ru_short|\d+))?$/.exec(action);
     if (!m || !positive(Number(m[2]))) return this.home();
     const [,kind,rawId,arg] = m, id = Number(rawId), ids = hidden(this.s);
@@ -141,13 +142,14 @@ export class Bot {
     if (kind === 'hide') { ids.add(id); await this.patchInput({ hidden_jobs: [...ids] }); }
     if (group.members.some(j => ids.has(j.id))) return this.panel('<b>🙈 Вакансия скрыта</b>\n' + safe(j.title,100), [[button('↩️ Вернуть', `restore:${id}`), button('🙈 Скрытые', 'hidden:0')], ...BACK]);
     const mode = (arg?.startsWith('ru_') ? 'r' : '') + (arg?.endsWith('full') ? 'f' : 's');
+    if(open)return this.panel(...sourceChoice(j,`job:${id}:${arg || 'short'}`));
     const result = await translatedCard(j, mode, this.fetch, this.store), rows = jobButtons(j,result.mode);
     if (result.failed && validUrl(j.url)) rows.push([{ text: '🌐 Перевести в браузере', url: browserUrl(j) }]);
     await this.panel(result.text, rows, this.mid, vacancyVisual(result));
   }
   async route(action) {
     if (typeof action !== 'string') return this.home();
-    const kind = /^report:.*:(not_job|duplicate|outdated)(:|$)/.test(action) ? 'report' : /translate|^job:\d+:ru_|^(view|discover):.*:(rs|rf)$/.test(action) ? 'translate' : /^(notice:|search:|view:|job:|discover:|risk:|plans:(?:open|new):)/.test(action) ? 'search' : null;
+    const kind = /^report:.*:(not_job|duplicate|outdated)(:|$)/.test(action) ? 'report' : /translate|^job:\d+:ru_|^(view|discover):.*:(rs|rf)$/.test(action) ? 'translate' : /^(notice:|search:|view:|job:|open:|discover:|risk:|plans:(?:open|new):)/.test(action) ? 'search' : null;
     if(kind) {
       const [limit,seconds]={search:[40,60],translate:[10,60],report:[5,60]}[kind];
       const wait=await this.store.rate(`${this.uid}:${kind}`,limit,seconds);
@@ -177,6 +179,10 @@ export class Bot {
       await this.patchInput(patch,'notifications'); return this.notifications();
     }
     let m;
+    if((m=/^open:([1-9]\d*):(-1|\d+):(s|f|rs|rf)$/.exec(action)) && positive(Number(m[1])) && Number(m[2])<=1000000){
+      if(Number(m[2])>=0)return this.show(Number(m[2]),Number(m[1]),'open',m[3]);
+      return this.vacancy(`job:${m[1]}:${m[3].startsWith('r')?'ru_':''}${m[3].endsWith('f')?'full':'short'}`,true);
+    }
     if(action.startsWith('ratings:'))return ratingRoute(this,action);
     if (action === 'admin' || action.startsWith('admin:')) return staffRoute(this,action);
     if ((m = /^actions:([1-9]\d*):(-1|\d+):(s|f|rs|rf)(?::(problem))?$/.exec(action)) && positive(Number(m[1])) && Number(m[2])<=1000000) {
