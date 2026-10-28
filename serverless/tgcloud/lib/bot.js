@@ -16,16 +16,16 @@ import { OWNER_ID, complaint } from './owner.js';
 import { adRoute, adInput } from './ads.js';
 import { searchRoute, searchInput, replaySearches } from './searches.js';
 import { openDiscovery, discoveryRoute, replayDiscovery } from './discovery.js';
-import { button, BACK, safe, menu, filtersPanel, choicePanel, emptyText, jobButtons, translatedCard, viewerButtons, browserUrl, cardActions } from './ui.js';
+import { button, BACK, safe, menu, filtersPanel, choicePanel, emptyText, jobButtons, translatedCard, viewerButtons, browserUrl, cardActions, vacancyVisual } from './ui.js';
 const DELETED_TEXT='Ваши данные удалены. Уведомления выключены. /start — начать заново.';
-const discoveryAction=action=>/^(notice:|discover:|similar:|risk:|search:0$|plans:(?:open|new):)/.test(action||'');
+const discoveryAction=action=>/^(notice:|discover:|risk:|search:0$|plans:(?:open|new):)/.test(action||'');
 const inputMutation=action=>typeof action==='string' && (discoveryAction(action)||/^plans(?::|$)/.test(action)||/^(notify:(off|instant|daily|stop)|toggle_salary|reset|delete_confirm)$/.test(action) || /^(choose:|set:|hide:|restore:)/.test(action) || /^view:[^:]+:[^:]+:hide:/.test(action) || action.startsWith('input:') && Object.hasOwn(PROMPTS,action.slice(6)));
 const inputScreen=action=>typeof action!=='string'?'menu':discoveryAction(action)?'discovery':/^plans(?::|$)/.test(action)?'plans':/^(choose|set):/.test(action)?'filters':/^notify:/.test(action)?'notifications':action==='toggle_salary'||action==='reset'?'filters':action==='delete_confirm'?'deleted':action?.startsWith('input:')?action:'menu';
 const PROMPTS = { keywords: 'Введите слова или фразы через запятую. Достаточно совпадения одного. Для распространённых профессий учитываются формы слов: «повар» найдёт «повара». «-» — очистить.', exclusions: 'Введите исключения через запятую. «-» — очистить.', salary: 'Введите минимальную зарплату в месяц: 1000 EUR или 120000 RSD. Сравниваем только выбранную валюту; почасовую и годовую оплату в месячную не пересчитываем. Объявления без суммы зависят от переключателя «Без зарплаты». «-» — снять фильтр.' };
 export class Bot {
   constructor(deps) { this.api = deps.api; this.fetch = deps.fetch; this.store = new Store(deps.db); this.InputFile=deps.InputFile; }
   async panel(text, rows = BACK, mid = this.mid, visual = true) {
-    if(this.InputFile) return visual ? imagePanel(this,text,rows,mid) : textPanel(this,text,rows,mid);
+    if(this.InputFile) return visual ? imagePanel(this,visual.text || text,rows,mid,visual.caption || '') : textPanel(this,text,rows,mid);
     const params = { chat_id: this.chat, text, parse_mode: 'HTML', reply_markup: { inline_keyboard: rows }, link_preview_options: { is_disabled: true } };
     if (mid) {
       try { await this.api.editMessageText({ ...params, message_id: mid }); return; }
@@ -121,7 +121,7 @@ export class Bot {
     else if (action === 'translate') mode = mode.startsWith('r') ? mode.slice(1) : 'r'+mode;
     else if (['next','prev','hide'].includes(action)) mode = 's';
     const result = await translatedCard(jobs[index], mode, this.fetch, this.store);
-    await this.panel(notice + `<i>Вакансия ${index+1} из ${jobs.length}</i>\n\n` + result.text, viewerButtons(jobs[index], index, jobs.length, result.mode, result.failed),this.mid,false);
+    await this.panel(notice + `<i>Вакансия ${index+1} из ${jobs.length}</i>\n\n` + result.text, viewerButtons(jobs[index], index, jobs.length, result.mode, result.failed),this.mid,vacancyVisual(result,notice+`<i>Вакансия ${index+1} из ${jobs.length}</i>\n`));
   }
   async vacancy(action) {
     const m = /^(job|hide|restore):([1-9]\d*)(?::(full|short|ru_full|ru_short|\d+))?$/.exec(action);
@@ -143,11 +143,11 @@ export class Bot {
     const mode = (arg?.startsWith('ru_') ? 'r' : '') + (arg?.endsWith('full') ? 'f' : 's');
     const result = await translatedCard(j, mode, this.fetch, this.store), rows = jobButtons(j,result.mode);
     if (result.failed && validUrl(j.url)) rows.push([{ text: '🌐 Перевести в браузере', url: browserUrl(j) }]);
-    await this.panel(result.text, rows, this.mid, false);
+    await this.panel(result.text, rows, this.mid, vacancyVisual(result));
   }
   async route(action) {
     if (typeof action !== 'string') return this.home();
-    const kind = /^report:.*:(not_job|duplicate|outdated)(:|$)/.test(action) ? 'report' : /translate|^job:\d+:ru_|^(view|discover):.*:(rs|rf)$/.test(action) ? 'translate' : /^(notice:|search:|view:|job:|discover:|similar:|risk:|plans:(?:open|new):)/.test(action) ? 'search' : null;
+    const kind = /^report:.*:(not_job|duplicate|outdated)(:|$)/.test(action) ? 'report' : /translate|^job:\d+:ru_|^(view|discover):.*:(rs|rf)$/.test(action) ? 'translate' : /^(notice:|search:|view:|job:|discover:|risk:|plans:(?:open|new):)/.test(action) ? 'search' : null;
     if(kind) {
       const [limit,seconds]={search:[40,60],translate:[10,60],report:[5,60]}[kind];
       const wait=await this.store.rate(`${this.uid}:${kind}`,limit,seconds);
@@ -162,7 +162,7 @@ export class Bot {
       return result;
     }
     if(action==='library'||/^(favorite|favorites):/.test(action))return libraryRoute(this,action);
-    if(/^(notice:|discover:|similar:|risk:)/.test(action))return discoveryRoute(this,action);
+    if(/^(notice:|discover:|risk:)/.test(action))return discoveryRoute(this,action);
     action = action.replace(/^(choose|set):freshness:(today|yesterday)(?=:|$)/, '$1:freshness:7');
     if (action === 'menu' || action === 'start' || action === 'cancel') return this.home();
     if(action==='preferences')return this.preferences();

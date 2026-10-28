@@ -16,9 +16,9 @@ class InputFile {constructor(bytes,name,options){this.bytes=bytes;this.name=name
 async function graphics(){
  const f=await fixture(),state={next:100,sends:[],edits:[],deleted:[],messages:new Map(),last:null};
  f.InputFile=InputFile;f.graphics=state;
- const photo=p=>({message_id:p.message_id,reply_markup:p.reply_markup,chat:{id:p.chat_id,type:'private'},photo:[{file_id:typeof p.photo==='string'?p.photo:'file-'+imageHash(String(p.photo.bytes.length)+':'+imageHash([...p.photo.bytes.slice(-1000)].join(',')))}]});
- f.api.sendPhoto=async p=>{assert(!p.caption);state.sends.push({...p,kind:'photo'});const m=photo({...p,message_id:++state.next});state.messages.set(m.message_id,m);state.last=m;return m;};
- f.api.editMessageMedia=async p=>{assert.equal(p.media.type,'photo');assert.equal(p.media.caption,'');state.edits.push(p);const m=photo({...p,photo:p.media.media});state.messages.set(m.message_id,m);state.last=m;return m;};
+ const photo=p=>({message_id:p.message_id,caption:p.caption || '',reply_markup:p.reply_markup,chat:{id:p.chat_id,type:'private'},photo:[{file_id:typeof p.photo==='string'?p.photo:'file-'+imageHash(String(p.photo.bytes.length)+':'+imageHash([...p.photo.bytes.slice(-1000)].join(',')))}]});
+ f.api.sendPhoto=async p=>{assert.equal(p.parse_mode,'HTML');state.sends.push({...p,kind:'photo'});const m=photo({...p,message_id:++state.next});state.messages.set(m.message_id,m);state.last=m;return m;};
+ f.api.editMessageMedia=async p=>{assert.equal(p.media.type,'photo');assert.equal(p.media.parse_mode,'HTML');state.edits.push(p);const m=photo({...p,caption:p.media.caption,photo:p.media.media});state.messages.set(m.message_id,m);state.last=m;return m;};
  f.api.sendMessage=async p=>{state.sends.push({...p,kind:'text'});const m={message_id:++state.next,text:p.text,reply_markup:p.reply_markup,chat:{id:p.chat_id,type:'private'}};state.messages.set(m.message_id,m);state.last=m;return m;};
  f.api.editMessageText=async p=>{if(state.messages.get(p.message_id)?.photo)throw {code:400,description:'There is no text in the message to edit'};state.edits.push(p);const m={message_id:p.message_id,text:p.text,reply_markup:p.reply_markup,chat:{id:p.chat_id,type:'private'}};state.messages.set(m.message_id,m);state.last=m;return m;};
  f.api.deleteMessage=async p=>{state.deleted.push(p.message_id);state.messages.delete(p.message_id);};
@@ -57,12 +57,14 @@ test('start, settings choices, reset and persisted text input are image-only and
  await click(f,1,'reset');assert.deepEqual((await f.store.user(1)).settings.keywords,[]);
  assert.equal(f.graphics.sends.length,1);assert(f.graphics.edits.every(p=>p.media && !p.text));
 });
-test('vacancies remain text, returning to menus uses media, and old photo controls are removed',async()=>{
+test('short vacancies are images with clickable captions; full details are text and replace the panel',async()=>{
  const f=await graphics();await f.store.putJob(job(1),true);await text(f,1,'/start');const imageId=f.graphics.last.message_id;
- await click(f,1,'search:0');assert.equal(f.graphics.sends.at(-1).kind,'text');assert(f.graphics.last.text.includes('Повар'));
- assert(f.graphics.deleted.includes(imageId));const cardId=f.graphics.last.message_id;
- await click(f,1,'filters');assert.equal(f.graphics.last.message_id,cardId);assert(f.graphics.last.photo);
- await click(f,1,'job:1:full');assert(f.graphics.last.text.includes('Повар'));
+ await click(f,1,'search:0');assert(f.graphics.last.photo);assert.match(f.graphics.last.caption,/Повар &lt;&amp;&gt;/);assert.match(f.graphics.last.caption,/<a href=/);
+ assert.equal(f.graphics.last.message_id,imageId);
+ await click(f,1,'job:1:full');assert(f.graphics.last.text.includes('Нужен повар'));assert(f.graphics.deleted.includes(imageId));
+ const textId=f.graphics.last.message_id;
+ await click(f,1,'job:1:short');assert(f.graphics.last.photo);assert.equal(f.graphics.last.message_id,textId);
+ await click(f,1,'menu');assert.equal(f.graphics.last.caption,'');assert.equal(f.graphics.messages.size,1);
 });
 test('file_id cache is private, bounded, does not contain text, and invalid files are regenerated',async()=>{
  const f=await graphics();await text(f,1,'/start');await click(f,1,'filters');await click(f,1,'menu');
@@ -150,4 +152,21 @@ test('failed deletion leaves old controls inert and never removes the replacemen
  f.api.deleteMessage=async()=>{throw {code:400};};f.api.editMessageReplyMarkup=async p=>disabled.push(p);
  await text(f,1,'/menu');assert.notEqual(f.graphics.last.message_id,id);assert(disabled.some(p=>p.message_id===id&&p.reply_markup.inline_keyboard.length===0));
  assert(!disabled.some(p=>p.message_id===f.graphics.last.message_id));
+});
+
+test('reviews open directly from a vacancy, show the list first and explain rules before stars',async()=>{
+ const f=await graphics();await f.store.putJob(job(1),true);await text(f,1,'/start');await click(f,1,'search:0');
+ const controls=()=>f.graphics.last.reply_markup.inline_keyboard.flat();
+ assert.equal(controls().filter(b=>b.callback_data==='ratings:1:list').length,1);
+ const actions=controls().find(b=>b.text==='☰ Ещё').callback_data;
+ await click(f,1,actions);assert(!controls().some(b=>b.callback_data?.startsWith('ratings:')));
+ await click(f,1,controls().find(b=>b.text==='↩️ К вакансии').callback_data);
+ await click(f,1,'ratings:1:list');assert(f.graphics.last.photo);
+ assert(controls().some(b=>b.callback_data==='ratings:1:start'));
+ assert(!controls().some(b=>/^ratings:1:[1-5]$/.test(b.callback_data)));
+ await click(f,1,'ratings:1:start');assert(f.graphics.last.photo);
+ assert.equal(controls().filter(b=>/^ratings:1:[1-5]$/.test(b.callback_data)).length,5);
+ assert(!((await f.store.user(1)).settings.review_draft));
+ await click(f,1,'ratings:1:4');assert.equal((await f.store.user(1)).settings.review_draft.stars,4);
+ assert.equal((await f.store.records('vacancy_review')).length,0);
 });

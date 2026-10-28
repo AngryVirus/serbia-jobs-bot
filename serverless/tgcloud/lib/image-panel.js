@@ -11,7 +11,7 @@ async function removeOld(bot,id) {
   try {await bot.api.editMessageReplyMarkup({chat_id:bot.chat,message_id:id,reply_markup:{inline_keyboard:[]}});}catch {/* no delivery or queue side effects */}
  }
 }
-export async function imagePanel(bot,text,rows,mid) {
+export async function imagePanel(bot,text,rows,mid,caption='') {
  const key=bot.uid+':'+imageHash(IMAGE_VERSION+'\n'+text),now=Date.now();
  const old=bot.s && await bot.store.db.get("SELECT payload FROM sjc_records WHERE kind='menu_image' AND record_key=:key",{':key':key});
  const cached=old&&JSON.parse(old.payload);
@@ -21,14 +21,14 @@ export async function imagePanel(bot,text,rows,mid) {
  const keyboard={inline_keyboard:rows};
  const deliver=async()=>{
   if(mid) {
-   try {return await bot.api.editMessageMedia({chat_id:bot.chat,message_id:mid,media:{type:'photo',media:photo,caption:''},reply_markup:keyboard});}
+   try {return await bot.api.editMessageMedia({chat_id:bot.chat,message_id:mid,media:{type:'photo',media:photo,caption,parse_mode:'HTML'},reply_markup:keyboard});}
    catch(error){if(unchanged(error))return {message_id:mid};if(error.code!==400)throw error;
     // A cached Telegram file can expire. Retry with local bytes exactly once.
     if(wasCached && /file|identifier|media.*invalid/i.test(error.description || error.message || '')){photo=make();wasCached=false;return deliver();}
     if(!/can't be edited|cannot be edited|message to edit not found|no media|no photo|not a media|type of message|media.*not supported/i.test(error.description || error.message || ''))throw error;
    }
   }
-  try {return await bot.api.sendPhoto({chat_id:bot.chat,photo,reply_markup:keyboard});}
+  try {return await bot.api.sendPhoto({chat_id:bot.chat,photo,caption,parse_mode:'HTML',reply_markup:keyboard});}
   catch(error){if(wasCached&&error.code===400&&/file|identifier/i.test(error.description || error.message || '')){photo=make();wasCached=false;return deliver();}throw error;}
  };
  message=await deliver();

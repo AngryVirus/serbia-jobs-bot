@@ -11,7 +11,7 @@ const bot=(f,uid)=>({store:f.store,api:f.api,uid,chat:uid,actor:{id:uid,name:'С
 async function seed(){const f=await fixture();await f.store.putJob(job(1),true);for(const uid of [77,78,OWNER_ID,2,3])await f.store.ensure(uid,uid);await f.store.record('staff_role',2,{role:'moderator'});await f.store.record('staff_role',3,{role:'administrator'});return f;}
 async function add(f,uid=77,stars=2,id=1){assert(await submitReview(bot(f,uid),{job_id:id,stars,token:'drafttoken12'},'Реальный опыт отклика.'));return (await f.store.records('vacancy_review')).find(r=>r.uid===uid);}
 test('authenticated author, moderation, public privacy and a single review action',async()=>{
- const f=await seed();await handle(f,callback(77,'actions:1:-1:s'));assert.equal(last(f).reply_markup.inline_keyboard.flat().filter(b=>b.callback_data==='ratings:1:list').length,1);
+ const f=await seed();await handle(f,callback(77,'job:1:short'));assert.equal(last(f).reply_markup.inline_keyboard.flat().filter(b=>b.callback_data==='ratings:1:list').length,1);
  await handle(f,callback(77,'ratings:1:start'));assert.match(last(f).text,/Команда увидит/);
  await handle(f,callback(77,'ratings:1:2'));const update=message(77,'Мой опыт <b>важен</b>');Object.assign(update.message.from,{first_name:'Иван',username:'ActualUser'});
  await handle(f,update);await handle(f,update);
