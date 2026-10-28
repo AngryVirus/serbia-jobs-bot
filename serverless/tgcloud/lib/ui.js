@@ -1,7 +1,7 @@
 import {ratingSummary,ratingLine} from './rating-data.js';
 import { OPTIONS, TITLES, SOURCE_NAMES } from './config.js';
 import { selected, hidden, validUrl } from './filters.js';
-import { catalogDiagnostics } from './catalog.js';
+import { catalogDiagnostics,canonicalUrl } from './catalog.js';
 import { translateVacancy } from './translation.js';
 import { vacancyWarnings } from './risks.js';
 import { displayLanguages } from './language-display.js';
@@ -62,10 +62,11 @@ export function emptyText(jobs, s) {
   return text;
 }
 export function card(j, expanded = false, visual = false) {
-  const f = j._cloud, lines = ['<b>💼 ' + safe(j.title || 'Вакансия', expanded ? 140 : 90) + '</b>'];
+  const f = j._cloud, lines = ['<b>💼 ' + safe(j.title || 'Вакансия', expanded || visual ? 140 : 90) + '</b>'];
   let place = safe(j.location || (j.remote === true ? 'Удалённо' : 'Место не указано'), expanded ? 110 : 55);
-  if (validUrl(f.location_url) && !validUrl(f.map_url)) place = `<a href="${escape(f.location_url)}">${j.location ? place : 'На карте'}</a>`;
+  if (!visual && validUrl(f.location_url) && !validUrl(f.map_url)) place = `<a href="${escape(f.location_url)}">${j.location ? place : 'На карте'}</a>`;
   if (j.company) lines.push('🏢 ' + safe(j.company, expanded ? 80 : 40));
+  if(visual && f.address && String(f.address).trim()!==String(j.location || '').trim())place+=' · '+safe(f.address,120);
   lines.push('📍 ' + place);
   if (!visual && validUrl(f.map_url)) lines.push(`🗺 <a href="${escape(f.map_url)}">${safe(f.address || 'На карте', 180)}</a>`);
   const periods = { month: 'месяц', hour: 'час', year: 'год' };
@@ -76,6 +77,7 @@ export function card(j, expanded = false, visual = false) {
   if (f.experience === true || f.experience === false) lines.push('🛠 Опыт: ' + (f.experience ? 'требуется' : 'можно без опыта'));
   if (f.paperwork_assistance === true || f.paperwork_assistance === false) lines.push('📄 Помощь с документами: ' + (f.paperwork_assistance ? 'указана работодателем' : 'не предоставляется'));
   if ((j._warnings || vacancyWarnings(j)).length) lines.push('\n⚠️ В тексте есть условия, требующие осторожности. Подробнее — «Ещё» → «Проблема с вакансией».');
+  if(visual)lines.push('📅 Дата объявления: '+safe(f.date_label || 'не указана',30));
   lines.push('\n'+ratingLine(j._rating));
   if (!visual && j.description) lines.push('\n<blockquote>' + safe(j.description, expanded ? 1800 : 150, expanded) + '</blockquote>');
   if (!visual && j.contacts?.length) lines.push('📞 Контакты: ' + safe(j.contacts.join(' · '), expanded ? 200 : 90));
@@ -91,18 +93,36 @@ export function card(j, expanded = false, visual = false) {
   if (!visual) lines.push('🔗 ' + (sources.length>1?'Источники: ':'Источник: ') + sources.join(' · '));
   return lines.join('\n');
 }
-export function links(j, report = false) {
-  const rows = validUrl(j.url) ? [[{ text: '🔗 Открыть объявление', url: j.url }]] : [];
+export function openingLinks(j) {
+  const result={};
+  for(const entry of [{url:j.url},...(j._sources || [])]) {
+    if(!validUrl(entry.url))continue;
+    const telegram=canonicalUrl(entry.url).startsWith('t.me/'),kind=telegram?'telegram':'site';
+    if(result[kind])continue;
+    // Public /s/ previews should open the Telegram post in the app.
+    result[kind]=telegram?entry.url.replace(/^https?:\/\/(?:www\.)?(?:t\.me|telegram\.me)(?::(?:443|80))?\//i,'https://t.me/').replace(/^https:\/\/t\.me\/s\//i,'https://t.me/'):entry.url;
+  }
+  return result;
+}
+export function sourceChoice(j,back) {
+  const targets=openingLinks(j),choices=[];
+  if(targets.site)choices.push({text:'🌐 На сайте',url:targets.site});
+  if(targets.telegram)choices.push({text:'✈️ В Telegram',url:targets.telegram});
+  return ['<b>Где открыть объявление?</b>\n\n'+safe(j.title || 'Вакансия',140)+'\n\n'+(choices.length?'Выберите источник.':'Ссылка на объявление больше недоступна.'),[...(choices.length?[choices]:[]),[button('↩️ К вакансии',back)]]];
+}
+export function links(j, report = false, openAction = `open:${j.id}:-1:s`) {
+  const targets=openingLinks(j),urls=Object.values(targets);
+  const rows=urls.length?[[urls.length===1?{text:'🔗 Открыть объявление',url:urls[0]}:button('🔗 Открыть объявление',openAction)]]:[];
   if (report) rows.push([button('🚩 Пожаловаться',`report:${j.id}`)]);
   return rows;
 }
 export const browserUrl = j => 'https://translate.google.com/translate?sl=auto&tl=ru&u=' + encodeURIComponent(j.url);
 export function jobButtons(j, mode = 's') {
-  return [...links(j), [button(mode.endsWith('f') ? '🔼 Свернуть' : '🔽 Подробнее', `job:${j.id}:${mode.startsWith('r') ? 'ru_' : ''}${mode.endsWith('f') ? 'short' : 'full'}`), button('⭐ Отзывы',`ratings:${j.id}:list`)], [button('☰ Ещё',`actions:${j.id}:-1:${mode}`), button('🏠 Главное меню', 'menu')]];
+  return [...links(j,false,`open:${j.id}:-1:${mode}`), [button(mode.endsWith('f') ? '🔼 Свернуть' : '🔽 Подробнее', `job:${j.id}:${mode.startsWith('r') ? 'ru_' : ''}${mode.endsWith('f') ? 'short' : 'full'}`), button('⭐ Отзывы',`ratings:${j.id}:list`)], [button('☰ Ещё',`actions:${j.id}:-1:${mode}`), button('🏠 Главное меню', 'menu')]];
 }
 export function viewerButtons(j, index, count, mode, failed) {
   const b = (label, action) => button(label, `view:${j.id}:${index}:${action}:${mode}`);
-  const rows = [...links(j)], nav = [];
+  const rows = [...links(j,false,`open:${j.id}:${index}:${mode}`)], nav = [];
   if (index) nav.push(b('⬅️', 'prev'));
   if (index + 1 < count) nav.push(b('➡️', 'next'));
   if (nav.length) rows.push(nav);
@@ -130,21 +150,11 @@ export function cardActions(j, index, mode, context = null, favorite = false, pr
     [button('↩️ К вакансии',back)],
   ]];
 }
-// Keep links and contacts selectable; the image contains only the overview.
+// Keep employer contacts selectable; vacancy metadata belongs in the image.
 export function vacancyPresentation(j, mode, failed = false, prefix = '') {
   const text=prefix+card(j,mode.endsWith('f'));
   if(mode.endsWith('f'))return {text,mode,failed};
-  const caption=[prefix.trim(),'<b>'+safe(j.title || 'Вакансия',90)+'</b>'];
-  if(j.contacts?.length)caption.push('📞 '+safe(j.contacts.join(' · '),200));
-  const f=j._cloud;
-  const map=validUrl(f.map_url)?f.map_url:validUrl(f.location_url)?f.location_url:null;
-  if(map)caption.push('<a href="'+escape(map)+'">📍 '+safe(f.address || j.location || 'На карте',80)+'</a>');
-  caption.push('📅 '+safe(f.date_label || 'Дата не указана',30));
-  const sources=(j._sources || [{source:j.source,url:j.url}]).slice(0,4).map(s=>{
-    const name=safe(SOURCE_NAMES[s.source] || s.source || 'Источник',55);
-    return validUrl(s.url)?'<a href="'+escape(s.url)+'">'+name+'</a>':name;
-  });
-  caption.push('🔗 '+sources.join(' · '));
+  const caption=j.contacts?.length?'📞 '+safe(j.contacts.join(' · '),200):'';
   let image=card(j,false,true).replace(/€/g,'EUR');
   const rating=j._rating;
   if(rating?.count){
@@ -153,15 +163,15 @@ export function vacancyPresentation(j, mode, failed = false, prefix = '') {
     if(rating.latest_text)block+='\n\n<b>Последний отзыв · '+Number(rating.latest_stars)+'/5</b>\n«'+safe(rating.latest_text,160)+'»';
     image=image.replace(ratingLine(rating),block);
   } else image=image.replace(ratingLine(rating),'☆☆☆☆☆\nНет отзывов');
-  return {text,mode,failed,image,caption:caption.filter(Boolean).join('\n')};
+  return {text,mode,failed,image,caption,imageNotice:prefix};
 }
 export function vacancyVisual(result,prefix='') {
   if(!result.image)return false;
-  const caption=prefix+result.caption;
-  // Telegram photo captions are limited to 1024 characters after parsing.
-  // Counting entities literally is conservative; keep the full text fallback.
+  const caption=result.caption;
   if(caption.replace(/<[^>]*>/g,'').length>1024)return false;
-  return {text:result.image,caption};
+  const context=(prefix+(result.imageNotice || '')).trim();
+  const image=context?result.image.replace('\n','\n'+context+'\n\n'):result.image;
+  return {text:image,caption};
 }
 export async function translatedCard(j, mode, fetch, store) {
   if(store?.db)j={...j,_rating:await ratingSummary(store,j._duplicate_ids||[j.id],!mode.endsWith('f'))};

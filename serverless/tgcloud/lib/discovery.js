@@ -8,7 +8,7 @@ import { savedSearches, snapshotFilters } from './searches.js';
 import { vacancyWarnings } from './risks.js';
 import { hasFavorite } from './library.js';
 import { freshness, usage } from './analytics.js';
-import { button, BACK, safe, emptyText, translatedCard, links, browserUrl, cardActions } from './ui.js';
+import { button, BACK, safe, emptyText, translatedCard, links, browserUrl, cardActions, sourceChoice } from './ui.js';
 
 const TTL = 86400000, MAX_SESSIONS = 6;
 const nonnegative = value => Number.isSafeInteger(value) && value >= 0;
@@ -43,7 +43,7 @@ function eligible(groups, s, session) {
 }
 function rowsFor(session, job, index, count, mode, failed, newCount) {
   const b = (text,action) => button(text,callback(session,job,index,action,mode));
-  const rows = [...links(job)], nav=[];
+  const rows = [...links(job,false,callback(session,job,index,'open',mode))], nav=[];
   if(index)nav.push(b('⬅️','prev'));
   if(index+1<count)nav.push(b('➡️','next'));
   if(nav.length)rows.push(nav);
@@ -77,7 +77,7 @@ async function render(bot, original, {action='show',jobId=null,index=0,mode='s',
     jobs=eligible(groups,s,session);notice='<i>🙈 Вакансия скрыта</i>\n\n';
   } else if(current>=0) index=current+(action==='next'?1:action==='prev'?-1:0);
   else if(action==='prev')index--;
-  if(stale && ['details','translate','actions','problem','risk'].includes(action)) {
+  if(stale && ['details','translate','actions','problem','risk','open'].includes(action)) {
     action='show';mode='s';notice='<i>Подборка изменилась — показана актуальная вакансия.</i>\n\n';
   }
   index=Math.min(Math.max(0,index),Math.max(0,jobs.length-1));
@@ -85,7 +85,7 @@ async function render(bot, original, {action='show',jobId=null,index=0,mode='s',
   else if(action==='translate')mode=mode.startsWith('r')?mode.slice(1):'r'+mode;
   else if(['next','prev','hide'].includes(action))mode='s';
   session.current_id=jobs[index]?.id || null;session.index=index;session.mode=mode;
-  session.view=['actions','problem','risk'].includes(action)?action:'show';
+  session.view=['actions','problem','risk','open'].includes(action)?action:'show';
   if(persist) {
     const retained=sessions(s).filter(x=>x.token!==session.token);
     await bot.patchInput({...(s.hidden_jobs ? {hidden_jobs:s.hidden_jobs} : {}),discovery_sessions:[...retained,session].slice(-MAX_SESSIONS),discovery_current:session.token},'discovery');
@@ -98,6 +98,7 @@ async function render(bot, original, {action='show',jobId=null,index=0,mode='s',
   }
   const job=jobs[index];
   if(['actions','problem'].includes(session.view))return bot.panel(...cardActions(job,index,mode,{token:session.token},await hasFavorite(bot,job),session.view==='problem',rank(await accessRole(bot))>=2));
+  if(session.view==='open')return bot.panel(...sourceChoice(job,callback(session,job,index,'show',mode)));
   if(session.view==='risk')return bot.panel(...reasons(job,callback(session,job,index,'show',mode)));
   const result=await translatedCard(job,mode,bot.fetch,bot.store);
   const newCount=session.kind==='all'?newJobs(jobs,session).length:0;
@@ -145,7 +146,7 @@ export async function discoveryRoute(bot,action) {
     const job=visibleJobs(groupJobs(await bot.store.jobs()),{...defaults(),hidden_jobs:bot.s.hidden_jobs}).find(j=>j._duplicate_ids.includes(id));
     return job?bot.panel(...reasons(job,`job:${job.id}:short`)):bot.panel('Вакансия больше не доступна.',BACK);
   }
-  if((m=/^discover:([a-z0-9]{8}):(0|[1-9]\d*):(\d{1,7}):(show|next|prev|details|translate|hide|actions|problem|new|all):(s|f|rs|rf)$/.exec(action)) && Number.isSafeInteger(Number(m[2])) && Number(m[3])<=1000000) {
+  if((m=/^discover:([a-z0-9]{8}):(0|[1-9]\d*):(\d{1,7}):(show|next|prev|details|translate|hide|actions|problem|open|new|all):(s|f|rs|rf)$/.exec(action)) && Number.isSafeInteger(Number(m[2])) && Number(m[3])<=1000000) {
     const session=lookup(bot.s,m[1]);if(!session)return expired(bot);
     if(['new','all'].includes(m[4]))return openDiscovery(bot,session.scope,m[4]==='new'?'new':'all',session);
     return render(bot,session,{jobId:Number(m[2])||null,index:Number(m[3]),action:m[4],mode:m[5]});
