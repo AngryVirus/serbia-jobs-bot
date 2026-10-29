@@ -14,6 +14,7 @@ jobs:
     timeout-minutes: 8
     env:
       CLOUD_MANAGEMENT_PRIORITY: watchdog
+      CLOUD_REQUEST_INTERVAL: '4'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -28,6 +29,29 @@ jobs:
           python-version: '3.12'
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: serverless
-      - run: python3 serverless/health_check.py
+      - name: Verify installed notification release without writes
+        run: |
+          PYTHONPATH=serverless python3 - <<'CHECK'
+          from pathlib import Path
+          from cloud import call,invoke
+          from deploy import digest
+          from refresh_facts import facts_version
+          root=Path('serverless/tgcloud')
+          local={p.relative_to(root).with_suffix('').as_posix():p.read_text() for p in root.rglob('*.js')}
+          remote=call('remote')
+          matches=remote.get('canonical_modules')==local
+          print({'revision':remote.get('revision'),'matches_local':matches,'modules':len(local),'digest':digest(local)},flush=True)
+          if not matches:raise SystemExit('Installed code differs from release')
+          routing=call('routing')
+          print({'routing_in_sync':routing.get('in_sync'),'pending':routing.get('pending_update_count')},flush=True)
+          if not routing.get('in_sync'):raise SystemExit('Routing not synchronized')
+          status=invoke('status')
+          print({'active':status['active']},flush=True)
+          if not status['active']:raise SystemExit('Bot paused')
+          facts=invoke('facts_status')
+          current=facts.get('version')==facts_version()
+          print({'facts_current':current,'facts_after':(facts.get('progress') or {}).get('after'),'facts_upper':(facts.get('progress') or {}).get('upper')},flush=True)
+          if not current:raise SystemExit('Catalog refresh has not completed')
+          CHECK
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_PROBE_TOKEN }}
