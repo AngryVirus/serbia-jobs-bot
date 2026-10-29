@@ -49,7 +49,7 @@ jobs:
           if not status['active']:raise SystemExit('Bot paused')
           facts=invoke('facts_status')
           current=facts.get('version')==facts_version()
-          print({'facts_current':current},flush=True)
+          print({'facts_current':current,'facts_after':(facts.get('progress') or {}).get('after'),'facts_upper':(facts.get('progress') or {}).get('upper')},flush=True)
           if not current:raise SystemExit('Catalog refresh has not completed')
           CHECK
           node --input-type=module <<'PROBE'
