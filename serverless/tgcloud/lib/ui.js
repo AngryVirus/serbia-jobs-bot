@@ -103,14 +103,19 @@ export function openingLinks(j) {
   }
   return result;
 }
-export function sourceChoice(j,back) {
+function openingDestinations(j) {
   const targets=openingLinks(j),choices=[];
   if(targets.site)choices.push({text:'🌐 На сайте',url:targets.site});
-  if(targets.telegram)choices.push({text:'✈️ В Telegram',url:targets.telegram});
-  return ['<b>Где открыть объявление?</b>\n\n'+safe(j.title || 'Вакансия',140)+'\n\n'+(choices.length?'Выберите источник.':'Ссылка на объявление больше недоступна.'),[...(choices.length?[choices]:[]),[button('↩️ К вакансии',back)]]];
+  if(targets.telegram)choices.push({text:'✈️ Объявление в Telegram',url:targets.telegram});
+  choices.push(...contactButtons(j).flat());
+  return choices;
+}
+export function sourceChoice(j,back) {
+  const choices=openingDestinations(j);
+  return ['<b>Где открыть объявление?</b>\n\n'+safe(j.title || 'Вакансия',140)+'\n\n'+(choices.length?'Объявление и способы связи:':'Ссылка на объявление больше недоступна.'),[...choices.map(choice=>[choice]),[button('↩️ К вакансии',back)]]];
 }
 export function links(j, report = false, openAction = `open:${j.id}:-1:s`) {
-  const targets=openingLinks(j),urls=Object.values(targets);
+  const urls=openingDestinations(j).map(choice=>choice.url);
   const rows=urls.length?[[urls.length===1?{text:'🔗 Открыть объявление',url:urls[0]}:button('🔗 Открыть объявление',openAction)]]:[];
   if (report) rows.push([button('🚩 Пожаловаться',`report:${j.id}`)]);
   return rows;
@@ -144,7 +149,6 @@ export function cardActions(j, index, mode, context = null, favorite = false, pr
   ]];
   return ['<b>Действия с вакансией</b>\n\n'+safe(j.title,100),[
     [button(favorite?'⭐ Убрать из избранного':'⭐ Сохранить',`favorite:${favorite?'remove':'add'}:${j.id}${context?':'+context.token+':'+index+':'+mode:''}`),button(mode.startsWith('r')?'🌐 Оригинал':'🇷🇺 Перевести',translate)],
-    ...contactButtons(j),
     [button('⚠️ Проблема с вакансией',context?scoped('problem'):actions+':problem')],
     ...(canClose?[[button('🔒 Закрыть вакансию',`admin:close:${j.id}:${index}:${mode}${context?':'+context.token:''}`)]]:[]),
     [button('↩️ К вакансии',back)],
