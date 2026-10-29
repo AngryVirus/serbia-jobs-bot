@@ -10,7 +10,7 @@ import { CODEC_SOURCE } from '../tgcloud/lib/image-codec.js';
 import { defaults } from '../tgcloud/lib/filters.js';
 import { filtersPanel,choicePanel,summary,vacancyPresentation,vacancyVisual } from '../tgcloud/lib/ui.js';
 import { OWNER_ID } from '../tgcloud/lib/owner.js';
-import { administer } from '../tgcloud/lib/admin.js';
+import { administer,notifyOne } from '../tgcloud/lib/admin.js';
 
 class InputFile {constructor(bytes,name,options){this.bytes=bytes;this.name=name;this.options=options;}}
 async function graphics(){
@@ -144,6 +144,52 @@ test('commands replace the previous screen; older buttons use the current screen
  const current=f.graphics.last.message_id,u=callback(1,'filters');u.callback_query.message=first;await new Bot(f).handle(u);assert.equal(f.graphics.last.message_id,current);assert.equal(f.graphics.messages.size,1);
  const notice=await f.api.sendMessage({chat_id:1,text:'Найдены новые вакансии',reply_markup:{inline_keyboard:[]}});
  await text(f,1,'/menu');assert(f.graphics.messages.has(notice.message_id));assert(!f.graphics.messages.has(current));
+});
+test('View in a notification opens at the tapped message, not in the old menu above it',async()=>{
+ const f=await graphics();await text(f,1,'/start');const old=f.graphics.last.message_id;
+ await f.store.patch(1,{notifications:'instant',notifications_after_id:0});await f.store.putJob(job(1),true);
+ await notifyOne(f.store,f.api,1);const notice=f.graphics.last;
+ const action=notice.reply_markup.inline_keyboard[0][0].callback_data;
+ await click(f,1,action);
+ assert.equal(f.graphics.last.message_id,notice.message_id);
+ assert(f.graphics.last.photo);assert(f.graphics.deleted.includes(old));
+ assert(f.graphics.last.reply_markup.inline_keyboard.flat().some(b=>b.callback_data?.startsWith('discover:')));
+ assert.equal(f.graphics.messages.size,1);
+});
+test('notification retry after 429 keeps its target and selection without deleting either message early',async()=>{
+ const f=await graphics();await text(f,1,'/start');const old=f.graphics.last.message_id;
+ await f.store.patch(1,{notifications:'instant',notifications_after_id:0});await f.store.putJob(job(1),true);
+ await notifyOne(f.store,f.api,1);const notice=f.graphics.last,update=callback(1,notice.reply_markup.inline_keyboard[0][0].callback_data);
+ update.callback_query.message=notice;
+ const edit=f.api.editMessageMedia;let once=true;
+ f.api.editMessageMedia=async p=>{if(once){once=false;throw {code:429,parameters:{retry_after:1}};}return edit(p);};
+ await assert.rejects(new Bot(f).handle(update));
+ assert(f.graphics.messages.has(old));assert(f.graphics.messages.has(notice.message_id));
+ const token=(await f.store.user(1)).settings.discovery_current;
+ await new Bot(f).handle(update);
+ assert.equal(f.graphics.last.message_id,notice.message_id);assert.equal((await f.store.user(1)).settings.discovery_current,token);
+ assert.equal(f.graphics.messages.size,1);
+ const sends=f.graphics.sends.length;await new Bot(f).handle(update);assert.equal(f.graphics.sends.length,sends);
+});
+test('a notification that cannot be edited gets a visible replacement and unrelated notices survive',async()=>{
+ const f=await graphics();await text(f,1,'/start');const old=f.graphics.last.message_id;
+ const unrelated=await f.api.sendMessage({chat_id:1,text:'Другое уведомление'});
+ await f.store.patch(1,{notifications:'instant',notifications_after_id:0});await f.store.putJob(job(1),true);
+ await notifyOne(f.store,f.api,1);const notice=f.graphics.last;
+ f.api.editMessageMedia=async()=>{throw {code:400,description:"message can't be edited"};};
+ await click(f,1,notice.reply_markup.inline_keyboard[0][0].callback_data);
+ assert(f.graphics.last.message_id>notice.message_id);assert(f.graphics.last.photo);
+ assert(!f.graphics.messages.has(old));assert(!f.graphics.messages.has(notice.message_id));assert(f.graphics.messages.has(unrelated.message_id));
+});
+test('expired View and notification stop both respond on the tapped notification',async()=>{
+ for(const action of ['notice:missingnotice123','notify:stop']){
+  const f=await graphics();await text(f,1,'/start');const old=f.graphics.last.message_id;
+  await f.store.patch(1,{notifications:'instant'});
+  const notice=await f.api.sendMessage({chat_id:1,text:'Новые вакансии',reply_markup:{inline_keyboard:[[{text:'Кнопка',callback_data:action}]]}});
+  await click(f,1,action);assert.equal(f.graphics.last.message_id,notice.message_id);assert(!f.graphics.messages.has(old));
+  if(action==='notify:stop')assert.equal((await f.store.user(1)).settings.notifications,'off');
+  else assert(f.graphics.last.reply_markup.inline_keyboard.flat().some(b=>b.callback_data==='search:0'));
+ }
 });
 test('review screens render stars locally, hide public author details and keep publication controls',async()=>{
  const {submitReview,decideReview}=await import('../tgcloud/lib/ratings.js');
