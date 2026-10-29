@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canonicalUrl, groupJobs, visibleJobs, hiddenGroups, catalogDiagnostics } from '../tgcloud/lib/catalog.js';
 import { defaults } from '../tgcloud/lib/filters.js';
-import { card, links } from '../tgcloud/lib/ui.js';
+import { card, links, openingLinks } from '../tgcloud/lib/ui.js';
 import { notifyOne } from '../tgcloud/lib/admin.js';
 import { job, fixture, message, callback, handle } from './fixtures.js';
 
@@ -59,7 +59,8 @@ test('Radim teaser and website share one vacancy and both source links despite d
   for(const jobs of [[site,post],[post,site]]) {
     const groups=groupJobs(jobs); assert.equal(groups.length,1);
     const visible=visibleJobs(groups,defaults()); assert.equal(visible.length,1);
-    const text=card(visible[0]); assert(text.includes('https://radim.rs/jobs/chef-42')); assert(text.includes('https://t.me/radim_serbia/87')); assert(text.includes('Источники:'));
+    const text=card(visible[0]); assert.doesNotMatch(text,/href=|https?:\/\//); assert(text.includes('Источники:'));
+    assert.deepEqual(new Set(Object.values(openingLinks(visible[0]))),new Set([site.url,post.url]));
   }
   assert.equal(groupJobs([site,{...post,description:post.description.replace('chef-42','chef-43')}]).length,2);
   assert.equal(groupJobs([site,{...post,source:'telegram_youritjob',url:'https://t.me/youritjob/87'}]).length,2);
@@ -133,7 +134,7 @@ test('old daily-hour input redirects to instant notifications; expired cards and
   assert.equal((await f.store.user(1)).settings.pending_input,null);
   const j=opening(1); j._cloud.expires_ms=1; j._cloud.location_url='https://www.google.com/maps/search/?api=1&query=Beograd';
   assert(card(j).includes('Срок публикации истёк'));
-  assert.equal((card(j).match(/maps\/search/g)||[]).length,1);
+  assert.equal((card(j).match(/maps\/search/g)||[]).length,0);
   assert(!JSON.stringify(links(j)).includes('maps/search'));
   await f.store.putJob(j,true); await handle(f,callback(1,'job:1:full')); assert(f.api.edited.at(-1).text.includes('Срок публикации истёк'));
 });

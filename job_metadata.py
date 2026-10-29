@@ -10,10 +10,10 @@ _LANGUAGE_WORD = re.compile(r'\b(?:' + '|'.join(re.escape(normalize(root)) for r
 _LANGUAGE_POSITIVE = re.compile(r'requir|mandatory|must|fluency|fluent|knowledge|proficien|welcome|speak|native|conversational|work(?:ing)? (?:in|language)|znanje|poznavanje|obavez|знањ|познавањ|обавез|знани|владени|треб|обязател|говорящ|разговорн|грамотн|родно|приветств|рабоч\w* язык|работ.{0,20} на')
 _LANGUAGE_NEGATIVE = re.compile(r'not (?:required|mandatory|necessary|needed)|no .{0,25} (?:required|necessary|needed)|не (?:нуж\w*|требу\w*|обязател\w*)|необязател|bez znanja|без знања|без знани\w*|nije (?:potreb|obavez)|није (?:потреб|обавез)')
 _LANGUAGE_OPTIONAL = re.compile(r'optional|preferred|nice to have|желател|преимуществ|pozeljn|prednost|пожељн|предност')
-_LANGUAGE_REQUIRED = re.compile(r'requir|mandatory|must|obavez|обавез|треб|обязател')
-_LANGUAGE_LEVEL = re.compile(r'\b[abc][12](?:\+)?\b|\b(?:upper[- ]intermediate|intermediate|advanced|beginner)\b')
+_LANGUAGE_REQUIRED = re.compile(r'requir|mandatory|must|obavez|обавез|треб|обязател|(?:не ниже|не менее|at least|minimum)\s+(?:(?:уровн\w*|level)\s+)?[aаbвcс][12](?!\w)')
+_LANGUAGE_LEVEL = re.compile(r'\b[aаbвcс][12](?:\+)?\b|\b(?:upper[- ]intermediate|intermediate|advanced|beginner)\b')
 _LANGUAGE_HEADER = re.compile(r'^[^\w]*(?:languages?|языки?|jezici|jezik|језици|језик)\s*[:—–-]\s*')
-_LANGUAGE_BACKGROUND = re.compile(r'^\s*(?:[- ]speaking\s+)?(?:[abc][12]\+?\s+)?(?:compan\w*|citizenship|passport|market|textbooks?|компани\w*|гражданств\w*|паспорт\w*|рын\w*|учебник\w*|kompanij\w*|drzavljan\w*|држављан\w*)\b')
+_LANGUAGE_BACKGROUND = re.compile(r'^\s*(?:[- ]speaking\s+)?(?:[aаbвcс][12]\+?\s+)?(?:compan\w*|citizenship|passport|market|textbooks?|компани\w*|гражданств\w*|паспорт\w*|рын\w*|учебник\w*|kompanij\w*|drzavljan\w*|држављан\w*)\b')
 
 
 def _language_cue(value):

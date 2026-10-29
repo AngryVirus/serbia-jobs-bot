@@ -4,6 +4,7 @@ import { selected, hidden, validUrl } from './filters.js';
 import { catalogDiagnostics,canonicalUrl } from './catalog.js';
 import { translateVacancy } from './translation.js';
 import { vacancyWarnings } from './risks.js';
+import { contactDetails,contactButtons,vacancyDescription } from './contact-display.js';
 import { displayLanguages } from './language-display.js';
 export const button = (text, callback_data) => ({ text, callback_data });
 export const BACK = [[button('🏠 Меню', 'menu')]];
@@ -64,11 +65,9 @@ export function emptyText(jobs, s) {
 export function card(j, expanded = false, visual = false) {
   const f = j._cloud, lines = ['<b>💼 ' + safe(j.title || 'Вакансия', expanded || visual ? 140 : 90) + '</b>'];
   let place = safe(j.location || (j.remote === true ? 'Удалённо' : 'Место не указано'), expanded ? 110 : 55);
-  if (!visual && validUrl(f.location_url) && !validUrl(f.map_url)) place = `<a href="${escape(f.location_url)}">${j.location ? place : 'На карте'}</a>`;
   if (j.company) lines.push('🏢 ' + safe(j.company, expanded ? 80 : 40));
   if(visual && f.address && String(f.address).trim()!==String(j.location || '').trim())place+=' · '+safe(f.address,120);
   lines.push('📍 ' + place);
-  if (!visual && validUrl(f.map_url)) lines.push(`🗺 <a href="${escape(f.map_url)}">${safe(f.address || 'На карте', 180)}</a>`);
   const periods = { month: 'месяц', hour: 'час', year: 'год' };
   const salary = j.salary_display || (j.salary_min != null ? `от ${j.salary_min} ${j.salary_currency || ''} / ${periods[j.salary_period || 'month'] || 'период не указан'}` : 'Зарплата не указана');
   lines.push('\n<b>💶 ' + safe(salary, expanded ? 120 : 80) + '</b>');
@@ -79,11 +78,11 @@ export function card(j, expanded = false, visual = false) {
   if ((j._warnings || vacancyWarnings(j)).length) lines.push('\n⚠️ В тексте есть условия, требующие осторожности. Подробнее — «Ещё» → «Проблема с вакансией».');
   if(visual)lines.push('📅 Дата объявления: '+safe(f.date_label || 'не указана',30));
   lines.push('\n'+ratingLine(j._rating));
-  if (!visual && j.description) lines.push('\n<blockquote>' + safe(j.description, expanded ? 1800 : 150, expanded) + '</blockquote>');
-  if (!visual && j.contacts?.length) lines.push('📞 Контакты: ' + safe(j.contacts.join(' · '), expanded ? 200 : 90));
+  if (!visual && j.description) lines.push('\n<blockquote>' + safe(vacancyDescription(j), expanded ? 1800 : 150, expanded) + '</blockquote>');
+  if (!visual && contactCaption(j)) lines.push(contactCaption(j));
   const sources = (j._sources || [{source:j.source,url:j.url}]).slice(0,4).map(s => {
     const name=safe(SOURCE_NAMES[s.source] || s.source || 'Источник',55);
-    return validUrl(s.url) ? `<a href="${escape(s.url)}">${name}</a>` : name;
+    return name;
   });
   if(j._manual_closed)lines.push('<b>🔒 Вакансия закрыта командой бота</b>');
   if (f.expires_ms != null && f.expires_ms <= Date.now()) lines.push('<b>⌛ Срок публикации истёк</b>');
@@ -145,17 +144,23 @@ export function cardActions(j, index, mode, context = null, favorite = false, pr
   ]];
   return ['<b>Действия с вакансией</b>\n\n'+safe(j.title,100),[
     [button(favorite?'⭐ Убрать из избранного':'⭐ Сохранить',`favorite:${favorite?'remove':'add'}:${j.id}${context?':'+context.token+':'+index+':'+mode:''}`),button(mode.startsWith('r')?'🌐 Оригинал':'🇷🇺 Перевести',translate)],
+    ...contactButtons(j),
     [button('⚠️ Проблема с вакансией',context?scoped('problem'):actions+':problem')],
     ...(canClose?[[button('🔒 Закрыть вакансию',`admin:close:${j.id}:${index}:${mode}${context?':'+context.token:''}`)]]:[]),
     [button('↩️ К вакансии',back)],
   ]];
 }
-// Keep employer contacts selectable; vacancy metadata belongs in the image.
+// Plain phone/email entities remain clickable in Telegram; web links use buttons.
+function contactCaption(j) {
+  const {phones,emails}=contactDetails(j);
+  return [...phones.map(x=>'📞 '+escape(x)),...emails.map(x=>'✉️ '+escape(x))].join('\n');
+}
 export function vacancyPresentation(j, mode, failed = false, prefix = '') {
   const text=prefix+card(j,mode.endsWith('f'));
   if(mode.endsWith('f'))return {text,mode,failed};
-  const caption=j.contacts?.length?'📞 '+safe(j.contacts.join(' · '),200):'';
+  const caption=contactCaption(j);
   let image=card(j,false,true).replace(/€/g,'EUR');
+  if(j._is_new)image=image.replace('\n','\n<badge>NEW</badge>\n');
   const rating=j._rating;
   if(rating?.count){
     const n=Math.max(1,Math.min(5,Math.round(Number(rating.average))));

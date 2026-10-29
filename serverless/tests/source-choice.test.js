@@ -11,7 +11,7 @@ test('date, address, position and status live in the image; only employer contac
  const j=job(1,{contacts:['person@example.com'],_cloud:{...job(1)._cloud,date_label:'28.10.2026'}});
  const result=vacancyPresentation(j,'s');
  const visual=vacancyVisual(result,'Последнее обновление — 2 ч назад.\nВакансия 2 из 205\n');
- assert.equal(visual.caption,'📞 person@example.com');
+ assert.equal(visual.caption,'✉️ person@example.com');
  for(const expected of ['28.10.2026','Knez Mihailova 12','Вакансия 2 из 205','Последнее обновление'])assert(visual.text.includes(expected));
  assert.doesNotMatch(visual.caption,/href=|Beograd|28\.10\.2026|Вакансия|обновление/);
  assert(imageDocument(visual.text).title.includes('Повар'));assert(renderImage(visual.text).height<1800);

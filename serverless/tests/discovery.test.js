@@ -18,6 +18,19 @@ const data=(f,fragment)=>buttons(f).find(b=>b.text.includes(fragment))?.callback
 const current=async f=>(await f.store.user(1)).settings.discovery_current;
 const click=async(f,action,uid=1)=>discoveryRoute(await context(f,uid),action);
 
+test('NEW badge follows the previous-view boundary and survives opening the new-vacancy selection',async()=>{
+ const f=await fixture();let visual;
+ const ctx=async()=>{const bot=await context(f),panel=bot.panel.bind(bot);bot.panel=(...args)=>{visual=args[3];return panel(...args);};return bot;};
+ await f.store.putJob(job(1),true);await openDiscovery(await ctx());
+ assert(!visual.text.includes('<badge>NEW</badge>'));
+ await f.store.putJob(job(2),true);await openDiscovery(await ctx());
+ await discoveryRoute(await ctx(),data(f,'С прошлого просмотра'));
+ assert(visual.text.includes('<badge>NEW</badge>'));
+ const token=await current(f);await discoveryRoute(await ctx(),`discover:${token}:2:0:show:s`);
+ assert(visual.text.includes('<badge>NEW</badge>'));
+ await openDiscovery(await ctx());assert(!visual.text.includes('<badge>NEW</badge>'));
+});
+
 test('first search keeps the home unchanged and introduces new only after a previous visit',async()=>{
   const f=await fixture();await f.store.putJob(job(1),true);
   assert.equal(menu(defaults())[1].flat().length,4);
