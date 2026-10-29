@@ -18,6 +18,7 @@ import { searchRoute, searchInput, replaySearches } from './searches.js';
 import { openDiscovery, discoveryRoute, replayDiscovery } from './discovery.js';
 import { button, BACK, safe, menu, filtersPanel, choicePanel, emptyText, jobButtons, translatedCard, viewerButtons, browserUrl, cardActions, vacancyVisual, sourceChoice } from './ui.js';
 const DELETED_TEXT='Ваши данные удалены. Уведомления выключены. /start — начать заново.';
+const notificationAction=action=>/^notice:[a-z0-9]{12,24}$/.test(action||'')||action==='notify:stop';
 const discoveryAction=action=>/^(notice:|discover:|risk:|search:0$|plans:(?:open|new):)/.test(action||'');
 const inputMutation=action=>typeof action==='string' && (discoveryAction(action)||/^plans(?::|$)/.test(action)||/^(notify:(off|instant|daily|stop)|toggle_salary|reset|delete_confirm)$/.test(action) || /^(choose:|set:|hide:|restore:)/.test(action) || /^view:[^:]+:[^:]+:hide:/.test(action) || action.startsWith('input:') && Object.hasOwn(PROMPTS,action.slice(6)));
 const inputScreen=action=>typeof action!=='string'?'menu':discoveryAction(action)?'discovery':/^plans(?::|$)/.test(action)?'plans':/^(choose|set):/.test(action)?'filters':/^notify:/.test(action)?'notifications':action==='toggle_salary'||action==='reset'?'filters':action==='delete_confirm'?'deleted':action?.startsWith('input:')?action:'menu';
@@ -256,14 +257,15 @@ export class Bot {
       if(replay && replay.status!=='planned'){
         this.s=replay.user?settings(replay.user.settings):null;
         this.previousPanelId=this.s?.ui_panel_id;
-        if(callback&&positive(this.previousPanelId)){this.mid=this.previousPanelId;this.isPhoto=this.s.ui_panel_kind==='photo';}
+        if(callback&&!notificationAction(callback.data)&&positive(this.previousPanelId)){this.mid=this.previousPanelId;this.isPhoto=this.s.ui_panel_kind==='photo';}
         if(replay.status==='applied')await this.replayInput(replay.effect.screen);
         await this.finishAcceptedInput(key,message,callback);return;
       }
       this.s = settings((await this.store.ensure(this.uid,this.chat)).settings);
       this.previousPanelId=this.s.ui_panel_id;
-      // Use the current screen even when a callback comes from an older menu or notice.
-      if(callback && positive(this.previousPanelId)){this.mid=this.previousPanelId;this.isPhoto=this.s.ui_panel_kind==='photo';}
+      // Old menu buttons reuse the current panel. A notification is a separate
+      // entry point: respond where it was tapped, then clean up the older menu.
+      if(callback && !notificationAction(callback.data) && positive(this.previousPanelId)){this.mid=this.previousPanelId;this.isPhoto=this.s.ui_panel_kind==='photo';}
       const ordinary=!(callback && /^(admin(?::|$)|ads(?::|$)|favorite:|ratings:)/.test(callback.data||'')) && !(this.s.pending_input && !['keywords','exclusions','salary','hour','search_name'].includes(this.s.pending_input));
       const mutation=callback?inputMutation(callback.data):Boolean(this.s.pending_input);
       const cleanup=this.s.pending_input || this.s.ban_draft || this.s.staff_draft || this.s.search_operation;
