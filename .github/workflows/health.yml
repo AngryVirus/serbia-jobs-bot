@@ -14,6 +14,7 @@ jobs:
     timeout-minutes: 8
     env:
       CLOUD_MANAGEMENT_PRIORITY: watchdog
+      CLOUD_REQUEST_INTERVAL: '4'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -28,6 +29,44 @@ jobs:
           python-version: '3.12'
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: serverless
-      - run: python3 serverless/health_check.py
+      - name: Verify installed contact and language release without writes
+        run: |
+          PYTHONPATH=serverless python3 - <<'CHECK'
+          from pathlib import Path
+          from cloud import call,invoke
+          from deploy import digest
+          from refresh_facts import facts_version
+          root=Path('serverless/tgcloud')
+          local={p.relative_to(root).with_suffix('').as_posix():p.read_text() for p in root.rglob('*.js')}
+          remote=call('remote')
+          matches=remote.get('canonical_modules')==local
+          print({'revision':remote.get('revision'),'matches_local':matches,'modules':len(local),'digest':digest(local)},flush=True)
+          if not matches:raise SystemExit('Installed code differs from release')
+          routing=call('routing')
+          print({'routing_in_sync':routing.get('in_sync'),'pending':routing.get('pending_update_count')},flush=True)
+          if not routing.get('in_sync'):raise SystemExit('Routing not synchronized')
+          status=invoke('status')
+          print({'active':status['active']},flush=True)
+          if not status['active']:raise SystemExit('Bot paused')
+          facts=invoke('facts_status')
+          current=facts.get('version')==facts_version()
+          print({'facts_current':current,'facts_after':(facts.get('progress') or {}).get('after'),'facts_upper':(facts.get('progress') or {}).get('upper')},flush=True)
+          if not current:raise SystemExit('Catalog refresh has not completed')
+          CHECK
+          node --input-type=module <<'PROBE'
+          import {readdirSync,readFileSync} from 'node:fs';
+          import {join,relative} from 'node:path';
+          const root='serverless/tgcloud',sources={};
+          function walk(dir){for(const item of readdirSync(dir,{withFileTypes:true})){const p=join(dir,item.name);if(item.isDirectory())walk(p);else if(p.endsWith('.js'))sources[relative(root,p).slice(0,-3)]=readFileSync(p,'utf8');}}
+          walk(root);
+          const name='endpoints/ratings_controls_probe';
+          sources[name]="import {db,api} from 'sdk';\nimport {Store} from '../lib/store.js';\nimport {vacancyPresentation,vacancyVisual,cardActions,openingLinks,links,sourceChoice} from '../lib/ui.js';\nimport {renderImage,categoryIcon} from '../lib/image-renderer.js';\nimport {groupJobs,visibleJobs} from '../lib/catalog.js';\nimport {defaults} from '../lib/filters.js';\nimport {displayLanguages} from '../lib/language-display.js';\nexport default async function(input,ctx){\n if(ctx?.ownerRun!==true||ctx.initData||ctx.update)throw Error('Private probe only');\n const me=await api.getMe();if(me.id!==8802394224||me.username?.toLowerCase()!=='serbiajobsbot')throw Error('Wrong bot');\n const store=new Store(db),all=await store.jobs(),jobs=visibleJobs(groupJobs(all),defaults());\n if(!jobs.length)throw Error('No available catalogue');\n let inspected=0,rendered=0,max_height=0,source_buttons=0;\n for(const j of jobs){\n  const result=vacancyPresentation(j,'s'),visual=vacancyVisual(result);\n  if(!visual||/https?:\\/\\/|<a |<code|<pre/.test(visual.caption))throw Error('Invalid caption');\n  if(cardActions(j,0,'s')[1].flat().some(b=>b.copy_text))throw Error('Unexpected copy button');\n  const expanded=vacancyPresentation(j,'f').text;\n  if(/href=|https?:\\/\\//.test(expanded))throw Error('Web link in displayed vacancy');\n  if(Object.keys(openingLinks(j)).length&&!links(j).length)throw Error('Missing source route');\n  inspected++;source_buttons+=links(j).length;\n  if(rendered<3){const image=renderImage(visual.text);max_height=Math.max(max_height,image.height);rendered++;}\n }\n const sample={...jobs[0],title:'Администратор',description:'Русский язык родной/свободный (не ниже С1), сербский язык - не ниже В1.',contacts:['+381 60 123 4567','hr@example.com','https://t.me/contact_example'],_is_new:true,_cloud:{...jobs[0]._cloud,languages:['ru','sr'],required_languages:['ru','sr'],experience:true}};\n const languages=displayLanguages(sample),result=vacancyPresentation(sample,'s');\n if(!languages.includes('Русский — не ниже C1')||!languages.includes('Сербский — не ниже B1'))throw Error('Language regression');\n if(result.caption!=='📞 +381 60 123 4567\\n✉️ hr@example.com')throw Error('Contacts regression');\n if(!renderImage(result.image).badge||categoryIcon('Опыт: требуется')!=='briefcase')throw Error('Missing indicator');\n const smile=all.filter(j=>/smile\\s*on/i.test((j.title||'')+' '+(j.company||''))&&/сербск[\\s\\S]{0,35}[BВ]1/i.test(j.description||''));\n if(smile.some(j=>!j._cloud?.languages?.includes('sr')||!displayLanguages(j).includes('B1')))throw Error('Existing language facts not refreshed');\n const one={...sample,url:'https://t.me/example_channel/1',_sources:[]};if(links(one)[0][0].url!==one.url)throw Error('Telegram contact duplicated source');const two={...one,url:'https://example.rs/jobs/1'};if(!links(two)[0][0].callback_data||sourceChoice(two,'job:1:short')[1].flat().length!==3)throw Error('Incorrect source chooser');if(cardActions(two,0,'s')[1].flat().some(b=>b.url))throw Error('Contact remains in More');return {inspected,rendered,max_height,source_buttons,plain_contacts:true,no_copy_buttons:true,language_levels:true,existing_smile_checked:smile.length,new_badge:true,experience_icon:true,sends:0,writes:0};\n}\n";
+          try{
+           const client=await import('./serverless/node_modules/@tgcloud/cli/src/api/endpoints.js');
+           await new Promise(r=>setTimeout(r,5000));
+           let response;for(let attempt=0;attempt<3;attempt++){try{response=await client.runFunction(process.env.TGCLOUD_TOKEN,name,sources,{},{ownerRun:true});break;}catch(e){if(e.status!==429||attempt===2)throw e;await new Promise(r=>setTimeout(r,30000));}}
+           console.log('Contact release check:',JSON.stringify(response.result));
+          }catch(e){console.log('Contact release check failed:',JSON.stringify({status:e.status||null}));process.exitCode=1;}
+          PROBE
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_PROBE_TOKEN }}
