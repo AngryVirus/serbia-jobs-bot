@@ -7,9 +7,9 @@ const panel=f=>f.api.edited.at(-1)||f.api.sent.at(-1);
 const buttons=f=>panel(f).reply_markup.inline_keyboard.flat();
 const dual=()=>job(1,{source:'tg_radim_serbia',url:'https://t.me/radim_serbia/42',description:'Подробнее и откликнуться: https://radim.rs/jobs/chef/'});
 
-test('Open listing includes employer contact and Back restores the current card; More has no duplicate link',async()=>{
+test('website plus Telegram contact uses the two-source chooser; More has no duplicate link',async()=>{
  const f=await fixture();
- const j=job(1,{contacts:['https://t.me/hiring_person']});await f.store.putJob(j,true);await handle(f,message(1,'/start'));
+ const j=job(1,{url:'https://example.rs/jobs/1',contacts:['https://t.me/hiring_person']});await f.store.putJob(j,true);await handle(f,message(1,'/start'));
  await handle(f,callback(1,'search:0'));
  const open=buttons(f).find(b=>b.text==='🔗 Открыть объявление');assert(open.callback_data);
  await handle(f,callback(1,open.callback_data));
@@ -20,6 +20,17 @@ test('Open listing includes employer contact and Back restores the current card;
  assert(!buttons(f).some(b=>b.url));
  // With a single available destination, no intermediate screen is needed.
  assert.equal(links({...j,url:null})[0][0].url,'https://t.me/hiring_person');
+});
+
+test('Telegram publication wins over Telegram contact; all links collapse into at most two destination types',()=>{
+ const telegram=job(1,{contacts:['https://t.me/hiring_person','@another_person']});
+ assert.equal(links(telegram)[0][0].url,telegram.url);
+ assert.deepEqual(openingLinks(telegram),{telegram:telegram.url});
+ const mixed={...telegram,_sources:[{url:'https://example.rs/jobs/1'}],contacts:[...telegram.contacts,'https://company.rs/apply']};
+ const choices=sourceChoice(mixed,'job:1:short')[1].flat();
+ assert.equal(choices.length,3);
+ assert.deepEqual(choices.filter(x=>x.url).map(x=>x.url),['https://example.rs/jobs/1',telegram.url]);
+ assert.deepEqual(choices.map(x=>x.text),['🌐 Объявление на сайте','✈️ Объявление в Telegram','↩️ К вакансии']);
 });
 
 test('date, address, position and status live in the image; only employer contacts remain in the caption',()=>{

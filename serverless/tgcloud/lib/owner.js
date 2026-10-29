@@ -233,9 +233,11 @@ export async function ownerRoute(bot, action, prepared = null) {
     const nav=[]; if(index>0) nav.push(button('⬅️',`admin:${route}:${index-1}`)); if(index+1<groups.length) nav.push(button('➡️',`admin:${route}:${index+1}`));
     return bot.panel(text,[...rows,...(nav.length?[nav]:[]),[button('⬅️ Проверить','admin:vacancies')]],bot.mid,false);
   }
-  if ((m=/^admin:(block|keep|restore):([1-9]\d*)$/.exec(action))) {
+  if ((m=/^admin:(block|keep|restore):([1-9]\d*)(?::dupes:(\d{1,2}):([1-9]\d{0,15}))?$/.exec(action))) {
+    if(m[3]!==undefined&&m[1]!=='block')return bot.panel('Действие устарело. Откройте проверку дублей заново.',[[button('🔍 Возможные дубли','admin:quality:duplicates:0')]]);
+    const back=m[3]===undefined?OWNER_BACK:[[button('➡️ Продолжить проверку дублей',`admin:quality:duplicates:${m[3]}:${m[4]}`)],[button('🔎 Проверка базы','admin:quality')]];
     const group=data.groups.find(g=>includesId(g,Number(m[2])));
-    if(!group) return bot.panel('Объявление больше не найдено.',OWNER_BACK);
+    if(!group) return bot.panel('Объявление больше не найдено.',back);
     const reports=await openGroupReports(bot.store,group);
     if(m[1]==='block') await bot.store.record('moderation',group.id,{ids:group.members.map(j=>j.id),blocked:true,updated_at:new Date().toISOString()});
     if(m[1]==='restore') for(const record of await bot.store.records('moderation')) {
@@ -245,7 +247,7 @@ export async function ownerRoute(bot, action, prepared = null) {
     for(const row of reports) {
       await bot.store.db.run("UPDATE sjc_records SET payload=:next WHERE kind='report' AND record_key=:key AND payload=:old", { ':key':row.key, ':old':row.payload, ':next':JSON.stringify({...row.report,state:'reviewed',decision:m[1],reviewed_at:new Date().toISOString()}) });
     }
-    return bot.panel(m[1]==='block'?'Вакансия и распознанные копии сняты с общей выдачи.':m[1]==='restore'?'Ограничение владельца снято. Вакансия появится, если проходит обычные проверки.':'Жалобы рассмотрены. Вакансия остаётся в выдаче при совпадении с фильтрами.',OWNER_BACK);
+    return bot.panel(m[1]==='block'?'Вакансия и распознанные копии сняты с общей выдачи.':m[1]==='restore'?'Ограничение владельца снято. Вакансия появится, если проходит обычные проверки.':'Жалобы рассмотрены. Вакансия остаётся в выдаче при совпадении с фильтрами.',back);
   }
   return bot.panel('Действие устарело. Откройте отчёт заново.',OWNER_BACK);
 }

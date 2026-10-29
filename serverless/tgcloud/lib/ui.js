@@ -101,18 +101,23 @@ export function openingLinks(j) {
     // Public /s/ previews should open the Telegram post in the app.
     result[kind]=telegram?entry.url.replace(/^https?:\/\/(?:www\.)?(?:t\.me|telegram\.me)(?::(?:443|80))?\//i,'https://t.me/').replace(/^https:\/\/t\.me\/s\//i,'https://t.me/'):entry.url;
   }
+  // A contact may supply a missing destination, but never duplicates or replaces
+  // an existing publication of the same type.
+  for(const {url} of contactButtons(j).flat()) {
+    const kind=canonicalUrl(url).startsWith('t.me/')?'telegram':'site';
+    if(!result[kind])result[kind]=url;
+  }
   return result;
 }
 function openingDestinations(j) {
   const targets=openingLinks(j),choices=[];
-  if(targets.site)choices.push({text:'🌐 На сайте',url:targets.site});
+  if(targets.site)choices.push({text:'🌐 Объявление на сайте',url:targets.site});
   if(targets.telegram)choices.push({text:'✈️ Объявление в Telegram',url:targets.telegram});
-  choices.push(...contactButtons(j).flat());
   return choices;
 }
 export function sourceChoice(j,back) {
   const choices=openingDestinations(j);
-  return ['<b>Где открыть объявление?</b>\n\n'+safe(j.title || 'Вакансия',140)+'\n\n'+(choices.length?'Объявление и способы связи:':'Ссылка на объявление больше недоступна.'),[...choices.map(choice=>[choice]),[button('↩️ К вакансии',back)]]];
+  return ['<b>Где открыть объявление?</b>\n\n'+safe(j.title || 'Вакансия',140)+'\n\n'+(choices.length?'Выберите источник.':'Ссылка на объявление больше недоступна.'),[...choices.map(choice=>[choice]),[button('↩️ К вакансии',back)]]];
 }
 export function links(j, report = false, openAction = `open:${j.id}:-1:s`) {
   const urls=openingDestinations(j).map(choice=>choice.url);

@@ -9,9 +9,9 @@ test('publication links never masquerade as phone numbers, employer contact uses
  assert.deepEqual(contactDetails(j),{phones:[],emails:[]});
  assert.equal(vacancyPresentation(j,'s').caption,'');
  assert.deepEqual(contactButtons(j),[[{text:'💬 Контакт в Telegram',url:'https://t.me/MarinaBeograd'}]]);
- assert.equal(links(j)[0][0].callback_data,'open:1:-1:s');
+ assert.equal(links(j)[0][0].url,j.url);
  const choices=sourceChoice(j,'job:1:short')[1].flat();
- assert.deepEqual(choices.filter(x=>x.url).map(x=>x.url),[j.url,'https://t.me/MarinaBeograd']);
+ assert.deepEqual(choices.filter(x=>x.url).map(x=>x.url),[j.url]);
  assert.equal(cardActions(j,0,'s')[1].flat().filter(x=>x.url).length,0);
 });
 test('phones and emails stay plain clickable text without code blocks or copy buttons',()=>{
