@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {contactDetails,contactButtons,withoutWebLinks,vacancyDescription} from '../tgcloud/lib/contact-display.js';
-import {vacancyPresentation,cardActions,links} from '../tgcloud/lib/ui.js';
+import {vacancyPresentation,cardActions,links,sourceChoice} from '../tgcloud/lib/ui.js';
 import {job} from './fixtures.js';
 
 test('publication links never masquerade as phone numbers, employer contact uses a button',()=>{
@@ -10,7 +10,9 @@ test('publication links never masquerade as phone numbers, employer contact uses
  assert.equal(vacancyPresentation(j,'s').caption,'');
  assert.deepEqual(contactButtons(j),[[{text:'💬 Контакт в Telegram',url:'https://t.me/MarinaBeograd'}]]);
  assert.equal(links(j)[0][0].url,j.url);
- assert.equal(cardActions(j,0,'s')[1].flat().filter(x=>x.url).length,1);
+ const choices=sourceChoice(j,'job:1:short')[1].flat();
+ assert.deepEqual(choices.filter(x=>x.url).map(x=>x.url),[j.url]);
+ assert.equal(cardActions(j,0,'s')[1].flat().filter(x=>x.url).length,0);
 });
 test('phones and emails stay plain clickable text without code blocks or copy buttons',()=>{
  const j=job(1,{contacts:['+381 11 3409 343','person@example.com','https://example.com/jobs/123456789','28.10.2026']});

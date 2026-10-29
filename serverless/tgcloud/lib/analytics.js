@@ -1,8 +1,8 @@
 import { defaults, normalize, belgradeOffset } from './filters.js';
-import { groupJobs, visibleJobs } from './catalog.js';
+import { groupJobs, visibleJobs, includesId } from './catalog.js';
 import { SOURCE_NAMES } from './config.js';
 import { sourceEnabled } from './source-policy.js';
-import { safe, button } from './ui.js';
+import { safe, button, card, links, sourceChoice } from './ui.js';
 const BACK=[[button('📊 К отчёту владельца','admin')]];
 function reportTime(value) {
  const stamp=typeof value==='number'?value:Date.parse(value);
@@ -150,11 +150,24 @@ export async function analyticsPanel(bot,action,data) {
   const nav=[];if(page)nav.push(button('⬅️',`admin:quality:sources:${page-1}`));if((page+1)*4<q.sources.length)nav.push(button('➡️',`admin:quality:sources:${page+1}`));
   return panel('<b>📡 Все источники</b>\n<i>База сейчас и сохранённые результаты последней проверки каждого источника. Обновление читает базу, к источникам не обращается.\n«В выдаче» — вакансии после объединения копий; «только здесь» — без копий из других источников; «записей» — публикации до объединения.\nОбнаружено — найденные публикации; проверено — изученные; разобрано — распознанные вакансии, включая уже известные. Это счётчики последней проверки, а не новых вакансий. Успешный ответ не означает полный обход каталога.</i>\n\n'+text,[...(nav.length?[nav]:[]),[button('🔄 Обновить отчёт',`admin:quality:sources:${page}:refresh`)],[button('🔎 Проверка базы','admin:quality')],...BACK]);
  }
- if((m=/^admin:quality:duplicates:(\d+)$/.exec(action))) {
-  const page=Math.min(Number(m[1]),Math.max(0,q.candidates.length-1)),v=q.candidates[page];
+ if((m=/^admin:quality:(dupe|dupelinks):([1-9]\d{0,15}):(\d{1,2}):([1-9]\d{0,15})$/.exec(action))) {
+  const [,kind,id,page,anchor]=m,back=`admin:quality:duplicates:${page}:${anchor}`;
+  const group=data.groups.find(g=>includesId(g,Number(id)));
+  if(!group)return panel('Объявление больше не найдено.',[[button('⬅️ К проверке дублей',back)]]);
+  const j=group.members.find(j=>j.id===Number(id))||group.members[0];
+  if(kind==='dupelinks')return bot.panel(...sourceChoice(j,`admin:quality:dupe:${id}:${page}:${anchor}`));
+  return bot.panel(card(j,true),[
+   ...links(j,false,`admin:quality:dupelinks:${id}:${page}:${anchor}`),
+   ...(!group.members.some(j=>j._moderated)?[[button('Убрать из выдачи',`admin:block:${group.id}:dupes:${page}:${anchor}`)]]:[]),
+   [button('⬅️ К проверке дублей',back)],
+  ],bot.mid,false);
+ }
+ if((m=/^admin:quality:duplicates:(\d+)(?::([1-9]\d{0,15}))?$/.exec(action))) {
+  const anchored=m[2]?q.candidates.findIndex(v=>v.some(g=>includesId(g,Number(m[2])))):-1;
+  const page=anchored>=0?anchored:Math.min(Number(m[1]),Math.max(0,q.candidates.length-1)),v=q.candidates[page];
   if(!v)return panel('Подозрительных совпадений по должности, работодателю и городу не найдено. Жалобы на повторы остаются в разделе «Жалобы».',[[button('🔎 Проверка базы','admin:quality')],...BACK]);
   const rows=[],text=[`<b>🔍 Возможные дубли · ${page+1}/${q.candidates.length}</b>\nСовпали должность, работодатель и город. Это может быть несколько разных вакансий — автоматического объединения нет.`];
-  for(const g of v.slice(0,3)) {const j=g.members[0];text.push(`\n${safe(j.title,100)}\n${safe(j.company,80)} · ${safe(j.location,80)}`);rows.push([button('📄 Открыть',`job:${j.id}:full`),button('Убрать из выдачи',`admin:block:${g.id}`)]);}
+  for(const g of v.slice(0,3)) {const j=g.members[0],anchor=(v.find(other=>other.id!==g.id)||g).id;text.push(`\n${safe(j.title,100)}\n${safe(j.company,80)} · ${safe(j.location,80)}`);rows.push([button('📄 Открыть',`admin:quality:dupe:${j.id}:${page}:${anchor}`),button('Убрать из выдачи',`admin:block:${g.id}:dupes:${page}:${anchor}`)]);}
   const nav=[];if(page)nav.push(button('⬅️',`admin:quality:duplicates:${page-1}`));if(page+1<q.candidates.length)nav.push(button('➡️',`admin:quality:duplicates:${page+1}`));
   return panel(text.join('\n'),[...rows,...(nav.length?[nav]:[]),[button('🔎 Проверка базы','admin:quality')],...BACK]);
  }
