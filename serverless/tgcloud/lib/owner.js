@@ -4,9 +4,9 @@ import { analyticsPanel,successfulCollection,collectionMetrics,sourceHealthy } f
 import { SOURCE_NAMES } from './config.js';
 import { sourceEnabled } from './source-policy.js';
 import { defaults, belgradeOffset } from './filters.js';
-import { groupJobs, visibleJobs, includesId } from './catalog.js';
+import { groupJobs, visibleJobs, includesId, decorate } from './catalog.js';
 import { discoverySession, expiredDiscovery } from './discovery.js';
-import { button, BACK, safe, card, links } from './ui.js';
+import { button, BACK, safe, card, links, sourceChoice } from './ui.js';
 import { OWNER_ID } from './permissions.js';
 import { sourceIdeaRoute } from './source-ideas.js';
 import { requestCollectionWake,wakeStatus,wakeMessage } from './collection-wake.js';
@@ -123,11 +123,11 @@ export async function notifyReports(store, api) {
 }
 
 export async function complaint(bot, id, reason, index=-1, mode='s', context=null) {
-  if(context && !discoverySession(bot.s,context))return expiredDiscovery(bot);
+  if(context && context!=='fav' && !discoverySession(bot.s,context))return expiredDiscovery(bot);
   const group = groupJobs(await bot.store.jobs()).find(g => includesId(g,id));
   if (!group) return bot.panel('Объявление больше не найдено.');
   const token=context || null;
-  const back=token?`discover:${token}:${id}:${index}:show:${mode}`:index===-1 ? `job:${id}:${mode.startsWith('r')?'ru_':''}${mode.endsWith('f')?'full':'short'}` : `view:${id}:${index}:show:${mode}`;
+  const back=token==='fav'?`favorites:show:${id}:${mode}`:token?`discover:${token}:${id}:${index}:show:${mode}`:index===-1 ? `job:${id}:${mode.startsWith('r')?'ru_':''}${mode.endsWith('f')?'full':'short'}` : `view:${id}:${index}:show:${mode}`;
   if (!reason) return bot.panel('<b>🚩 Пожаловаться</b>\n\n' + safe(group.members[0].title,120) + '\n\nВыберите причину. Объявление будет скрыто из вашей подборки, а жалобу проверит владелец. Он увидит ваш профиль Telegram и сможет связаться с вами для уточнения деталей.', [...Object.entries(REASONS).map(([key,label])=>[button(label,`report:${id}:${key}:${index}:${mode}${token?':'+token:''}`)]), [button('↩️ К объявлению',back)], ...BACK]);
   if (!Object.hasOwn(REASONS,reason)) return bot.home();
   const exists = Boolean(await bot.store.db.get("SELECT 1 AS found FROM sjc_records WHERE kind='report' AND record_key LIKE :prefix AND json_extract(payload,'$.user_id')=:uid AND "+REPORT_GROUP+' LIMIT 1',{...groupParams(group),':prefix':bot.uid+':%',':uid':bot.uid}));
@@ -141,7 +141,7 @@ export async function complaint(bot, id, reason, index=-1, mode='s', context=nul
   if (!exists) await bot.store.db.run("INSERT INTO sjc_records(kind,record_key,payload) VALUES('report',:key,:payload) ON CONFLICT(kind,record_key) DO NOTHING", { ':key':key, ':payload':JSON.stringify(record) });
   await bot.patch({ hidden_jobs: [...new Set([...(bot.s.hidden_jobs || []),group.id])] });
   await notifyReports(bot.store,bot.api);
-  return bot.panel('Спасибо. Жалоба сохранена для проверки владельцем. Вакансия и распознанные копии скрыты из вашей подборки.', [[button('🔎 Продолжить поиск',token?`discover:${token}:${id}:${index}:show:s`:index===-1?'search:0':`view:${id}:${index}:show:s`),button('↩️ Вернуть',`restore:${id}`)], ...BACK]);
+  return bot.panel('Спасибо. Жалоба сохранена для проверки владельцем. Вакансия и распознанные копии скрыты из вашей подборки.', [[button(token==='fav'?'⭐ К избранным':'🔎 Продолжить поиск',token==='fav'?'favorites:0':token?`discover:${token}:${id}:${index}:show:s`:index===-1?'search:0':`view:${id}:${index}:show:s`),button('↩️ Вернуть',`restore:${id}`)], ...BACK]);
 }
 
 export async function ownerReport(store) {
@@ -200,6 +200,11 @@ export async function ownerRoute(bot, action, prepared = null) {
     return bot.panel('<b>Управление ботом</b>\n\n<b>Проверить</b> — отзывы и жалобы.\n<b>Люди</b> — пользователи и команда.\n<b>Управление</b> — состояние, сбор и реклама.\n\nНа проверке: отзывов '+waiting+', жалоб '+pending+'.',OWNER_HOME);
   }
   const data = prepared || await ownerReport(bot.store);
+  const reportLinks=/^admin:reportlinks:([1-9]\d*):(reports|blocked):(\d{1,6})$/.exec(action);
+  if(reportLinks){
+    const group=data.groups.find(g=>includesId(g,Number(reportLinks[1]))),back=`admin:${reportLinks[2]}:${reportLinks[3]}`;
+    return group?bot.panel(...sourceChoice(decorate(group,group.members.find(j=>j.id===Number(reportLinks[1]))||group.members[0]),back)):bot.panel('Вакансия больше не найдена.',[[button('⬅️ К списку',back)]]);
+  }
   const authors=/^admin:reporters:([1-9]\d{0,15}):(\d{1,6})$/.exec(action);
   if(authors){
     const group=data.groups.find(g=>includesId(g,Number(authors[1])));
@@ -226,16 +231,17 @@ export async function ownerRoute(bot, action, prepared = null) {
     if(!group) return bot.panel(blocked?'Снятых с выдачи вакансий нет.':'Новых жалоб нет.',OWNER_BACK);
     const summary=await reportSummary(bot.store,group);
     const purpose=blocked?'Вакансии, снятые владельцем из общей выдачи. Можно вернуть после проверки.':'Проверьте жалобы: оставьте вакансию или снимите её из общей выдачи.';
-    group.members[0]._rating=await ratingSummary(bot.store,group.members.map(j=>j.id));
-    const text=`<b>${blocked?'🙈 Снятые с выдачи':'🚩 Жалобы'} · ${index+1}/${groups.length}</b>\n${purpose}\n${safe(summary.reasons,180)}${summary.total ? ` · ${summary.total} жалоб` : ''}\n\n`+card(group.members[0],true);
-    const rows=[...links(group.members[0],false),...(!blocked&&summary.total?[[button('👤 Авторы жалоб · '+summary.total,`admin:reporters:${group.id}:0`)]]:[]), blocked ? [button('↩️ Вернуть в выдачу',`admin:restore:${group.id}`)] : [button('Убрать из выдачи',`admin:block:${group.id}`),button('Оставить',`admin:keep:${group.id}`)]];
+    const j=decorate(group,group.members[0]);j._rating=await ratingSummary(bot.store,group.members.map(j=>j.id));
+    const text=`<b>${blocked?'🙈 Снятые с выдачи':'🚩 Жалобы'} · ${index+1}/${groups.length}</b>\n${purpose}\n${safe(summary.reasons,180)}${summary.total ? ` · ${summary.total} жалоб` : ''}\n\n`+card(j,true);
     const route=blocked?'blocked':'reports';
+    const rows=[...links(j,false,`admin:reportlinks:${j.id}:${route}:${index}`),...(!blocked&&summary.total?[[button('👤 Авторы жалоб · '+summary.total,`admin:reporters:${group.id}:0`)]]:[]), blocked ? [button('↩️ Вернуть в выдачу',`admin:restore:${group.id}:blocked:${index}`)] : [button('Убрать из выдачи',`admin:block:${group.id}:reports:${index}`),button('Оставить',`admin:keep:${group.id}:reports:${index}`)]];
     const nav=[]; if(index>0) nav.push(button('⬅️',`admin:${route}:${index-1}`)); if(index+1<groups.length) nav.push(button('➡️',`admin:${route}:${index+1}`));
     return bot.panel(text,[...rows,...(nav.length?[nav]:[]),[button('⬅️ Проверить','admin:vacancies')]],bot.mid,false);
   }
-  if ((m=/^admin:(block|keep|restore):([1-9]\d*)(?::dupes:(\d{1,2}):([1-9]\d{0,15}))?$/.exec(action))) {
+  if ((m=/^admin:(block|keep|restore):([1-9]\d*)(?:(?::dupes:(\d{1,2}):([1-9]\d{0,15}))|(?::(reports|blocked):(\d{1,6})))?$/.exec(action))) {
     if(m[3]!==undefined&&m[1]!=='block')return bot.panel('Действие устарело. Откройте проверку дублей заново.',[[button('🔍 Возможные дубли','admin:quality:duplicates:0')]]);
-    const back=m[3]===undefined?OWNER_BACK:[[button('➡️ Продолжить проверку дублей',`admin:quality:duplicates:${m[3]}:${m[4]}`)],[button('🔎 Проверка базы','admin:quality')]];
+    const list=m[5]||(m[1]==='restore'?'blocked':'reports');
+    const back=m[3]===undefined?[[button(list==='blocked'?'⬅️ Снятые вакансии':'➡️ Продолжить проверку жалоб',`admin:${list}:${m[6]||0}`)],[button('⬅️ Проверить','admin:vacancies')]]:[[button('➡️ Продолжить проверку дублей',`admin:quality:duplicates:${m[3]}:${m[4]}`)],[button('🔎 Проверка базы','admin:quality')]];
     const group=data.groups.find(g=>includesId(g,Number(m[2])));
     if(!group) return bot.panel('Объявление больше не найдено.',back);
     const reports=await openGroupReports(bot.store,group);

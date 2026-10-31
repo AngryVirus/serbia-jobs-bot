@@ -181,6 +181,21 @@ test('a notification that cannot be edited gets a visible replacement and unrela
  assert(f.graphics.last.message_id>notice.message_id);assert(f.graphics.last.photo);
  assert(!f.graphics.messages.has(old));assert(!f.graphics.messages.has(notice.message_id));assert(f.graphics.messages.has(unrelated.message_id));
 });
+test('staff and author notification buttons respond at the tapped notice while old menus still reuse the current panel',async()=>{
+ for(const [label,action] of [
+  ['⭐ Новый отзыв на проверке','admin:ratings:view:1:77'],
+  ['🚩 Новая жалоба на вакансию','admin:review:1'],
+  ['📡 Предложен Telegram-источник','admin:ideas:pending:0'],
+  ['Ваш отзыв о вакансии «Повар» опубликован','job:1:short'],
+ ]){
+  const f=await graphics();await f.store.putJob(job(1),true);await text(f,OWNER_ID,'/start');const old=f.graphics.last.message_id;
+  await f.store.record('vacancy_review','1:77',{key:'1:77',job_id:1,uid:77,author:{id:77,name:'Автор'},title:'Повар',text:'Мой опыт',stars:3,state:'pending',version:'review123456'});
+  await f.store.record('report','77:1',{user_id:77,job_id:1,group_id:1,state:'open',reason:'outdated'});
+  const notice=await f.api.sendMessage({chat_id:OWNER_ID,text:label,reply_markup:{inline_keyboard:[[{text:'Открыть',callback_data:action}]]}});
+  await click(f,OWNER_ID,action);
+  assert.equal(f.graphics.last.message_id,notice.message_id,action);assert(!f.graphics.messages.has(old),action);
+ }
+});
 test('expired View and notification stop both respond on the tapped notification',async()=>{
  for(const action of ['notice:missingnotice123','notify:stop']){
   const f=await graphics();await text(f,1,'/start');const old=f.graphics.last.message_id;
@@ -214,7 +229,7 @@ test('failed deletion leaves old controls inert and never removes the replacemen
 test('reviews open directly from a vacancy, show the list first and explain rules before stars',async()=>{
  const f=await graphics();await f.store.putJob(job(1),true);await text(f,1,'/start');await click(f,1,'search:0');
  const controls=()=>f.graphics.last.reply_markup.inline_keyboard.flat();
- assert.equal(controls().filter(b=>b.callback_data==='ratings:1:list').length,1);
+ assert.equal(controls().filter(b=>/^ratings:1:list(?::|$)/.test(b.callback_data||'')).length,1);
  const actions=controls().find(b=>b.text==='☰ Ещё').callback_data;
  await click(f,1,actions);assert(!controls().some(b=>b.callback_data?.startsWith('ratings:')));
  await click(f,1,controls().find(b=>b.text==='↩️ К вакансии').callback_data);

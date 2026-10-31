@@ -36,11 +36,11 @@ export async function vacancyModerationRoute(bot,action){
   if(bot.s.vacancy_close_draft?.token===match[1])await bot.patch({vacancy_close_draft:null});
   return bot.panel(result?'<b>🔒 Вакансия закрыта</b>\n\nОна и распознанные копии убраны из общего поиска и новых уведомлений. Действие записано в журнал команды.':'Подтверждение устарело, вакансия уже снята с выдачи или ваши права изменились. Откройте актуальную карточку.',BACK);
  }
- match=/^admin:close:([1-9]\d{0,15}):(-1|\d{1,7}):(s|f|rs|rf)(?::([a-z0-9]{8}))?$/.exec(action);
+ match=/^admin:close:([1-9]\d{0,15}):(-1|\d{1,7}):(s|f|rs|rf)(?::(fav|[a-z0-9]{8}))?$/.exec(action);
  if(!match||!Number.isSafeInteger(Number(match[1]))||Number(match[2])>1000000)return bot.panel('Откройте действия с вакансией заново.',BACK);
  const id=Number(match[1]),group=groupJobs(await bot.store.jobs()).find(g=>includesId(g,id));
  if(!group||group.members.some(j=>j._moderated))return bot.panel('Вакансия уже недоступна или снята с выдачи.',BACK);
- const back=match[4]?`discover:${match[4]}:${id}:${match[2]}:show:${match[3]}`:match[2]==='-1'?`job:${id}:${match[3].startsWith('r')?'ru_':''}${match[3].endsWith('f')?'full':'short'}`:`view:${id}:${match[2]}:show:${match[3]}`;
+ const back=match[4]==='fav'?`favorites:show:${id}:${match[3]}`:match[4]?`discover:${match[4]}:${id}:${match[2]}:show:${match[3]}`:match[2]==='-1'?`job:${id}:${match[3].startsWith('r')?'ru_':''}${match[3].endsWith('f')?'full':'short'}`:`view:${id}:${match[2]}:show:${match[3]}`;
  const draft={id,token:nonce().slice(-12),expires:Date.now()+600000};await bot.patch({vacancy_close_draft:draft});
  return bot.panel('<b>Закрыть вакансию для всех?</b>\n\n'+safe(group.members[0].title,140)+'\n\nОна и распознанные копии исчезнут из поиска и новых уведомлений. Автоматический сбор не снимет это ограничение. Вернуть вакансию сможет владелец через список снятых.',[[button('🔒 Подтвердить закрытие','admin:close:confirm:'+draft.token)],[button('⬅️ Отмена',back)]]);
 }
