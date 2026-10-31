@@ -135,27 +135,27 @@ export function viewerButtons(j, index, count, mode, failed) {
   if (index) nav.push(b('⬅️', 'prev'));
   if (index + 1 < count) nav.push(b('➡️', 'next'));
   if (nav.length) rows.push(nav);
-  rows.push([b(mode.endsWith('f') ? '🔼 Свернуть' : '🔽 Подробнее', 'details'), button('⭐ Отзывы',`ratings:${j.id}:list`)]);
+  rows.push([b(mode.endsWith('f') ? '🔼 Свернуть' : '🔽 Подробнее', 'details'), button('⭐ Отзывы',`ratings:${j.id}:list:0:v:${index}:${mode}`)]);
   rows.push([button('☰ Ещё',`actions:${j.id}:${index}:${mode}`)]);
   if (failed && validUrl(j.url)) rows.push([{ text: '🌐 Перевести в браузере', url: browserUrl(j) }]);
   return rows;
 }
 export function cardActions(j, index, mode, context = null, favorite = false, problem = false, canClose = false) {
   const standalone=index===-1;
-  const scoped=action=>`discover:${context.token}:${j.id}:${index}:${action}:${mode}`;
+  const scoped=action=>context?.favorite?`favorites:${action}:${j.id}:${mode}`:`discover:${context.token}:${j.id}:${index}:${action}:${mode}`;
   const back=context ? scoped('show') : standalone ? `job:${j.id}:${mode.startsWith('r')?'ru_':''}${mode.endsWith('f')?'full':'short'}` : `view:${j.id}:${index}:show:${mode}`;
   const translate=context ? scoped('translate') : standalone ? `job:${j.id}:${mode.startsWith('r')?'':'ru_'}${mode.endsWith('f')?'full':'short'}` : `view:${j.id}:${index}:translate:${mode}`;
   const actions=context?scoped('actions'):`actions:${j.id}:${index}:${mode}`;
   if(problem)return ['<b>Проблема с вакансией</b>\n\n'+safe(j.title,100),[
-    [button('🚩 Пожаловаться',`report:${j.id}:choose:${index}:${mode}${context?':'+context.token:''}`)],
+    [button('🚩 Пожаловаться',`report:${j.id}:choose:${index}:${mode}${context?':'+(context.favorite?'fav':context.token):''}`)],
     [button('🙈 Скрыть из моего поиска',context?scoped('hide'):standalone?`hide:${j.id}`:`view:${j.id}:${index}:hide:${mode}`)],
-    ...(vacancyWarnings(j).length?[[button('⚠️ Почему осторожнее',`risk:${j.id}${context?`:${context.token}:${index}:${mode}`:''}`)]]:[]),
+    ...(vacancyWarnings(j).length?[[button('⚠️ Почему осторожнее',context?.favorite?scoped('risk'):`risk:${j.id}${context?`:${context.token}:${index}:${mode}`:''}`)]]:[]),
     [button('⬅️ К разделу «Ещё»',actions)],
   ]];
   return ['<b>Действия с вакансией</b>\n\n'+safe(j.title,100),[
-    [button(favorite?'⭐ Убрать из избранного':'⭐ Сохранить',`favorite:${favorite?'remove':'add'}:${j.id}${context?':'+context.token+':'+index+':'+mode:''}`),button(mode.startsWith('r')?'🌐 Оригинал':'🇷🇺 Перевести',translate)],
+    [button(favorite?'⭐ Убрать из избранного':'⭐ Сохранить',`favorite:${favorite?'remove':'add'}:${j.id}${context?':'+(context.favorite?'fav':context.token)+':'+index+':'+mode:''}`),button(mode.startsWith('r')?'🌐 Оригинал':'🇷🇺 Перевести',translate)],
     [button('⚠️ Проблема с вакансией',context?scoped('problem'):actions+':problem')],
-    ...(canClose?[[button('🔒 Закрыть вакансию',`admin:close:${j.id}:${index}:${mode}${context?':'+context.token:''}`)]]:[]),
+    ...(canClose?[[button('🔒 Закрыть вакансию',`admin:close:${j.id}:${index}:${mode}${context?':'+(context.favorite?'fav':context.token):''}`)]]:[]),
     [button('↩️ К вакансии',back)],
   ]];
 }

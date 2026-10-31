@@ -1,5 +1,5 @@
 import { defaults, normalize, belgradeOffset } from './filters.js';
-import { groupJobs, visibleJobs, includesId } from './catalog.js';
+import { groupJobs, visibleJobs, includesId, decorate } from './catalog.js';
 import { SOURCE_NAMES } from './config.js';
 import { sourceEnabled } from './source-policy.js';
 import { safe, button, card, links, sourceChoice } from './ui.js';
@@ -154,7 +154,7 @@ export async function analyticsPanel(bot,action,data) {
   const [,kind,id,page,anchor]=m,back=`admin:quality:duplicates:${page}:${anchor}`;
   const group=data.groups.find(g=>includesId(g,Number(id)));
   if(!group)return panel('Объявление больше не найдено.',[[button('⬅️ К проверке дублей',back)]]);
-  const j=group.members.find(j=>j.id===Number(id))||group.members[0];
+  const j=decorate(group,group.members.find(j=>j.id===Number(id))||group.members[0]);
   if(kind==='dupelinks')return bot.panel(...sourceChoice(j,`admin:quality:dupe:${id}:${page}:${anchor}`));
   return bot.panel(card(j,true),[
    ...links(j,false,`admin:quality:dupelinks:${id}:${page}:${anchor}`),

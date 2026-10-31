@@ -32,7 +32,7 @@ test('location has a rendered map icon; reviews have one entry on each card and 
  const location=imageDocument(r.image).lines.find(l=>l.text.startsWith('Beograd ·'));assert.equal(location.icon,'map');
  assert.equal(renderImage(r.image).icons,4);
  for(const rows of [jobButtons(j),viewerButtons(j,0,2,'s',false)]){
-  assert.equal(rows.flat().filter(b=>b.callback_data==='ratings:1:list').length,1);
+  assert.equal(rows.flat().filter(b=>/^ratings:1:list(?::|$)/.test(b.callback_data||'')).length,1);
   assert(rows.flat().some(b=>b.callback_data?.startsWith('actions:')));
  }
  assert(!cardActions(j,0,'s')[1].flat().some(b=>b.callback_data?.startsWith('ratings:')));

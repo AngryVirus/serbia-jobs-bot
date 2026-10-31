@@ -18,7 +18,16 @@ import { searchRoute, searchInput, replaySearches } from './searches.js';
 import { openDiscovery, discoveryRoute, replayDiscovery } from './discovery.js';
 import { button, BACK, safe, menu, filtersPanel, choicePanel, emptyText, jobButtons, translatedCard, viewerButtons, browserUrl, cardActions, vacancyVisual, sourceChoice } from './ui.js';
 const DELETED_TEXT='Ваши данные удалены. Уведомления выключены. /start — начать заново.';
-const notificationAction=action=>/^notice:[a-z0-9]{12,24}$/.test(action||'')||action==='notify:stop';
+const notificationAction=(action,message)=>{
+  if(/^notice:[a-z0-9]{12,24}$/.test(action||'')||action==='notify:stop')return true;
+  // Staff/review notices are separate entry points too. The same callbacks in
+  // ordinary old menus still reuse the current panel.
+  const text=String(message?.text||'').replace(/<[^>]*>/g,'');
+  return /^admin:ratings:view:/.test(action||'')&&text.startsWith('⭐ Новый отзыв на проверке')
+    || /^admin:review:/.test(action||'')&&text.startsWith('🚩 Новая жалоба на вакансию')
+    || action==='admin:ideas:pending:0'&&text.startsWith('📡 Предложен Telegram-источник')
+    || /^job:\d+:short$/.test(action||'')&&text.startsWith('Ваш отзыв о вакансии');
+};
 const discoveryAction=action=>/^(notice:|discover:|risk:|search:0$|plans:(?:open|new):)/.test(action||'');
 const inputMutation=action=>typeof action==='string' && (discoveryAction(action)||/^plans(?::|$)/.test(action)||/^(notify:(off|instant|daily|stop)|toggle_salary|reset|delete_confirm)$/.test(action) || /^(choose:|set:|hide:|restore:)/.test(action) || /^view:[^:]+:[^:]+:hide:/.test(action) || action.startsWith('input:') && Object.hasOwn(PROMPTS,action.slice(6)));
 const inputScreen=action=>typeof action!=='string'?'menu':discoveryAction(action)?'discovery':/^plans(?::|$)/.test(action)?'plans':/^(choose|set):/.test(action)?'filters':/^notify:/.test(action)?'notifications':action==='toggle_salary'||action==='reset'?'filters':action==='delete_confirm'?'deleted':action?.startsWith('input:')?action:'menu';
@@ -190,7 +199,7 @@ export class Bot {
       const group=groupJobs(await this.store.jobs()).find(g=>includesId(g,Number(m[1]))),j=group&&decorate(group,group.members.find(j=>j.id===Number(m[1])));
       return j ? this.panel(...cardActions(j,Number(m[2]),m[3],null,await hasFavorite(this,j),m[4]==='problem',rank(await accessRole(this))>=2&&!group.members.some(j=>j._moderated))) : this.panel('Вакансия больше не найдена.');
     }
-    if ((m = /^report:([1-9]\d*):(choose|not_job|duplicate|outdated):(-1|\d+):(s|f|rs|rf)(?::([a-z0-9]{8}))?$/.exec(action)) && positive(Number(m[1])) && Number(m[3])<=1000000) return complaint(this,Number(m[1]),m[2]==='choose'?null:m[2],Number(m[3]),m[4],m[5]);
+    if ((m = /^report:([1-9]\d*):(choose|not_job|duplicate|outdated):(-1|\d+):(s|f|rs|rf)(?::(fav|[a-z0-9]{8}))?$/.exec(action)) && positive(Number(m[1])) && Number(m[3])<=1000000) return complaint(this,Number(m[1]),m[2]==='choose'?null:m[2],Number(m[3]),m[4],m[5]);
     if ((m = /^report:([1-9]\d*)(?::(not_job|duplicate|outdated))?$/.exec(action)) && positive(Number(m[1]))) return complaint(this,Number(m[1]),m[2]);
     if ((m = /^search:(\d+)(?::(\d+))?$/.exec(action))) return this.show(Math.min(Number(m[1]),200000)*5,null,'show','s',m[2] ? Number(m[2]) : null);
     if ((m = /^view:([1-9]\d*):(\d+):(show|next|prev|details|translate|hide):(s|f|rs|rf)$/.exec(action)) && positive(Number(m[1])) && Number(m[2]) <= 1000000) return this.show(Number(m[2]),Number(m[1]),m[3],m[4]);
@@ -257,7 +266,7 @@ export class Bot {
       if(replay && replay.status!=='planned'){
         this.s=replay.user?settings(replay.user.settings):null;
         this.previousPanelId=this.s?.ui_panel_id;
-        if(callback&&!notificationAction(callback.data)&&positive(this.previousPanelId)){this.mid=this.previousPanelId;this.isPhoto=this.s.ui_panel_kind==='photo';}
+        if(callback&&!notificationAction(callback.data,message)&&positive(this.previousPanelId)){this.mid=this.previousPanelId;this.isPhoto=this.s.ui_panel_kind==='photo';}
         if(replay.status==='applied')await this.replayInput(replay.effect.screen);
         await this.finishAcceptedInput(key,message,callback);return;
       }
@@ -265,7 +274,7 @@ export class Bot {
       this.previousPanelId=this.s.ui_panel_id;
       // Old menu buttons reuse the current panel. A notification is a separate
       // entry point: respond where it was tapped, then clean up the older menu.
-      if(callback && !notificationAction(callback.data) && positive(this.previousPanelId)){this.mid=this.previousPanelId;this.isPhoto=this.s.ui_panel_kind==='photo';}
+      if(callback && !notificationAction(callback.data,message) && positive(this.previousPanelId)){this.mid=this.previousPanelId;this.isPhoto=this.s.ui_panel_kind==='photo';}
       const ordinary=!(callback && /^(admin(?::|$)|ads(?::|$)|favorite:|ratings:)/.test(callback.data||'')) && !(this.s.pending_input && !['keywords','exclusions','salary','hour','search_name'].includes(this.s.pending_input));
       const mutation=callback?inputMutation(callback.data):Boolean(this.s.pending_input);
       const cleanup=this.s.pending_input || this.s.ban_draft || this.s.staff_draft || this.s.search_operation;

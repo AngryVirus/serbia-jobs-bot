@@ -45,8 +45,13 @@ export async function imagePanel(bot,text,rows,mid,caption='') {
 export async function textPanel(bot,text,rows,mid) {
  const params={chat_id:bot.chat,text,parse_mode:'HTML',reply_markup:{inline_keyboard:rows},link_preview_options:{is_disabled:true}};
  if(mid && !bot.isPhoto){
-  try {await bot.api.editMessageText({...params,message_id:mid});await remember(bot,mid,'text');return;}
-  catch(error){if(unchanged(error))return;if(error.code!==400)throw error;}
+  let edited=false;
+  try {await bot.api.editMessageText({...params,message_id:mid});edited=true;}
+  catch(error){
+   if(unchanged(error))edited=true;
+   else if(error.code!==400||!/can't be edited|cannot be edited|message to edit not found|there is no text/i.test(error.description||error.message||''))throw error;
+  }
+  if(edited){await remember(bot,mid,'text');if(bot.previousPanelId!==mid)await removeOld(bot,bot.previousPanelId);return;}
  }
  const message=await bot.api.sendMessage(params);
  if(!positive(message?.message_id))throw Error('Unconfirmed text panel');

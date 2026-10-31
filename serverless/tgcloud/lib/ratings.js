@@ -4,6 +4,7 @@ import {groupJobs,includesId} from './catalog.js';
 import {positive} from './store.js';
 import {button,safe} from './ui.js';
 import {REVIEW_SCOPE,publicReviews,ratingSummary,ratingLine} from './rating-data.js';
+import {discoverySession,expiredDiscovery} from './discovery.js';
 const BACK=[[button('⬅️ Панель управления','admin')]];
 const actor=bot=>bot.actor?.id===bot.uid?bot.actor:moderatorSnapshot({id:bot.uid});
 const load=async(store,key)=>{const r=await store.db.get("SELECT payload FROM sjc_records WHERE kind='vacancy_review' AND record_key=:key",{':key':key});return r?JSON.parse(r.payload):null;};
@@ -11,7 +12,11 @@ const staffSql=`(:actor=${OWNER_ID} OR (EXISTS(SELECT 1 FROM sjc_records WHERE k
 const entry=(kind,key,value)=>({kind,key,payload:JSON.stringify(value)});
 async function group(bot,id){return groupJobs(await bot.store.jobs()).find(g=>includesId(g,id));}
 const idsOf=g=>g.members.map(j=>j.id);
-const backJob=id=>[[button('↩️ К вакансии',`job:${id}:short`)]];
+const backJob=(id,context='')=>{
+ const m=/^(v|fav|[a-z0-9]{8}):(-1|\d{1,7}):(s|f|rs|rf)$/.exec(context);
+ const target=!m?`job:${id}:short`:m[1]==='fav'?`favorites:show:${id}:${m[3]}`:m[1]==='v'?`view:${id}:${m[2]}:show:${m[3]}`:`discover:${m[1]}:${id}:${m[2]}:show:${m[3]}`;
+ return [[button('↩️ К вакансии',target)]];
+};
 
 export async function submitReview(bot,draft,text){
  if(!positive(bot.uid)||bot.uid!==bot.chat||await bot.store.isBanned(bot.uid))return false;
@@ -66,33 +71,35 @@ export async function reviewNoticeTick(store,api,now=Date.now(),recipient=null){
 }
 
 export async function ratingRoute(bot,action){
- let m=/^ratings:([1-9]\d*):(list|start|[1-5])(?::(\d{1,6}))?$/.exec(action);
+ let m=/^ratings:([1-9]\d*):(list|start|[1-5])(?::(\d{1,6}))?(?::(v|fav|[a-z0-9]{8}):(-1|\d{1,7}):(s|f|rs|rf))?$/.exec(action);
  if(!m||!positive(Number(m[1])))return bot.home();
+ if(m[4]&&!['v','fav'].includes(m[4])&&!discoverySession(bot.s,m[4]))return expiredDiscovery(bot);
+ const context=m[4]?`${m[4]}:${m[5]}:${m[6]}`:'',route=(kind,page=0)=>`ratings:${m[1]}:${kind}${context?':'+page+':'+context:kind==='list'&&page?':'+page:''}`;
  const id=Number(m[1]),g=await group(bot,id);if(!g||g.members.some(j=>j._moderated))return bot.panel('Вакансия недоступна.',[[button('🏠 Меню','menu')]]);
- const ids=idsOf(g),params={':ids':JSON.stringify(ids)},back=backJob(id);
+ const ids=idsOf(g),params={':ids':JSON.stringify(ids)},back=backJob(id,context);
  if(m[2]!=='list'){
   const existing=await bot.store.db.get(`SELECT 1 AS n FROM sjc_records WHERE ${REVIEW_SCOPE} AND json_extract(payload,'$.uid')=:uid`,{...params,':uid':bot.uid});
-  if(existing)return bot.panel('Вы уже оставили отзыв на эту вакансию. Повторная оценка не учитывается.',[[button('⭐ Отзывы',`ratings:${id}:list`)],...back]);
-  if(m[2]==='start')return bot.panel('<b>Отзыв о вакансии</b>\n\nЕсли вы работали по этой вакансии или проходили собеседование у работодателя, поделитесь своим опытом.\n\nКаждый отзыв проходит ручную проверку перед публикацией. Команда бота может связаться с вами, чтобы уточнить детали и попросить подтверждающие материалы.\n\nКоманда увидит ваше имя, @username и ID. Публично показываются только оценка и текст отзыва.\n\nВыберите оценку: 1 — очень плохо, 5 — отлично.',[[1,2,3,4,5].map(n=>button(n+' ⭐',`ratings:${id}:${n}`)),...back]);
-  await bot.patch({pending_input:'vacancy_review',review_draft:{job_id:id,stars:Number(m[2]),token:nonce().slice(-12)}});
+  if(existing)return bot.panel('Вы уже оставили отзыв на эту вакансию. Повторная оценка не учитывается.',[[button('⭐ Отзывы',route('list'))],...back]);
+  if(m[2]==='start')return bot.panel('<b>Отзыв о вакансии</b>\n\nЕсли вы работали по этой вакансии или проходили собеседование у работодателя, поделитесь своим опытом.\n\nКаждый отзыв проходит ручную проверку перед публикацией. Команда бота может связаться с вами, чтобы уточнить детали и попросить подтверждающие материалы.\n\nКоманда увидит ваше имя, @username и ID. Публично показываются только оценка и текст отзыва.\n\nВыберите оценку: 1 — очень плохо, 5 — отлично.',[[1,2,3,4,5].map(n=>button(n+' ⭐',route(n))),...back]);
+  await bot.patch({pending_input:'vacancy_review',review_draft:{job_id:id,stars:Number(m[2]),token:nonce().slice(-12),context}});
   return bot.panel(`<b>Ваша оценка: ${m[2]}/5</b>\n${'★'.repeat(Number(m[2]))+'☆'.repeat(5-Number(m[2]))}\n\nНапишите отзыв от 5 до 800 символов о личном опыте работы или собеседования. Перед публикацией его проверит команда; при необходимости с вами свяжутся для уточнений. Не указывайте чужие контакты и личные данные.\n\n/cancel — отменить.`,back);
  }
  const summary=await ratingSummary(bot.store,ids),page=Math.min(Number(m[3]||0),Math.max(0,Math.ceil(summary.count)-1));
  const rows=await bot.store.db.all(`SELECT payload FROM (${publicReviews}) WHERE position=1 ORDER BY json_extract(payload,'$.at') DESC,record_key DESC LIMIT 1 OFFSET :offset`,{...params,':offset':page});
  const text='<b>⭐ Отзывы о вакансии</b>\n'+ratingLine(summary)+'\n\n'+(rows.map(r=>{const v=JSON.parse(r.payload);return '★'.repeat(v.stars)+'☆'.repeat(5-v.stars)+'\n<b>Отзыв '+(page+1)+' из '+summary.count+'</b>\n'+safe(v.text,800);}).join('\n\n')||'Отзывов пока нет.');
- const nav=[];if(page)nav.push(button('⬅️',`ratings:${id}:list:${page-1}`));if(page+1<summary.count)nav.push(button('➡️',`ratings:${id}:list:${page+1}`));
- return bot.panel(text,[[button('✍️ Оставить отзыв',`ratings:${id}:start`)],...(nav.length?[nav]:[]),...back]);
+ const nav=[];if(page)nav.push(button('⬅️',route('list',page-1)));if(page+1<summary.count)nav.push(button('➡️',route('list',page+1)));
+ return bot.panel(text,[[button('✍️ Оставить отзыв',route('start'))],...(nav.length?[nav]:[]),...back]);
 }
 export async function ratingInput(bot,message){
  if(bot.s.pending_input!=='vacancy_review'||message.text?.startsWith('/'))return false;
  const text=String(message.text||'').trim(),draft=bot.s.review_draft;
  if(!draft){await bot.patch({pending_input:null});await bot.panel('Откройте оценку вакансии заново.');return true;}
- if([...text].length<5||[...text].length>800){await bot.panel('Напишите текст от 5 до 800 символов.',backJob(draft.job_id));return true;}
+ if([...text].length<5||[...text].length>800){await bot.panel('Напишите текст от 5 до 800 символов.',backJob(draft.job_id,draft.context));return true;}
  const wait=await bot.store.rate(bot.uid+':review',5,3600);
- if(wait){await bot.panel(`Слишком много отзывов. Повторите через ${Math.ceil(wait/60)} мин.`,backJob(draft.job_id));return true;}
+ if(wait){await bot.panel(`Слишком много отзывов. Повторите через ${Math.ceil(wait/60)} мин.`,backJob(draft.job_id,draft.context));return true;}
  const saved=await submitReview(bot,draft,text);
  await bot.patch({pending_input:null,review_draft:null});
- await bot.panel(saved?'Спасибо! Отзыв отправлен на проверку. После публикации или удаления бот пришлёт уведомление.':'Новый отзыв не добавлен: вы уже оценили вакансию либо она больше недоступна.',backJob(draft.job_id));
+ await bot.panel(saved?'Спасибо! Отзыв отправлен на проверку. После публикации или удаления бот пришлёт уведомление.':'Новый отзыв не добавлен: вы уже оценили вакансию либо она больше недоступна.',backJob(draft.job_id,draft.context));
  if(saved)try{await reviewNoticeTick(bot.store,bot.api);}catch{/* durable queue resumes in background */}
  return true;
 }
@@ -109,7 +116,14 @@ export async function ratingsAdmin(bot,action){
  if((m=/^admin:ratings:view:([1-9]\d*:[1-9]\d*)$/.exec(action))){
   const r=await load(bot.store,m[1]);if(!r)return bot.panel('Отзыв больше не найден.',BACK);
   const rows=[];if(r.state==='pending')rows.push([button('✅ Опубликовать',`admin:ratings:p:${r.key}:${r.version}`)]);if(r.state!=='deleted')rows.push([button('🗑 Удалить',`admin:ratings:d:${r.key}:${r.version}`)]);
-  return bot.panel(`<b>⭐ Проверка отзыва · ${r.stars}/5</b>\n${safe(r.title,140)}\n${'★'.repeat(r.stars)+'☆'.repeat(5-r.stars)}\nСтатус: ${{pending:'на проверке',published:'опубликован',deleted:'удалён'}[r.state]}\nАвтор: ${safe(r.author.name,80)}${r.author.username?' · @'+safe(r.author.username,32):''}\nID: ${r.uid}\n\n${safe(r.text,800)}`,[...(rows.length?[rows.flat()]:[]),[{text:'👤 Связаться с автором',url:'tg://user?id='+r.uid}],[button('⬅️ К отзывам',`admin:ratings:${r.state}:0`)]]);
+  const text=`<b>⭐ Проверка отзыва · ${r.stars}/5</b>\n${safe(r.title,140)}\n${'★'.repeat(r.stars)+'☆'.repeat(5-r.stars)}\nСтатус: ${{pending:'на проверке',published:'опубликован',deleted:'удалён'}[r.state]}\nАвтор: ${safe(r.author.name,80)}${r.author.username?' · @'+safe(r.author.username,32):''}\nID: ${r.uid}\n\n${safe(r.text,800)}`;
+  const controls=[...(rows.length?[rows.flat()]:[]),[button('⬅️ К отзывам',`admin:ratings:${r.state}:0`)]];
+  try{return await bot.panel(text,[...controls.slice(0,-1),[{text:'👤 Связаться с автором',url:'tg://user?id='+r.uid}],...controls.slice(-1)]);}
+  catch(error){
+   // A private Telegram profile must not prevent publishing or deleting a review.
+   if(error.code!==400||!/BUTTON_USER_PRIVACY_RESTRICTED|BUTTON_USER_INVALID|user_id_invalid/i.test(error.description||error.message||''))throw error;
+   return bot.panel(text+'\n\nTelegram не разрешил кнопку профиля. Имя и ID автора указаны выше.',controls);
+  }
  }
  if(action==='admin:ratings:history')return bot.panel('<b>Рассмотренные отзывы</b>',[[button('✅ Опубликованные','admin:ratings:published:0')],[button('🗑 Удалённые','admin:ratings:deleted:0')],[button('⬅️ На проверке','admin:ratings:pending:0')]]);
  m=/^admin:ratings:(pending|published|deleted):(\d{1,6})$/.exec(action);if(!m)return bot.panel('Откройте отзывы заново.',BACK);

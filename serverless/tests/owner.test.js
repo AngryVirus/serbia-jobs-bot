@@ -11,7 +11,7 @@ test('compact cards keep paging and put secondary actions in a contextual submen
   const j=job(8),rows=viewerButtons(j,3,10,'rf',false);
   assert.equal(rows.length,4); assert.equal(rows.flat().length,6);
   assert.deepEqual(rows[1].map(b=>b.callback_data),['view:8:3:prev:rf','view:8:3:next:rf']);
-  assert.equal(rows[2][1].callback_data,'ratings:8:list');
+  assert.equal(rows[2][1].callback_data,'ratings:8:list:0:v:3:rf');
   assert(rows.flat().some(b=>b.callback_data==='actions:8:3:rf'));
   assert(rows.flat().some(b=>b.callback_data==='view:8:3:next:rf'));
   const [,actions]=cardActions(j,3,'rf');

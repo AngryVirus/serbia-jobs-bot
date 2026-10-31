@@ -47,7 +47,7 @@ function rowsFor(session, job, index, count, mode, failed, newCount) {
   if(index)nav.push(b('⬅️','prev'));
   if(index+1<count)nav.push(b('➡️','next'));
   if(nav.length)rows.push(nav);
-  rows.push([b(mode.endsWith('f') ? '🔼 Свернуть' : '🔽 Подробнее','details'),button('⭐ Отзывы',`ratings:${job.id}:list`)]);
+  rows.push([b(mode.endsWith('f') ? '🔼 Свернуть' : '🔽 Подробнее','details'),button('⭐ Отзывы',`ratings:${job.id}:list:0:${session.token}:${index}:${mode}`)]);
   rows.push([b('☰ Ещё','actions')]);
   if (failed && validUrl(job.url)) rows.push([{text:'🌐 Перевести в браузере',url:browserUrl(job)}]);
   if(session.kind === 'all' && newCount)rows.push([b(`🆕 С прошлого просмотра · ${newCount}`,'new')]);
@@ -55,7 +55,7 @@ function rowsFor(session, job, index, count, mode, failed, newCount) {
   rows.push([button('🏠 Главное меню','menu')]);
   return rows;
 }
-function reasons(job, back) {
+export function reasons(job, back) {
   const warnings = vacancyWarnings(job);
   return ['<b>⚠️ На что обратить внимание</b>\n\n'+safe(job.title,140)+'\n\n'+(warnings.length
     ? warnings.map(w => '• '+safe(w.reason,350)+'\n'+safe(w.advice,500)).join('\n\n')+'\n\nЭто автоматическая подсказка по тексту объявления. Она не подтверждает мошенничество; отсутствие предупреждения не гарантирует безопасность.'
