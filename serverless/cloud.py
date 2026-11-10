@@ -119,6 +119,21 @@ def environment():
     return env
 
 
+def failure_reason(command, fields, output):
+    """The platform's own error text, for backup operations only.
+
+    Backup operations run fixed SQL and static assertions over no user input, so
+    their error text names the failing limit or statement and carries no private
+    row. Every other operation keeps its details withheld. The bridge already
+    redacts access tokens and truncates the text.
+    """
+    args = fields.get('args')
+    if command != 'run' or not isinstance(args, dict) or not str(args.get('operation', '')).startswith('backup_'):
+        return ''
+    text = re.sub(r'[\x00-\x1f\x7f]+', ' ', str(output.get('reason') or '')).strip()[:200]
+    return f'; platform said: {text}' if text else ''
+
+
 def call(command, **fields):
     payload = json.dumps(dict(command=command, **fields), ensure_ascii=False)
     env = environment()
@@ -148,7 +163,7 @@ def call(command, **fields):
                 time.sleep(delay)
                 continue
             status=output.get('status')
-            raise CloudRequestError(f'Cloud {command} failed (status {status}, code {output.get("code")}); private details withheld',
+            raise CloudRequestError(f'Cloud {command} failed (status {status}, code {output.get("code")}){failure_reason(command,fields,output)}; private details withheld',
                                     transient=status==429 or isinstance(status,int) and status>=500)
         result = output.get('result')
         if not isinstance(result, dict):

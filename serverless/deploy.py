@@ -5,10 +5,10 @@ from pathlib import Path
 import sys
 from cloud import call, cli, invoke, routing_identity
 
-# Predecessor: the modules committed at a40caaa (#61). Confirm with a read-only
+# Predecessor: the modules committed at 6a9adf4 (#62), deployed by a successful run. Confirm with a read-only
 # `check` that this is the deployed revision before running `deploy`.
 # A later release must explicitly review and update its predecessor digest.
-PREVIOUS_DIGEST = '842c1e76b15ecbe3d87a48e1eda07e135637a2e2b2be742e540dfcb74e541c6c'  # pragma: allowlist secret
+PREVIOUS_DIGEST = 'afaf715b7f0f616965656925ba927a51dc341e39d70b116500ff64696a3416a3'  # pragma: allowlist secret
 
 
 def digest(modules):
