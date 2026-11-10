@@ -2,7 +2,10 @@ import { IMAGE_VERSION, imageHash, renderImage } from './image-renderer.js';
 const positive=n=>Number.isSafeInteger(n)&&n>0;
 const unchanged=e=>/message is not modified/i.test(e.description || e.message || '');
 async function remember(bot,id,kind) {
- if(positive(id)){bot.mid=id;bot.isPhoto=kind==='photo';if(bot.s)await bot.patch({ui_panel_id:id,ui_panel_kind:kind});}
+ if(!positive(id))return;
+ bot.mid=id;bot.isPhoto=kind==='photo';
+ // Editing the current panel in place keeps the saved pointer; skip the redundant profile rewrite.
+ if(bot.s&&(bot.s.ui_panel_id!==id||bot.s.ui_panel_kind!==kind))await bot.patch({ui_panel_id:id,ui_panel_kind:kind});
 }
 async function removeOld(bot,id) {
  if(!positive(id))return;

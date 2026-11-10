@@ -135,7 +135,8 @@ export async function discoveryRoute(bot,action) {
   if((m=/^notice:([a-z0-9]{12,24})$/.exec(action))){
     const rows=await bot.store.db.all("SELECT job_id FROM sjc_deliveries WHERE user_id=:uid AND json_extract(payload,'$.digest')=:token AND state IN ('sent','sending','uncertain') ORDER BY job_id DESC LIMIT 500",{':uid':bot.uid,':token':m[1]});
     if(!rows.length)return expired(bot);
-    const all=await bot.store.jobs(),retained=sessions(bot.s),token=Math.random().toString(36).slice(2,10).padEnd(8,'0');
+    const all=await bot.store.jobs(),retained=sessions(bot.s),taken=new Set(retained.map(x=>x.token));let token;
+    do {token=Math.random().toString(36).slice(2,10).padEnd(8,'0');} while(taken.has(token));
     const session={token,scope:'notice',kind:'notice',filters:snapshotFilters(defaults()),notice_ids:rows.map(r=>r.job_id),upper_id:all.reduce((max,j)=>Math.max(max,j.id),0),after_id:null,expires:Date.now()+TTL,index:0,mode:'s',view:'show'};
     await bot.patchInput({discovery_sessions:[...retained,session].slice(-MAX_SESSIONS),discovery_current:token},'discovery');
     return render(bot,session,{persist:false,catalog:groupJobs(all)});

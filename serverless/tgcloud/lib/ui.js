@@ -11,7 +11,8 @@ export const BACK = [[button('🏠 Меню', 'menu')]];
 const label = value => String(value).replace(/^[^\p{L}\p{N}]+/u, '');
 const choiceLabel = (field,value) => OPTIONS[field][value] || (field==='language'&&value==='no_serbian'?'Без обязательного сербского (прежний фильтр)':value);
 export const escape = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
-export function clip(value, limit, lines = false) {
+// Without a limit the text is only cleaned up, never marked as shortened.
+export function clip(value, limit = Infinity, lines = false) {
   let text = String(value ?? '');
   text = lines ? text.split(/\r?\n/).map(x => x.replace(/\s+/gu, ' ').trim()).filter(Boolean).join('\n') : text.replace(/\s+/gu, ' ').trim();
   if (text.length <= limit) return text;
