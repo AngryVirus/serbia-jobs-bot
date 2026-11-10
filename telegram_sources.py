@@ -114,6 +114,19 @@ REQUIREMENTS = re.compile(
     r'qualifications|what we offer|what you(?: will|’ll|\x27ll) bring|benefits|uslovi|nudimo)\b')
 
 
+_LABEL = r'(?:открыта\s+)?(?:вакансия|должность|позиция|vacancy|position|job title|pozicija|radno mesto)'
+_HIRING = r'(?:требуется|требуются|нужен|нужна|нужны|ищем|ищет|ищу|приглашаем|приглашает|trazimo|potreban|potrebna|potrebni)'
+_GREETING = (r'\b(?:у нас (?:открыта|есть) вакансия|всем привет|привет всем|всем доброго|всем добрыи|'
+             r'добрыи (?:день|вечер)|доброго (?:дня|времени суток|вечера|утра)|доброе утро|здравствуите|'
+             r'друзья|коллеги|we are hiring|we.re hiring|hello everyone|hi everyone|hi all)\b')
+
+
+def _unlabelled(line):
+    """«Вакансия: Повар» names the role; the label itself is not part of it."""
+    value = re.sub(r'(?i)^' + _LABEL + r'\s*[:—–-]\s*', '', line).strip()
+    return value or line
+
+
 def vacancy_title(text):
     """Skip introductory greetings, without mining duties for a different role."""
     lines = [re.sub(r'^[^\w#]+', '', line.strip()) for line in text.splitlines() if line.strip()]
@@ -123,18 +136,30 @@ def vacancy_title(text):
     def heading(line):
         value = normalize(line)
         return (bool(re.fullmatch(r'(?:#\w+\s*)+|вакансия\s*[:!]*', value)) or
-                not ROLE.search(value) and bool(re.search(
-                    r'\b(?:у нас (?:открыта|есть) вакансия|всем привет|добрыи день|'
-                    r'друзья|коллеги|we are hiring|we.re hiring|hello everyone)\b', value)))
+                not ROLE.search(value) and (bool(re.search(_GREETING, value)) or
+                # A bare section label such as «Аватар должности:» names nothing.
+                len(value) <= 40 and value.endswith(':')))
+    # An explicit label in the opening lines is the employer's own wording.
+    for line in lines[:6]:
+        labelled = re.match(r'(?i)^' + _LABEL + r'\s*[:—–-]\s*(\S.*)$', line)
+        if labelled and len(labelled.group(1)) <= 140 and not heading(labelled.group(1)):
+            return labelled.group(1).strip()[:140]
     if not heading(lines[0]):
-        return lines[0][:140]
+        first = lines[0]
+        # One sentence split over two lines: «В салон красоты / EASY требуется администратор».
+        if (len(lines) > 1 and len(first) <= 60 and not re.search(r'[.!?:]$', first)
+                and not ROLE.search(normalize(first)) and not re.search(r'\b' + _HIRING + r'\b', normalize(first))
+                and len(lines[1]) <= 100 and re.search(r'\b' + _HIRING + r'\b', normalize(lines[1]))
+                and ROLE.search(normalize(lines[1]))):
+            first = first + ' ' + lines[1]
+        return _unlabelled(first)[:140]
     opening = [line for line in lines[1:6] if not heading(line)]
     for line in opening:
         value = normalize(line)
         if (len(line) <= 100 and ROLE.search(value) and not DUTIES.search(value)
                 and not REQUIREMENTS.search(value) and not re.search(r'[.!?]|\b(?:компания|company|зарплата|salary)\b', value)):
-            return line[:140]
-    return (opening[0] if opening else lines[0])[:140]
+            return _unlabelled(line)[:140]
+    return _unlabelled(opening[0] if opening else lines[0])[:140]
 
 
 def hiring_post(text):
