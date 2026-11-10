@@ -31,8 +31,42 @@ class TelegramSourceTests(unittest.TestCase):
         self.assertEqual(job.description, text)
         for heading in ['Всем привет!', 'Друзья, у нас открыта вакансия', 'We are hiring!', '#вакансия']:
             self.assertEqual(vacancy_title(heading + '\n👨🏻‍💼 Оперативный менеджер\nБелград'), 'Оперативный менеджер')
-        for title in ['Hiring engineer in Serbia', 'Вакансия: повар', 'Водитель категории B', 'C++ developer']:
+        for title in ['Hiring engineer in Serbia', 'Водитель категории B', 'C++ developer']:
             self.assertEqual(vacancy_title(title + '\nЗадачи менеджера: подбор водителей'), title)
+        # The label names the role; it is not part of the title.
+        self.assertEqual(vacancy_title('Вакансия: повар\nЗадачи менеджера: подбор водителей'), 'повар')
+
+    def test_titles_from_observed_channel_posts(self):
+        cases = [
+            ('📣 Вакансия: Главный бухгалтер, Нови-Сад\n🏢 О компании\nITea RS d.o.o.', 'Главный бухгалтер, Нови-Сад'),
+            ('Всем доброго дня! 👋\nИщу офис-менеджера в агентство недвижимости в Белграде.\nТребования к кандидату:',
+             'Ищу офис-менеджера в агентство недвижимости в Белграде.'),
+            ('🚗 Компания VROOM приглашает в команду МАСТЕРА-ПРИЁМЩИКА!\n📎 АВТОСЕРВИС\nОткрыта вакансия: Мастер-приёмщик\n💵 Заработная плата: от 1500 €',
+             'Мастер-приёмщик'),
+            ('В салон лазерной эпиляции\nEASY в Белграде (Врачар) требуется администратор!\nОбязанности:\n- Встреча гостей',
+             'В салон лазерной эпиляции EASY в Белграде (Врачар) требуется администратор!'),
+            ('Аватар должности:\nУральский Девелопер ищет помощника руководителя в Белграде.\nУзнали себя?',
+             'Уральский Девелопер ищет помощника руководителя в Белграде.'),
+            ('Здравствуйте!\nPosition: Senior QA Engineer\nBelgrade', 'Senior QA Engineer'),
+            # Unchanged: an ordinary first line, also when later lines mention hiring.
+            ('🍹 Администратор-бармен в Anticafe\n📍 Белград, Стари град\nИщем ответственного сотрудника в нашу команду!',
+             'Администратор-бармен в Anticafe'),
+            ('Курьер Wolt\n📍Белград / Нови-Сад, Сербия\nТребуются курьеры', 'Курьер Wolt'),
+            ('Lead Product Designer\nScrambly, Serbia\nResponsibilities:', 'Lead Product Designer'),
+            ('Требования: опыт от года\nПовар в ресторан', 'Требования: опыт от года'),
+        ]
+        for text, title in cases:
+            self.assertEqual(vacancy_title(text), title)
+
+    def test_stored_first_line_titles_are_repaired_with_or_without_leading_symbols(self):
+        from serverless.enrich_jobs import enrich_job
+        description = '📣 Вакансия: Повар в кафе WOK, Нови-Сад\n🏢 О компании\nTurbo Wok - Кафе азиатской кухни'
+        base = {'source': 'telegram_serbia_vacancies', 'url': 'https://t.me/serbia_vacancies/1', 'description': description,
+                'location': 'Novi Sad', 'country': 'RS', 'published_at': DATE}
+        for stored in ['📣 Вакансия: Повар в кафе WOK, Нови-Сад', 'Вакансия: Повар в кафе WOK, Нови-Сад']:
+            self.assertEqual(enrich_job({**base, 'title': stored})['_cloud'].get('display_title'), 'Повар в кафе WOK, Нови-Сад')
+        # A deliberately supplied title is kept.
+        self.assertNotIn('display_title', enrich_job({**base, 'title': 'Шеф-повар'})['_cloud'])
 
     def test_public_posts_keep_identity_text_dates_and_only_serbian_hiring(self):
         html = post(20, 'Вакансия\nPython developer\nBeograd\nEnglish required\nАдрес: Knez Mihailova 12\n1500 EUR / month')

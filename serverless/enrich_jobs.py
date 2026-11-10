@@ -38,7 +38,9 @@ def enrich_job(raw):
         description = str(job.get('description') or '')
         first = next((line.strip() for line in description.splitlines() if line.strip()), '')
         # Repair legacy first-line titles only; keep deliberately supplied titles.
-        if str(job.get('title') or '') == first[:140]:
+        import re
+        bare = re.sub(r'^[^\w#]+', '', first)
+        if str(job.get('title') or '') in (first[:140], bare[:140]):
             parsed_title = vacancy_title(description)
             if parsed_title and parsed_title != job['title']:
                 display_title = parsed_title

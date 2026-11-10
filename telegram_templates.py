@@ -113,7 +113,8 @@ def _job(source, post):
         return None
     if quality_reason('\n'.join(lines)):
         return None
-    title = lines[0].strip()
+    # A decorative emoji before the role is not part of the title.
+    title = re.sub(r'^[^\w#]+', '', lines[0].strip()).strip() or lines[0].strip()
     if len(title) > 180 or re.search(r'(?i)ищу работу|ищу подработку|резюме|дайджест|подборка|свежие вакансии|интенсив|вебинар|#ad', title):
         return None
     applications = list(dict.fromkeys(url for href, label in body.links
