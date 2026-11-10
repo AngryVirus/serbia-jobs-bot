@@ -3,6 +3,19 @@ import sys
 from cloud import invoke
 import collect
 import ads_worker
+import refresh_facts
+
+
+def resume_facts():
+    """Finish a paused derived-facts pass in short slices.
+
+    When the saved version is current this is a single status request. A failure
+    here must never stop collection, which has its own budget and fences.
+    """
+    try:
+        refresh_facts.refresh(budget=240)
+    except (ValueError, RuntimeError, OSError):
+        print('Derived facts refresh deferred; collection continues.', flush=True)
 
 
 def main():
@@ -10,6 +23,7 @@ def main():
     if not due.get('active'):
         print('Scheduled work skipped: bot is paused')
         return
+    resume_facts()
     if due.get('due') and not due.get('running'):
         print('Scheduled collection is due; resuming bounded source positions', flush=True)
         collect.main()

@@ -16,10 +16,12 @@ import scheduled
 class ScheduledWorkerTests(unittest.TestCase):
     def run_tick(self, response):
         with patch.object(scheduled, 'invoke', return_value=response) as invoke, \
+             patch.object(scheduled.refresh_facts, 'refresh') as facts, \
              patch.object(scheduled.collect, 'main') as collect, \
              patch.object(scheduled.ads_worker, 'main') as ads, contextlib.redirect_stdout(io.StringIO()):
             scheduled.main()
         invoke.assert_called_once_with('collection_due')
+        self.last_facts_calls = facts.call_args_list
         return collect.call_count, ads.call_count
 
     def test_any_scheduled_slot_catches_up_when_collection_is_overdue(self):
@@ -31,6 +33,26 @@ class ScheduledWorkerTests(unittest.TestCase):
 
     def test_paused_runtime_never_starts_collection_or_advertising(self):
         self.assertEqual(self.run_tick({'active': False, 'due': True}), (0, 0))
+        self.assertEqual(self.last_facts_calls, [])
+
+    def test_active_tick_resumes_derived_facts_in_a_short_slice_before_collection(self):
+        order = []
+        with patch.object(scheduled, 'invoke', return_value={'active': True, 'due': True, 'running': False}), \
+             patch.object(scheduled.refresh_facts, 'refresh', side_effect=lambda **kw: order.append(('facts', kw))), \
+             patch.object(scheduled.collect, 'main', side_effect=lambda: order.append('collect')), \
+             patch.object(scheduled.ads_worker, 'main', side_effect=lambda: order.append('ads')), contextlib.redirect_stdout(io.StringIO()):
+            scheduled.main()
+        self.assertEqual(order, [('facts', {'budget': 240}), 'collect', 'ads'])
+
+    def test_failed_facts_slice_never_stops_collection_or_advertising(self):
+        for error in (RuntimeError('throttled'), ValueError('bad'), OSError('network')):
+            with self.subTest(error=type(error).__name__), \
+                 patch.object(scheduled, 'invoke', return_value={'active': True, 'due': True, 'running': False}), \
+                 patch.object(scheduled.refresh_facts, 'refresh', side_effect=error), \
+                 patch.object(scheduled.collect, 'main') as collect, patch.object(scheduled.ads_worker, 'main') as ads, \
+                 contextlib.redirect_stdout(io.StringIO()):
+                scheduled.main()
+                self.assertEqual((collect.call_count, ads.call_count), (1, 1))
 
     def test_unknown_due_status_fails_closed_before_workers(self):
         with patch.object(scheduled, 'invoke', side_effect=RuntimeError('Unavailable')), \

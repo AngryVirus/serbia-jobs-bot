@@ -37,6 +37,39 @@ class RefreshFactsTests(unittest.TestCase):
         self.assertEqual(calls.call_args_list[-2].args,('facts_finish',))
         self.assertEqual(calls.call_args_list[-1].args,('facts_release',))
 
+    def test_time_budget_pauses_between_pages_without_completing_the_version(self):
+        page = {'rows': [{'id': 7, '_cloud': {'version': 1, 'languages': []}}]}
+        def invoke(op, **fields):
+            if op == 'facts_status': return {}
+            if op == 'facts_begin': return {'after': 0}
+            if op == 'facts_page': return page
+            if op == 'facts_apply': return {'updated': 0, 'skipped': 0}
+            return {}
+        clock = iter([0, 0, 5, 20])  # start, before page one, before page two (still in budget), then over budget
+        output = io.StringIO()
+        with patch.object(refresh_facts, 'invoke', side_effect=invoke) as calls, \
+             patch.object(refresh_facts, 'enrich_job', side_effect=lambda row: copy.deepcopy(row)), \
+             patch.object(refresh_facts.time, 'monotonic', side_effect=lambda: next(clock)), contextlib.redirect_stdout(output):
+            refresh_facts.refresh(budget=10)
+        operations = [c.args[0] for c in calls.call_args_list]
+        self.assertEqual(operations.count('facts_page'), 2)
+        self.assertNotIn('facts_finish', operations)
+        self.assertEqual(operations[-1], 'facts_release')
+        self.assertIn('paused at its time budget', output.getvalue())
+        self.assertNotIn('Public job facts refreshed', output.getvalue())
+
+    def test_without_a_budget_the_pass_runs_to_the_end(self):
+        pages = iter([{'rows': [{'id': 1, '_cloud': {'version': 1}}]}, {'rows': []}])
+        def invoke(op, **fields):
+            if op == 'facts_status': return {}
+            if op == 'facts_begin': return {'after': 0}
+            if op == 'facts_page': return next(pages)
+            return {'updated': 0, 'skipped': 0}
+        with patch.object(refresh_facts, 'invoke', side_effect=invoke) as calls, \
+             patch.object(refresh_facts, 'enrich_job', side_effect=lambda row: copy.deepcopy(row)), contextlib.redirect_stdout(io.StringIO()):
+            refresh_facts.refresh()
+        self.assertIn('facts_finish', [c.args[0] for c in calls.call_args_list])
+
     def test_processing_failure_releases_lease_without_marking_version_complete(self):
         def invoke(op,**fields):
             if op=='facts_status':return {}

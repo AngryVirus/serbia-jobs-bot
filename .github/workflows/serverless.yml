@@ -78,7 +78,9 @@ jobs:
             sources) python3 tools/check_sources.py ;;
             deploy)
               python3 serverless/deploy.py
-              python3 serverless/refresh_facts.py
+              # A full pass over the catalogue can outlast one job and throttle the
+              # management gateway; pause at the budget and resume in scheduled ticks.
+              python3 serverless/refresh_facts.py --budget 900
               # Screen diagnostics must not prevent collection after a safe deploy.
               python3 serverless/collect.py
               python3 serverless/health_check.py

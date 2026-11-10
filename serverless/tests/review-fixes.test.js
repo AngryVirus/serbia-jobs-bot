@@ -205,3 +205,17 @@ test('every accepted button press is acknowledged with a visible loading notice 
   assert.ok(events.some(e=>e[0]==='panel'),action);
  }
 });
+
+test('fingerprint backfill reads at most one page of rows per query and covers several pages per tick', async () => {
+ const {bodyFacts}=await import('../tgcloud/lib/catalog.js');
+ const f=await fixture();
+ for(let i=1;i<=350;i++)await f.db.run('INSERT INTO sjc_jobs(id,source_key,payload) VALUES(:id,:key,:payload)',{':id':i,':key':'b'+i,':payload':JSON.stringify(job(i,{description:'Описание '+i}))});
+ const limits=[],all=f.db.all;
+ f.db.all=async(sql,params)=>{if(/FROM sjc_jobs/.test(sql))limits.push(params[':page']);return all(sql,params);};
+ assert.deepEqual(await f.store.backfillDedupe(),{done:false,updated:300});
+ f.db.all=all;
+ assert.deepEqual(limits,[100,100,100]);
+ assert.deepEqual(await f.store.backfillDedupe(),{done:true,updated:50});
+ assert.deepEqual(await f.store.backfillDedupe(),{done:true,updated:0});
+ for(const row of await f.db.all('SELECT payload FROM sjc_jobs')){const j=JSON.parse(row.payload);assert.deepEqual(j._dedupe,bodyFacts(j.description));}
+});
