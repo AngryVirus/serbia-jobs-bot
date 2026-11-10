@@ -51,6 +51,27 @@ class CoordinationTests(unittest.TestCase):
             with self.assertRaisesRegex(cloud.CloudRequestError,'ten minutes'):cloud.invoke('backup_create',id='synthetic')
         runner.assert_not_called()
 
+    def test_only_backup_failures_expose_the_platform_error_text(self):
+        def failing(reason):
+            output = json.dumps({'ok': False, 'status': 400, 'code': 400, 'reason': reason})
+            return subprocess.CompletedProcess([], 1, stdout=output, stderr='')
+        env = {'TGCLOUD_TOKEN': 'app8802394224:synthetic_never_real'}
+        with patch.object(cloud, 'environment', return_value=env), patch.object(cloud, 'pace'), \
+             patch.object(cloud.subprocess, 'run', return_value=failing('database or disk is full\n[redacted]')):
+            with self.assertRaises(cloud.CloudRequestError) as backup:
+                cloud.invoke('backup_create', id='synthetic')
+            self.assertIn('status 400, code 400); platform said: database or disk is full [redacted]; private details withheld',
+                          str(backup.exception))
+            for operation in ('collect', 'notify', 'owner_report'):
+                with self.assertRaises(cloud.CloudRequestError) as other:
+                    cloud.invoke(operation, user_id=1)
+                self.assertEqual(str(other.exception), 'Cloud run failed (status 400, code 400); private details withheld')
+        with patch.object(cloud, 'environment', return_value=env), patch.object(cloud, 'pace'), \
+             patch.object(cloud.subprocess, 'run', return_value=failing('x' * 900)):
+            with self.assertRaises(cloud.CloudRequestError) as long:
+                cloud.invoke('backup_page', id='synthetic')
+            self.assertLess(len(str(long.exception)), 330)
+
     def test_queue_read_uses_fixed_repository_and_never_logs_error_body_or_token(self):
         env=dict(self.env,GITHUB_REPOSITORY='AngryVirus/serbia-jobs-bot',GITHUB_TOKEN='synthetic_never_real')
         with patch.object(cloud,'urlopen',side_effect=OSError('private response and credential')):
