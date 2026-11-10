@@ -64,12 +64,11 @@ a personal token:
    `Serbia Jobs Serverless` deploys automatically using `workflow_run`. It accepts
    only a successful push run for the current main commit; PR runs cannot deploy.
    The existing manual operation workflow remains available and runs tests before
-   accessing cloud credentials. Render must remain suspended; do not enable the
-   archived `deploy/legacy-collect.yml.disabled` collector. Its former workflow
-   file is no longer under `.github/workflows`.
+   accessing cloud credentials. Render must remain suspended; the old Render
+   collector and its deployment examples are no longer in the repository.
 
 `security` runs detect-secrets without external verification or printing values,
-`pip-audit` and npm audit for both lockfiles. Inline scanner allowlists cover only
+`pip-audit` and npm audit for the lockfile. Inline scanner allowlists cover only
 reviewed synthetic test credentials, an environment-variable lookup, scanner package versions, and the
 predecessor code digest. Dependabot checks Actions, npm and Python weekly. All
 third-party Actions are pinned to complete upstream commit SHAs. Secret values
@@ -98,8 +97,7 @@ Python webhook as a recovery shortcut.
 Legacy polling/webhook CLI startup is blocked by default before initializing
 storage or Telegram. `SERBIA_JOBS_ALLOW_LEGACY_RUNTIME=1` is an explicit opt-in for
 an isolated legacy test bot only; do not configure it on the production service.
-Importing legacy modules for regression tests does not require opt-in. The
-archived Render and systemd examples do not provision any new infrastructure.
+Importing legacy modules for regression tests does not require opt-in.
 
 Source release ZIPs are generated from a verified commit into `dist/` or an
 explicit `--output` path; no generated ZIP is kept in main. The allowlist includes

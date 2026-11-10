@@ -151,9 +151,8 @@ Supabase — отдельная историческая копия миграц
 
 ```sh
 npm ci --ignore-scripts --no-audit --no-fund --prefix serverless
-npm ci --ignore-scripts --no-audit --no-fund --prefix serverless-probe
 python3 -m unittest discover -s tests -q
-node --test serverless/tests/*.test.js serverless-probe/tests/*.test.js
+node --test serverless/tests/*.test.js
 ```
 
 Тесты используют временные базы и Telegram-заглушки. Для них не нужны Cloud,
@@ -198,11 +197,9 @@ webhook мог бы переключить маршрутизацию на ус�
 unit-тесты не требуют этого флага. `bot.py --collect/--status` остаются локальными
 legacy-инструментами и могут выбрать Supabase при заданных SUPABASE-переменных.
 
-Архивные Render/systemd примеры помечены как неактивные; прежний collector
-лежит в `deploy/legacy-collect.yml.disabled`, вне `.github/workflows`.
-[START_WITH_IPHONE.md](START_WITH_IPHONE.md) больше не предлагает включать Render.
-Исторический [VALIDATION.md](VALIDATION.md) описывает прежние проверки, а не
-состояние актуального выпуска.
+Файлов для запуска на Render или systemd, прежнего collector и журнала старых
+проверок в репозитории больше нет; при необходимости они доступны в истории Git
+до коммита, который их удалил.
 
 ## Оценки и отзывы о вакансиях
 

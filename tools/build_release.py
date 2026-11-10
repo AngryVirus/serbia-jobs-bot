@@ -11,10 +11,10 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = 'serbia-jobs-bot/'
-DIRECTORIES = {'.github', 'deploy', 'serverless', 'serverless-probe', 'tests', 'tools'}
+DIRECTORIES = {'.github', 'serverless', 'tests', 'tools'}
 EXCLUDED = {'.git', '.tgcloud', '.venv', '__pycache__', 'node_modules',
             'private', 'data', 'dist', 'work', '.pytest_cache'}
-SOURCE_SUFFIXES = {'.py', '.js', '.mjs', '.md', '.sql', '.yml', '.yaml', '.service', '.disabled'}
+SOURCE_SUFFIXES = {'.py', '.js', '.mjs', '.md', '.sql', '.yml', '.yaml'}
 ROOT_CONFIG = {'.env.example', '.gitignore', '.python-version', 'requirements.txt',
                'requirements-dev.txt'}
 REQUIRED = {'README.md', 'SECURITY.md', 'serverless/package.json',
