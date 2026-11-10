@@ -173,3 +173,18 @@ test('older records receive fingerprints in bounded background pages exactly onc
  assert.deepEqual(await f.store.backfillDedupe(3),{done:true,updated:0});
  f.db.all=all;assert.equal(reads,0);
 });
+
+test('keyword search reads look-alike Latin letters inside Cyrillic words', async () => {
+ const {withoutLookalikes,normalize}=await import('../tgcloud/lib/filters.js');
+ const fix=text=>withoutLookalikes(normalize(text));
+ assert.equal(fix('Специaлист по зaкупкaм'),'специалист по закупкам');
+ assert.equal(fix('ВAKAHCИЯ: Mенеджер'),'вакансия: менеджер');
+ // Ordinary Latin words, brand names and words with other Latin letters stay.
+ for(const text of ['cook and chef','it-специалист','smm-менеджер','wi-fi роутер','HRам и PRщикам','ITшник','Xа','node.js разработчик','vozač kamiona','1c программист'])assert.equal(fix(text),normalize(text),text);
+ const record=job(21,{title:'Вакансия: Специaлист по зaкупкaм',description:'Менеджер по продaжaм со знaнием сербского языкa',location:'Beograd'});
+ assert.equal(matches(record,settings({keywords:['специалист']})),true);
+ assert.equal(matches(record,settings({keywords:['менеджер']})),true);
+ assert.equal(matches(record,settings({exclusions:['продажам']})),false);
+ assert.equal(matches(record,settings({keywords:['водитель']})),false);
+ assert.equal(record.title,'Вакансия: Специaлист по зaкупкaм');
+});
