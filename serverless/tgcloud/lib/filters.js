@@ -1,4 +1,4 @@
-import { OPTIONS, CITIES, DEFAULTS, KEYWORD_FORMS } from './config.js';
+import { OPTIONS, CITIES, DEFAULTS, KEYWORD_FORMS, KEYWORD_TRANSLATIONS } from './config.js';
 import { sourceEnabled } from './source-policy.js';
 import { availabilityAllows } from './availability.js';
 export const defaults = () => JSON.parse(JSON.stringify(DEFAULTS));
@@ -50,8 +50,17 @@ function termPattern(term) {
 export function contains(text, term) {
   return termPattern(term).test(normalize(text));
 }
-const keywordPatterns = new Map(Object.entries(KEYWORD_FORMS).map(([word,forms])=>[word,
-  new RegExp('(?<![\\p{L}\\p{N}_])(?:'+forms.join('|')+')(?![\\p{L}\\p{N}_])','u')]));
+// One pattern per profession: its Russian case forms plus reviewed Serbian and
+// English names. The Russian base word and every translated name select the
+// whole group. Forms are normalized like vacancy text («водителей» is compared
+// as «водителеи»), otherwise a form containing «й» could never match.
+const keywordPatterns = new Map();
+for (const [word, forms] of Object.entries(KEYWORD_FORMS)) {
+  const translations = KEYWORD_TRANSLATIONS[word] || [];
+  const all = [...new Set([...forms, ...translations].map(normalize).filter(Boolean))];
+  const pattern = new RegExp('(?<![\\p{L}\\p{N}_])(?:' + all.map(x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')(?![\\p{L}\\p{N}_])', 'u');
+  for (const key of [word, ...translations].map(normalize)) if (key && !keywordPatterns.has(key)) keywordPatterns.set(key, pattern);
+}
 const keywordPattern=term=>{const value=normalize(term);return keywordPatterns.get(value)||termPattern(value);};
 export function keywordContains(text,term) {
   return keywordPattern(term).test(normalize(text));

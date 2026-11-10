@@ -1,0 +1,58 @@
+"""Serbian and English names for the professions that already have Russian forms.
+
+Reviewed, complete words only: no stemming and no related professions. Every
+entry is written the way the search normalises text (lower case, Serbian
+Latin without diacritics, ``đ`` as ``dj``). A keyword equal to the Russian
+base word or to any entry below searches the whole group, so «повар»,
+``kuvar`` and ``cook`` return the same vacancies. Exclusions stay literal.
+"""
+
+KEYWORD_TRANSLATIONS = {
+    'повар': ('kuvar', 'kuvara', 'kuvaru', 'kuvari', 'kuvarica', 'kuvarice', 'kuvaricu',
+              'кувар', 'кувара', 'кувару', 'кувари', 'куварица', 'куварице', 'куварицу',
+              'cook', 'cooks', 'chef', 'chefs'),
+    'официант': ('konobar', 'konobara', 'konobaru', 'konobari', 'konobarica', 'konobarice', 'konobaricu',
+                  'конобар', 'конобара', 'конобару', 'конобари', 'конобарица', 'конобарице', 'конобарицу',
+                  'waiter', 'waiters', 'waitress', 'waitresses'),
+    'курьер': ('kurir', 'kurira', 'kuriru', 'kuriri', 'dostavljac', 'dostavljaca', 'dostavljacu', 'dostavljaci',
+               'курир', 'курира', 'куриру', 'курири', 'достављач', 'достављача', 'достављачу', 'достављачи',
+               'courier', 'couriers'),
+    'водитель': ('vozac', 'vozaca', 'vozacu', 'vozaci', 'возач', 'возача', 'возачу', 'возачи',
+                 'driver', 'drivers'),
+    'продавец': ('prodavac', 'prodavca', 'prodavcu', 'prodavci', 'prodavacica', 'prodavacice', 'prodavacicu',
+                 'продавац', 'продавца', 'продавцу', 'продавци', 'продавачица', 'продавачице', 'продавачицу',
+                 'salesperson', 'seller', 'sellers', 'sales assistant', 'shop assistant'),
+    'кассир': ('kasir', 'kasira', 'kasiru', 'kasiri', 'kasirka', 'kasirke', 'kasirku',
+               'blagajnik', 'blagajnika', 'blagajnica', 'blagajnice',
+               'касир', 'касира', 'касири', 'касирка', 'касирке', 'касирку', 'благајник', 'благајника', 'благајница',
+               'cashier', 'cashiers'),
+    'уборщик': ('cistac', 'cistaca', 'cistaci', 'cistacica', 'cistacice', 'cistacicu',
+                'spremacica', 'spremacice', 'spremacicu', 'higijenicar', 'higijenicara', 'higijenicarka', 'higijenicarke',
+                'чистач', 'чистача', 'чистачи', 'чистачица', 'чистачице', 'спремачица', 'спремачице', 'спремачицу',
+                'хигијеничар', 'хигијеничарка', 'хигијеничарке',
+                'cleaner', 'cleaners', 'janitor', 'housekeeper', 'housekeepers'),
+    'администратор': ('administrator', 'administratora', 'administratoru', 'administratori', 'administratorka',
+                      'administrators'),
+    'менеджер': ('menadzer', 'menadzera', 'menadzeru', 'menadzeri', 'menadzerka',
+                 'менаџер', 'менаџера', 'менаџеру', 'менаџери',
+                 'manager', 'managers'),
+    'бармен': ('barmen', 'barmena', 'barmeni', 'sanker', 'sankera', 'sankeri', 'sankerica', 'sankerice',
+               'шанкер', 'шанкера', 'шанкери', 'шанкерица', 'шанкерице',
+               'bartender', 'bartenders', 'barman'),
+    'пекарь': ('pekar', 'pekara', 'pekaru', 'pekari', 'пекар', 'пекара', 'пекару', 'пекари',
+               'baker', 'bakers'),
+    'грузчик': ('utovarivac', 'utovarivaca', 'utovarivaci', 'fizicki radnik', 'fizicki radnici',
+                'утоваривач', 'утоваривача', 'утоваривачи', 'физички радник', 'физички радници',
+                'loader', 'loaders', 'warehouse worker', 'warehouse workers'),
+    'сварщик': ('zavarivac', 'zavarivaca', 'zavarivaci', 'varilac', 'varioca', 'varioci',
+                'заваривач', 'заваривача', 'заваривачи', 'варилац', 'вариоца', 'вариоци',
+                'welder', 'welders'),
+    'электрик': ('elektricar', 'elektricara', 'elektricaru', 'elektricari',
+                 'електричар', 'електричара', 'електричару', 'електричари',
+                 'electrician', 'electricians'),
+    'строитель': ('gradjevinac', 'gradjevinca', 'gradjevinci', 'gradjevinski radnik', 'gradjevinski radnici',
+                  'zidar', 'zidara', 'zidari',
+                  'грађевинац', 'грађевинца', 'грађевинци', 'грађевински радник', 'грађевински радници',
+                  'зидар', 'зидара', 'зидари',
+                  'builder', 'builders', 'construction worker', 'construction workers'),
+}
