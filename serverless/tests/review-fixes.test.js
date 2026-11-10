@@ -188,3 +188,20 @@ test('keyword search reads look-alike Latin letters inside Cyrillic words', asyn
  assert.equal(matches(record,settings({keywords:['водитель']})),false);
  assert.equal(record.title,'Вакансия: Специaлист по зaкупкaм');
 });
+
+test('every accepted button press is acknowledged with a visible loading notice before the panel is built', async () => {
+ const f=await fixture(),events=[];
+ f.api.answerCallbackQuery=async p=>{events.push(['answer',p]);};
+ const send=f.api.sendMessage,edit=f.api.editMessageText;
+ f.api.sendMessage=async p=>{events.push(['panel']);return send(p);};
+ f.api.editMessageText=async p=>{events.push(['panel']);return edit(p);};
+ for(const action of ['menu','filters','search:0','city','library']){
+  events.length=0;
+  const update=callback(77,action);
+  await new Bot(f).handle(update);
+  assert.equal(events[0][0],'answer',action);
+  assert.deepEqual(events[0][1],{callback_query_id:update.callback_query.id,text:'⏳ Загружаю…'});
+  assert.equal(events.filter(e=>e[0]==='answer').length,1);
+  assert.ok(events.some(e=>e[0]==='panel'),action);
+ }
+});
