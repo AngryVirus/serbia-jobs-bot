@@ -15,7 +15,7 @@ DIRECTORIES = {'.github', 'serverless', 'tests', 'tools'}
 EXCLUDED = {'.git', '.tgcloud', '.venv', '__pycache__', 'node_modules',
             'private', 'data', 'dist', 'work', '.pytest_cache'}
 SOURCE_SUFFIXES = {'.py', '.js', '.mjs', '.md', '.sql', '.yml', '.yaml'}
-ROOT_CONFIG = {'.env.example', '.gitignore', '.python-version', 'requirements.txt',
+ROOT_CONFIG = {'.gitignore', '.python-version', 'requirements.txt',
                'requirements-dev.txt'}
 REQUIRED = {'README.md', 'SECURITY.md', 'serverless/package.json',
             'serverless/package-lock.json', 'serverless/tgcloud.jsonc',
@@ -44,7 +44,7 @@ def source_files(root):
                    or path.name in {'package.json', 'package-lock.json', 'tgcloud.jsonc'}
                    or (relative.parts[:2] == ('tests', 'fixtures') and path.suffix in {'.html', '.xml', '.json'})
                    or (relative.parts[:2] == ('tools', 'licenses') and path.suffix == '.txt'))
-        if not allowed or (name != '.env.example' and any(part.startswith('.env') for part in relative.parts)):
+        if not allowed or any(part.startswith('.env') for part in relative.parts):
             continue
         if path.is_symlink():
             raise RuntimeError('Source releases cannot contain symlinks: ' + name)

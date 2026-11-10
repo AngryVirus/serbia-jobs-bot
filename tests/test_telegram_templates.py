@@ -3,8 +3,7 @@ import unittest
 from urllib.parse import parse_qs, urlsplit
 
 from location_links import job_map_url
-from presentation import job_text
-from sources import SOURCES, Job, extract_jobs
+from sources import SOURCES, extract_jobs
 from telegram_templates import collect_telegram
 
 
@@ -107,15 +106,11 @@ class LocationLinkTests(unittest.TestCase):
         url = job_map_url(job)
         self.assertEqual(urlsplit(url).hostname, 'www.google.com')
         self.assertEqual(parse_qs(urlsplit(url).query)['query'], ['Белград, Serbia'])
-        text = job_text(dict(job, title='Повар'))
-        self.assertIn('href="https://www.google.com/maps/search/?api=1&amp;query=', text)
-        self.assertIn('>Белград</a>', text)
 
     def test_explicit_map_is_kept_and_pure_remote_location_has_no_map(self):
         explicit = 'https://www.google.com/maps/place/Test/@44.8,20.4,12z'
         self.assertEqual(job_map_url({'location': 'Удалённо', 'description': explicit}), explicit)
         self.assertEqual(job_map_url({'location': 'Удалённо'}), '')
-        self.assertNotIn('maps/search', job_text({'title': 'Support', 'location': 'Удалённо', 'remote': True}))
 
     def test_structured_street_address_is_preserved_for_the_map(self):
         html = '''<script type="application/ld+json">{"@type":"JobPosting","title":"Cook","url":"https://radim.rs/jobs/cook","description":"Work","jobLocation":{"address":{"streetAddress":"Knez Mihailova 1","addressLocality":"Beograd","addressCountry":"RS"}}}</script>'''

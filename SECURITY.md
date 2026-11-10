@@ -94,10 +94,8 @@ offline restoration was verified. The old Supabase snapshot is historical and
 cannot restore changes made after migration. Never enable Render or an old
 Python webhook as a recovery shortcut.
 
-Legacy polling/webhook CLI startup is blocked by default before initializing
-storage or Telegram. `SERBIA_JOBS_ALLOW_LEGACY_RUNTIME=1` is an explicit opt-in for
-an isolated legacy test bot only; do not configure it on the production service.
-Importing legacy modules for regression tests does not require opt-in.
+The old Python polling/webhook runtime has been removed from the repository, so
+no entry point can reattach the production webhook to the historical Supabase.
 
 Source release ZIPs are generated from a verified commit into `dist/` or an
 explicit `--output` path; no generated ZIP is kept in main. The allowlist includes
