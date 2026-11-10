@@ -77,7 +77,20 @@ function searchText(j) {
   }
   return entry;
 }
-const jobText = j => { const entry = searchText(j); if (entry.text === null) entry.text = normalize(`${j.title || ''} ${j.description || ''}`); return entry.text; };
+// Some posts replace Cyrillic letters with identical-looking Latin ones
+// («Специaлист» with a Latin «a»), which hides them from keyword search.
+// Only a word that mixes both scripts, has at least two Cyrillic letters and
+// whose every Latin letter is a look-alike is read as Cyrillic. Search only:
+// the stored and displayed text is untouched.
+const LOOKALIKES = { a: 'а', b: 'в', c: 'с', e: 'е', h: 'н', k: 'к', m: 'м', o: 'о', p: 'р', t: 'т', x: 'х', y: 'у' };
+const MIXED_WORD = /[a-z\u0400-\u04ff]*(?:[a-z][\u0400-\u04ff]|[\u0400-\u04ff][a-z])[a-z\u0400-\u04ff]*/g;
+export function withoutLookalikes(normalized) {
+  return normalized.replace(MIXED_WORD, word => {
+    if ((word.match(/[\u0400-\u04ff]/g) || []).length < 2 || /[^a-z\u0400-\u04ff]|[dfgijlnqrsuvwz]/.test(word)) return word;
+    return word.replace(/[a-z]/g, letter => LOOKALIKES[letter]);
+  });
+}
+const jobText = j => { const entry = searchText(j); if (entry.text === null) entry.text = withoutLookalikes(normalize(`${j.title || ''} ${j.description || ''}`)); return entry.text; };
 const jobPlace = j => { const entry = searchText(j); if (entry.place === null) entry.place = normalize(j.location); return entry.place; };
 const cityPatterns = new Map();
 function cityPattern(city) {
