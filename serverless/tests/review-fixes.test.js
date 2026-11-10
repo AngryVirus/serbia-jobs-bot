@@ -81,3 +81,95 @@ test('an in-place panel update does not rewrite the unchanged panel pointer', as
  assert.equal(second.settings.ui_panel_id,id);assert.equal(second.settings.ui_panel_kind,'photo');
  assert.equal(rewrites,0);
 });
+
+test('profession keywords cover every case form and reviewed Serbian and English names', async () => {
+ const {KEYWORD_FORMS,KEYWORD_TRANSLATIONS}=await import('../tgcloud/lib/config.js');
+ const {normalize}=await import('../tgcloud/lib/filters.js');
+ assert.deepEqual(Object.keys(KEYWORD_TRANSLATIONS),Object.keys(KEYWORD_FORMS));
+ const owners=new Map();
+ for(const [word,forms] of Object.entries(KEYWORD_FORMS)){
+  // Every listed form is found, including those containing «й».
+  for(const form of forms)assert.equal(keywordContains('Ищем: '+form+'.',word),true,form);
+  for(const name of KEYWORD_TRANSLATIONS[word]){
+   assert.equal(normalize(name),name,name);
+   assert.equal(owners.has(name),false,name);owners.set(name,word);
+   assert.equal(keywordContains('Oglas: '+name+', Beograd',word),true,name);
+   assert.equal(keywordContains('Нужен '+word,name),true,name);
+  }
+ }
+ assert.equal(keywordContains('Ищем водителей категории B','водитель'),true);
+ assert.equal(keywordContains('Potreban kuvar u restoranu','повар'),true);
+ assert.equal(keywordContains('Потребна куварица','повар'),true);
+ assert.equal(keywordContains('Vozač B kategorije','водитель'),true);
+ assert.equal(keywordContains('Građevinski radnici','строитель'),true);
+ assert.equal(keywordContains('Нужен повар','cook'),true);
+ // Whole words only, and an inflected or unknown keyword stays literal.
+ assert.equal(keywordContains('cookie factory','повар'),false);
+ assert.equal(keywordContains('повариха','повар'),false);
+ assert.equal(keywordContains('Potreban kuvar','повара'),false);
+ assert.equal(keywordContains('Potreban kuvar','программист'),false);
+ // Exclusions never expand.
+ assert.equal(contains('Potreban kuvar','повар'),false);
+ const record=job(9,{title:'Kuvar',description:'Restoran traži kuvara',location:'Beograd'});
+ assert.equal(matches(record,settings({keywords:['повар']})),true);
+ assert.equal(matches(record,settings({exclusions:['повар']})),true);
+});
+
+test('an expired update receipt is reclaimed without background cleanup, a live one is not', async () => {
+ const f=await fixture();
+ assert.equal(await f.store.claimUpdate('u:1'),true);
+ assert.equal(await f.store.claimUpdate('u:1'),false);
+ await f.store.finishUpdate('u:1');
+ assert.equal(await f.store.claimUpdate('u:1'),false);
+ await f.db.run("UPDATE sjc_updates SET expires=:past WHERE key='u:1'",{':past':Date.now()-1});
+ assert.equal(await f.store.claimUpdate('u:1'),true);
+ assert.equal((await f.db.get("SELECT state FROM sjc_updates WHERE key='u:1'")).state,'processing');
+ assert.equal(await f.store.claimUpdate('u:1'),false);
+});
+
+test('user updates leave expired receipts to the background tick, which clears a backlog in pages', async () => {
+ const f=await fixture(),now=Date.now();
+ for(let i=0;i<250;i++)await f.db.run("INSERT INTO sjc_updates(key,state,expires) VALUES(:key,'done',:expires)",{':key':'old:'+i,':expires':now-1});
+ await f.store.record('rate','old',{n:1,end:now-1});
+ await new Bot(f).handle(callback(77,'menu'));
+ assert.equal((await f.db.get("SELECT COUNT(*) AS n FROM sjc_updates WHERE key LIKE 'old:%'")).n,250);
+ await f.store.pruneBacklog();
+ assert.equal((await f.db.get("SELECT COUNT(*) AS n FROM sjc_updates WHERE key LIKE 'old:%'")).n,0);
+ assert.equal((await f.store.records('rate')).filter(r=>r.end===now-1).length,0);
+});
+
+test('collector writes store a body fingerprint and grouping is the same with or without it', async () => {
+ const {bodyFacts,DEDUPE_VERSION}=await import('../tgcloud/lib/catalog.js');
+ const f=await fixture(),long='Ресторан в центре ищет повара на полный день. '.repeat(8),published=Date.now()-86400000;
+ const cloud={version:1,serbia:true,languages:['ru'],published_ms:published,expires_ms:null};
+ const make=(n,description,extra={})=>({source:'tg_rabotavserbii',url:'https://t.me/rabotavserbii/'+n,title:'Повар',description,location:'Beograd',company:'Acme',contacts:['+381601'],_cloud:{...cloud},...extra});
+ await f.store.putJob(make(1,long));
+ await f.store.putJob(make(2,long.toUpperCase()+'  '));
+ await f.store.putJob(make(3,long+' Другой текст объявления.'));
+ const saved=await f.store.jobs();
+ for(const j of saved)assert.deepEqual(j._dedupe,bodyFacts(j.description));
+ assert.equal(saved[0]._dedupe.v,DEDUPE_VERSION);
+ const shape=list=>groupJobs(list).map(g=>g.members.map(j=>j.id).sort()).sort();
+ const bare=saved.map(({_dedupe,...j})=>j);
+ assert.deepEqual(shape(saved),[[1,2],[3]]);
+ assert.deepEqual(shape(bare),shape(saved));
+ // A fingerprint that no longer describes the text is ignored, not trusted.
+ const stale=saved.map(j=>j.id===3?{...j,_dedupe:saved.find(x=>x.id===1)._dedupe}:j);
+ assert.deepEqual(shape(stale),shape(saved));
+ // An edited description gets a new fingerprint on the next collector write.
+ await f.store.putJob(make(2,long+' Совсем другое объявление, не копия первого.'));
+ assert.deepEqual(shape(await f.store.jobs()),[[1],[2],[3]]);
+});
+
+test('older records receive fingerprints in bounded background pages exactly once', async () => {
+ const {bodyFacts,DEDUPE_VERSION}=await import('../tgcloud/lib/catalog.js');
+ const f=await fixture();
+ for(let i=1;i<=7;i++)await f.db.run('INSERT INTO sjc_jobs(id,source_key,payload) VALUES(:id,:key,:payload)',{':id':i,':key':'k'+i,':payload':JSON.stringify(job(i,{description:'Описание '+i}))});
+ assert.deepEqual(await f.store.backfillDedupe(3),{done:false,updated:3});
+ assert.deepEqual(await f.store.backfillDedupe(3),{done:false,updated:3});
+ assert.deepEqual(await f.store.backfillDedupe(3),{done:true,updated:1});
+ for(const row of await f.db.all('SELECT payload FROM sjc_jobs')){const j=JSON.parse(row.payload);assert.deepEqual(j._dedupe,bodyFacts(j.description));assert.equal(j._dedupe.v,DEDUPE_VERSION);assert.equal(j.title,'Повар <&>');}
+ let reads=0;const all=f.db.all;f.db.all=async(sql,params)=>{if(/FROM sjc_jobs/.test(sql))reads++;return all(sql,params);};
+ assert.deepEqual(await f.store.backfillDedupe(3),{done:true,updated:0});
+ f.db.all=all;assert.equal(reads,0);
+});

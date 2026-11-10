@@ -166,8 +166,8 @@ export async function administer(input, ctx, deps) {
     const groups=await store.db.all("SELECT json_extract(payload,'$.state') AS state,COUNT(*) AS n FROM sjc_records WHERE kind='vacancy_review' GROUP BY json_extract(payload,'$.state')");
     return {ready:true,team_audit:true,states:groups};
   }
-  if(op==='health_tick'){await reviewNoticeTick(store,deps.api);const result=await healthTick(store,deps.api);try{await notifySourceIdeas(store,deps.api);}catch{/* Proposal notices must not prevent independent health monitoring. */}return result;}
-  if(op==='ads_tick') {await reviewNoticeTick(store,deps.api);const notices=await banNoticeTick(store,deps.api,deps.InputFile),roles=await roleNoticeTick(store,deps.api);return {...await adTick(store,deps.api),ban_notices:notices,role_notices:roles};}
+  if(op==='health_tick'){await store.pruneBacklog();await store.backfillDedupe();await reviewNoticeTick(store,deps.api);const result=await healthTick(store,deps.api);try{await notifySourceIdeas(store,deps.api);}catch{/* Proposal notices must not prevent independent health monitoring. */}return result;}
+  if(op==='ads_tick') {await store.pruneBacklog();await store.backfillDedupe();await reviewNoticeTick(store,deps.api);const notices=await banNoticeTick(store,deps.api,deps.InputFile),roles=await roleNoticeTick(store,deps.api);return {...await adTick(store,deps.api),ban_notices:notices,role_notices:roles};}
   if (op === 'init') {
     await store.init();
     if(!await store.meta('analytics_started'))await store.setMeta('analytics_started',new Date().toISOString().slice(0,10));

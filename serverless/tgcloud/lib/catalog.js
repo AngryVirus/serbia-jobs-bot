@@ -25,8 +25,32 @@ const city = value => {
   return cityAliases.get(text) || text;
 };
 const date = j => j._cloud?.published_ms ?? Date.parse(j.published_at || j.created_at);
+// Normalizing every description dominates grouping, so the collector write
+// stores a fingerprint of the normalized body. Copies are compared by that
+// fingerprint and length, never by a partial text. A record without a current
+// fingerprint is computed here with the same function, so stored and live
+// values always agree. Bump the version whenever normalize() or words() change.
+export const DEDUPE_VERSION = 1;
+function fingerprint(text) {
+  let a = 0x811c9dc5, b = 0x9747b28c;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193);
+    b = Math.imul(b ^ c, 0x5bd1e995); b ^= b >>> 13;
+  }
+  return text.length + ':' + (a >>> 0).toString(36) + ':' + (b >>> 0).toString(36);
+}
+export function bodyFacts(description) {
+  const body = words(description);
+  return { v: DEDUPE_VERSION, n: typeof description === 'string' ? description.length : -1, l: body.length, k: fingerprint(body) };
+}
+function body(j) {
+  const d = j._dedupe;
+  return d && d.v === DEDUPE_VERSION && typeof j.description === 'string' && d.n === j.description.length && Number.isSafeInteger(d.l) && typeof d.k === 'string' ? d : bodyFacts(j.description);
+}
 function facts(j) {
-  return { job: j, title: words(j.title), body: words(j.description), company: words(j.company), city: city(j.location),
+  const text = body(j);
+  return { job: j, title: words(j.title), bodyLength: text.l, bodyKey: text.k, company: words(j.company), city: city(j.location),
     contacts: (j.contacts || []).map(x => normalize(x).replace(/[\s()-]/g, '')).filter(Boolean), date: date(j) };
 }
 function compatible(a, b) {
@@ -41,11 +65,11 @@ function compatible(a, b) {
   return true;
 }
 function sameContent(a, b) {
-  if (!compatible(a, b) || a.body.length < 160 || a.body !== b.body) return false;
+  if (!compatible(a, b) || a.bodyLength < 160 || a.bodyKey !== b.bodyKey) return false;
   // Old templates can represent a new opening months later. Missing dates do
   // not provide enough evidence for text-only merging.
   if (!Number.isFinite(a.date) || !Number.isFinite(b.date) || Math.abs(a.date - b.date) > 45 * 86400000) return false;
-  return Boolean(a.company && a.company === b.company || a.contacts.some(x => b.contacts.includes(x)) || a.city && a.city === b.city && a.body.length >= 300);
+  return Boolean(a.company && a.company === b.company || a.contacts.some(x => b.contacts.includes(x)) || a.city && a.city === b.city && a.bodyLength >= 300);
 }
 function applicationLinks(j) {
   // Only explicit vacancy links, never a shared employer homepage/profile.
@@ -91,8 +115,8 @@ export function groupJobs(jobs) {
   });
   const bodies = new Map();
   entries.forEach((e, i) => {
-    if (e.body.length < 160) return;
-    const key = e.title + '\n' + e.body, candidates = bodies.get(key) || [];
+    if (e.bodyLength < 160) return;
+    const key = e.title + '\n' + e.bodyKey, candidates = bodies.get(key) || [];
     // Check every member: a partial record must not bridge two conflicting jobs.
     let found = false;
     for (const k of candidates) {

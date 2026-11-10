@@ -1,5 +1,5 @@
 import { defaults, settings } from './filters.js';
-import { availabilityTarget } from './catalog.js';
+import { availabilityTarget, bodyFacts, DEDUPE_VERSION } from './catalog.js';
 import { sourceEnabled } from './source-policy.js';
 export const TABLES = ['users', 'jobs', 'deliveries', 'favorites', 'source_status'];
 const SCHEMA = [
@@ -124,11 +124,34 @@ export class Store {
   }
   async pruneTransient(now=Date.now()) {
     // Each indexed deletion has a fixed upper bound, including after long downtime.
-    await this.db.run('DELETE FROM sjc_updates WHERE key IN (SELECT key FROM sjc_updates WHERE expires<=:now ORDER BY expires LIMIT 100)',{':now':now});
-    await this.db.run("DELETE FROM sjc_records WHERE kind='rate' AND record_key IN (SELECT record_key FROM sjc_records WHERE kind='rate' AND json_extract(payload,'$.end')<=:now ORDER BY json_extract(payload,'$.end') LIMIT 100)",{':now':now});
-    await this.db.run("DELETE FROM sjc_records WHERE kind='input_effect' AND record_key IN (SELECT record_key FROM sjc_records WHERE kind='input_effect' AND json_extract(payload,'$.expires')<=:now ORDER BY json_extract(payload,'$.expires') LIMIT 100)",{':now':now});
-    await this.db.run("DELETE FROM sjc_records WHERE kind='favorite_action' AND record_key IN (SELECT record_key FROM sjc_records WHERE kind='favorite_action' AND json_extract(payload,'$.expires')<=:now ORDER BY json_extract(payload,'$.expires') LIMIT 100)",{':now':now});
+    // Returns the largest page removed, so a background tick can continue a backlog.
+    let removed=(await this.db.run('DELETE FROM sjc_updates WHERE key IN (SELECT key FROM sjc_updates WHERE expires<=:now ORDER BY expires LIMIT 100)',{':now':now})).rowsAffected;
+    for(const kind of ['rate','input_effect','favorite_action'])removed=Math.max(removed,await this.pruneKind(kind,now));
     await this.db.run("DELETE FROM sjc_records WHERE kind='source_idea' AND json_extract(payload,'$.state')!='pending' AND json_extract(payload,'$.updated_at')<:cutoff",{':cutoff':new Date(now-90*86400000).toISOString()});
+    return removed;
+  }
+  async pruneKind(kind,now) {
+    if(kind==='rate')return (await this.db.run("DELETE FROM sjc_records WHERE kind='rate' AND record_key IN (SELECT record_key FROM sjc_records WHERE kind='rate' AND json_extract(payload,'$.end')<=:now ORDER BY json_extract(payload,'$.end') LIMIT 100)",{':now':now})).rowsAffected;
+    if(kind==='input_effect')return (await this.db.run("DELETE FROM sjc_records WHERE kind='input_effect' AND record_key IN (SELECT record_key FROM sjc_records WHERE kind='input_effect' AND json_extract(payload,'$.expires')<=:now ORDER BY json_extract(payload,'$.expires') LIMIT 100)",{':now':now})).rowsAffected;
+    return (await this.db.run("DELETE FROM sjc_records WHERE kind='favorite_action' AND record_key IN (SELECT record_key FROM sjc_records WHERE kind='favorite_action' AND json_extract(payload,'$.expires')<=:now ORDER BY json_extract(payload,'$.expires') LIMIT 100)",{':now':now})).rowsAffected;
+  }
+  // Records saved before fingerprints existed receive one in bounded pages.
+  // A concurrent collector write wins; its own fingerprint is already current.
+  async backfillDedupe(limit=25) {
+    if((await this.meta('dedupe_backfill'))?.version===DEDUPE_VERSION)return {done:true,updated:0};
+    const rows=await this.db.all("SELECT id,payload FROM sjc_jobs WHERE COALESCE(json_extract(payload,'$._dedupe.v'),0)!=:version ORDER BY id LIMIT :limit",{':version':DEDUPE_VERSION,':limit':limit});
+    let updated=0;
+    for(const row of rows){
+      const job=JSON.parse(row.payload);job._dedupe=bodyFacts(job.description);
+      updated+=(await this.db.run('UPDATE sjc_jobs SET payload=:payload WHERE id=:id AND payload=:old',{':id':row.id,':old':row.payload,':payload':JSON.stringify(job)})).rowsAffected;
+    }
+    const done=rows.length<limit&&updated===rows.length;
+    if(done)await this.setMeta('dedupe_backfill',{version:DEDUPE_VERSION,finished_at:new Date().toISOString()});
+    return {done,updated};
+  }
+  // Background ticks clear expired receipts in bounded pages; user updates do not pay for it.
+  async pruneBacklog(now=Date.now(),pages=5) {
+    for(let i=0;i<pages;i++)if(await this.pruneTransient(now)<100)break;
   }
   async deleteUser(uid,key=null) {
     let effect;
@@ -269,6 +292,8 @@ export class Store {
     job.created_at = previous?.created_at || new Date().toISOString();
     job.updated_at = new Date().toISOString();
     if(previous?._withdrawn_at){job._withdrawn_at=previous._withdrawn_at;job._cloud.quality={...job._cloud.quality,reason:'closed'};}
+    // Every collector write refreshes the grouping fingerprint with the text.
+    job._dedupe=bodyFacts(job.description);
     if (old) await this.db.run('UPDATE sjc_jobs SET payload=:payload WHERE source_key=:key', { ':key': key, ':payload': JSON.stringify(job) });
     else await this.db.run('INSERT INTO sjc_jobs(source_key,payload) VALUES(:key,:payload)', { ':key': key, ':payload': JSON.stringify(job) });
     const target=availabilityTarget(job);
@@ -316,8 +341,10 @@ export class Store {
   }
   async sourceStatus(source, payload) { await this.db.run("INSERT INTO sjc_records(kind,record_key,payload) VALUES('source_status',:source,:payload) ON CONFLICT(kind,record_key) DO UPDATE SET payload=excluded.payload", { ':source': source, ':payload': JSON.stringify({ source, payload }) }); }
   async claimUpdate(key) {
-    await this.pruneTransient();
-    return (await this.db.run("INSERT INTO sjc_updates(key,state,expires) VALUES(:key,'processing',:expires) ON CONFLICT(key) DO NOTHING", { ':key': key, ':expires': Date.now() + 180000 })).rowsAffected === 1;
+    // An expired receipt is taken over in the same statement, so a crashed
+    // handler's claim never depends on background cleanup having run.
+    const now=Date.now();
+    return (await this.db.run("INSERT INTO sjc_updates(key,state,expires) VALUES(:key,'processing',:expires) ON CONFLICT(key) DO UPDATE SET state='processing',expires=excluded.expires WHERE sjc_updates.expires<=:now", { ':key': key, ':expires': now + 180000, ':now': now })).rowsAffected === 1;
   }
   async releaseUpdate(key) { await this.db.run("DELETE FROM sjc_updates WHERE key=:key AND state='processing'", { ':key': key }); }
   async finishUpdate(key) { await this.db.run("UPDATE sjc_updates SET state='done',expires=:expires WHERE key=:key", { ':key': key, ':expires': Date.now()+172800000 }); }
