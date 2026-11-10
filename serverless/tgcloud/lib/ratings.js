@@ -2,7 +2,7 @@ import {OWNER_ID,accessRole,rank,nonce} from './permissions.js';
 import {moderatorSnapshot} from './bans.js';
 import {groupJobs,includesId} from './catalog.js';
 import {positive} from './store.js';
-import {button,safe} from './ui.js';
+import {button,safe,clip} from './ui.js';
 import {REVIEW_SCOPE,publicReviews,ratingSummary,ratingLine} from './rating-data.js';
 const BACK=[[button('⬅️ Панель управления','admin')]];
 const actor=bot=>bot.actor?.id===bot.uid?bot.actor:moderatorSnapshot({id:bot.uid});
@@ -116,5 +116,5 @@ export async function ratingsAdmin(bot,action){
  const state=m[1],where="kind='vacancy_review' AND json_extract(payload,'$.state')=:state",total=(await bot.store.db.get('SELECT COUNT(*) AS n FROM sjc_records WHERE '+where,{':state':state})).n,page=Math.min(Number(m[2]),Math.max(0,Math.ceil(total/3)-1));
  const rows=await bot.store.db.all('SELECT record_key,payload FROM sjc_records WHERE '+where+' ORDER BY record_key LIMIT 3 OFFSET :offset',{':state':state,':offset':page*3});
  const nav=[];if(page)nav.push(button('⬅️',`admin:ratings:${state}:${page-1}`));if((page+1)*3<total)nav.push(button('➡️',`admin:ratings:${state}:${page+1}`));
- return bot.panel(`<b>⭐ Отзывы · ${{pending:'на проверке',published:'опубликованные',deleted:'удалённые'}[state]}</b>\nВсего: ${total}`, [...rows.map(r=>{const v=JSON.parse(r.payload);return [button(`${v.stars} ⭐ · ${String(v.title).slice(0,35)}`,`admin:ratings:view:${r.record_key}`)];}),...(nav.length?[nav]:[]),...(state==='pending'?[[button('📂 Рассмотренные','admin:ratings:history')],[button('⬅️ Назад',role==='owner'?'admin:vacancies':'admin')]]:[[button('⬅️ Рассмотренные отзывы','admin:ratings:history')]])]);
+ return bot.panel(`<b>⭐ Отзывы · ${{pending:'на проверке',published:'опубликованные',deleted:'удалённые'}[state]}</b>\nВсего: ${total}`, [...rows.map(r=>{const v=JSON.parse(r.payload);return [button(`${v.stars} ⭐ · ${clip(v.title,35)}`,`admin:ratings:view:${r.record_key}`)];}),...(nav.length?[nav]:[]),...(state==='pending'?[[button('📂 Рассмотренные','admin:ratings:history')],[button('⬅️ Назад',role==='owner'?'admin:vacancies':'admin')]]:[[button('⬅️ Рассмотренные отзывы','admin:ratings:history')]])]);
 }

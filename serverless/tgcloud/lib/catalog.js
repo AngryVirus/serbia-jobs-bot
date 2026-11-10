@@ -17,9 +17,12 @@ export function canonicalUrl(value) {
   return host + path + (query ? '?' + query : '');
 }
 const words = value => normalize(value).replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+// Alias lookup is built once; the first city listing an alias keeps it.
+const cityAliases = new Map();
+for (const [key, aliases] of Object.entries(CITIES)) for (const alias of aliases) { const text = words(alias); if (!cityAliases.has(text)) cityAliases.set(text, key); }
 const city = value => {
   const text = words(value);
-  return Object.entries(CITIES).find(([, aliases]) => aliases.some(x => words(x) === text))?.[0] || text;
+  return cityAliases.get(text) || text;
 };
 const date = j => j._cloud?.published_ms ?? Date.parse(j.published_at || j.created_at);
 function facts(j) {
@@ -128,10 +131,11 @@ export function visibleJobs(groups, s, now = Date.now()) {
   const ids = hidden(s), result = [];
   for (const group of groups) {
     if (group.members.some(j => ids.has(j.id))) continue;
-    if (group.members.some(j => j._moderated) || currentPublications(group).some(j => j._cloud?.quality?.reason === 'closed'||j._availability?.state==='closed'||j._cloud?.expires_ms!=null&&j._cloud.expires_ms<=now&&group.members.some(copy=>publisherOriginal(copy)===canonicalUrl(j.url)))) continue;
+    const current = currentPublications(group);
+    if (group.members.some(j => j._moderated) || current.some(j => j._cloud?.quality?.reason === 'closed'||j._availability?.state==='closed'||j._cloud?.expires_ms!=null&&j._cloud.expires_ms<=now&&group.members.some(copy=>publisherOriginal(copy)===canonicalUrl(j.url)))) continue;
     // Select only among records matching the user's complete filter. Do not
     // invent a composite salary/language/location from different publications.
-    const choices = currentPublications(group).filter(j => contactable(j) && matches(j, s, now));
+    const choices = current.filter(j => contactable(j) && matches(j, s, now));
     choices.sort((a,b) => quality(b) - quality(a));
     if (choices.length) result.push(decorate(group, choices[0]));
   }

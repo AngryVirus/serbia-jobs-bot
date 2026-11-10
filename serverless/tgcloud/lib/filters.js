@@ -34,15 +34,51 @@ export function choose(s, field, value, enabled) {
 }
 export const hidden = s => new Set((s.hidden_jobs || []).filter(x => Number.isSafeInteger(x) && x > 0));
 export const normalize = s => String(s ?? '').toLowerCase().replace(/ß/g, 'ss').replace(/đ/g, 'dj').normalize('NFKD').replace(/\p{M}/gu, '').replace(/\s+/gu, ' ').trim();
+// Compiled whole-word patterns are reused: one search checks every vacancy
+// against the same few terms. The cache is bounded and holds no vacancy text.
+const termPatterns = new Map();
+function termPattern(term) {
+  const value = normalize(term);
+  let pattern = termPatterns.get(value);
+  if (!pattern) {
+    if (termPatterns.size >= 500) termPatterns.clear();
+    pattern = new RegExp('(?<![\\p{L}\\p{N}_])' + value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\p{L}\\p{N}_])', 'u');
+    termPatterns.set(value, pattern);
+  }
+  return pattern;
+}
 export function contains(text, term) {
-  const escaped = normalize(term).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp('(?<![\\p{L}\\p{N}_])' + escaped + '(?![\\p{L}\\p{N}_])', 'u').test(normalize(text));
+  return termPattern(term).test(normalize(text));
 }
 const keywordPatterns = new Map(Object.entries(KEYWORD_FORMS).map(([word,forms])=>[word,
   new RegExp('(?<![\\p{L}\\p{N}_])(?:'+forms.join('|')+')(?![\\p{L}\\p{N}_])','u')]));
+const keywordPattern=term=>{const value=normalize(term);return keywordPatterns.get(value)||termPattern(value);};
 export function keywordContains(text,term) {
-  const value=normalize(term),pattern=keywordPatterns.get(value);
-  return pattern?pattern.test(normalize(text)):contains(text,value);
+  return keywordPattern(term).test(normalize(text));
+}
+// Normalizing a long description is the dominant cost of filtering. Do it once
+// per vacancy record rather than once per keyword, exclusion and city alias.
+// Entries die with their record and are rebuilt if its public text changes.
+const searchTexts = new WeakMap();
+function searchText(j) {
+  let entry = searchTexts.get(j);
+  if (!entry || entry.title !== j.title || entry.description !== j.description || entry.location !== j.location) {
+    entry = { title: j.title, description: j.description, location: j.location, text: null, place: null };
+    searchTexts.set(j, entry);
+  }
+  return entry;
+}
+const jobText = j => { const entry = searchText(j); if (entry.text === null) entry.text = normalize(`${j.title || ''} ${j.description || ''}`); return entry.text; };
+const jobPlace = j => { const entry = searchText(j); if (entry.place === null) entry.place = normalize(j.location); return entry.place; };
+const cityPatterns = new Map();
+function cityPattern(city) {
+  let patterns = cityPatterns.get(city);
+  if (!patterns) {
+    if (cityPatterns.size >= 500) cityPatterns.clear();
+    patterns = (CITIES[city] || [city]).map(termPattern);
+    cityPatterns.set(city, patterns);
+  }
+  return patterns;
 }
 // EU daylight-saving transitions, 01:00 UTC on the last Sunday of March/October.
 // No dependency on Intl/time-zone data in the platform's JavaScript isolate.
@@ -58,15 +94,15 @@ export function matches(j, s, now = Date.now()) {
   if(!availabilityAllows(j,now))return false;
   if (!sourceEnabled(j.source)) return false;
   const f = j._cloud;
-  if (!f || f.quality?.reason || j._moderated || hidden(s).has(j.id) || !f.serbia) return false;
+  if (!f || f.quality?.reason || j._moderated || !f.serbia) return false;
+  if (Number.isSafeInteger(j.id) && j.id > 0 && Array.isArray(s.hidden_jobs) && s.hidden_jobs.includes(j.id)) return false;
   const periods = selected(s, 'freshness'), age = f.published_day == null ? null : belgradeDay(now) - f.published_day;
   if (age !== null && (age < 0 || (!f.date_only && f.published_ms > now))) return false;
   if (!periods.some(p => p === 'any' || age !== null && ({ today: age === 0, yesterday: age === 1, 7: age >= 0 && age < 7, 30: age >= 0 && age < 30 })[p])) return false;
-  const text = `${j.title || ''} ${j.description || ''}`;
-  if (s.keywords?.length && !s.keywords.some(x => keywordContains(text, x))) return false;
-  if (s.exclusions?.some(x => contains(text, x))) return false;
+  if (s.keywords?.length && !s.keywords.some(x => keywordPattern(x).test(jobText(j)))) return false;
+  if (s.exclusions?.some(x => termPattern(x).test(jobText(j)))) return false;
   const cities = selected(s, 'city');
-  if (!cities.includes('any') && !cities.some(c => (CITIES[c] || [c]).some(x => contains(j.location, x)))) return false;
+  if (!cities.includes('any') && !cities.some(c => cityPattern(c).some(x => x.test(jobPlace(j))))) return false;
   const remote = selected(s, 'remote');
   const workFormat = Object.hasOwn(f, 'remote') ? f.remote : j.remote;
   if (!remote.includes('any') && !(remote.includes('only') && workFormat === true || remote.includes('office') && workFormat === false)) return false;
