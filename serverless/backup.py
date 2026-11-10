@@ -223,5 +223,9 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (RuntimeError, ValueError, OSError, sqlite3.Error):
-        raise SystemExit('Backup/recovery failed; private details withheld') from None
+    except (RuntimeError, ValueError, OSError, sqlite3.Error) as error:
+        # Name the failure without exposing data: always the exception class, and the
+        # message only where it is a static string of this code or an already
+        # sanitized Cloud status ("Cloud run failed (status 500, code ...)").
+        detail = f': {error}' if type(error) in (RuntimeError, ValueError, CloudRequestError) else ''
+        raise SystemExit(f'Backup/recovery failed ({type(error).__name__}{detail}); private details withheld') from None

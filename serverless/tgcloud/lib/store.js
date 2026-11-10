@@ -137,15 +137,27 @@ export class Store {
   }
   // Records saved before fingerprints existed receive one in bounded pages.
   // A concurrent collector write wins; its own fingerprint is already current.
-  async backfillDedupe(limit=25) {
+  // Reads stay in pages of at most 100 rows, like jobs(), to respect the SDK
+  // response size; one tick covers several pages so the catalogue is finished in
+  // a handful of ticks rather than hundreds.
+  async backfillDedupe(limit=300) {
     if((await this.meta('dedupe_backfill'))?.version===DEDUPE_VERSION)return {done:true,updated:0};
-    const rows=await this.db.all("SELECT id,payload FROM sjc_jobs WHERE COALESCE(json_extract(payload,'$._dedupe.v'),0)!=:version ORDER BY id LIMIT :limit",{':version':DEDUPE_VERSION,':limit':limit});
-    let updated=0;
-    for(const row of rows){
-      const job=JSON.parse(row.payload);job._dedupe=bodyFacts(job.description);
-      updated+=(await this.db.run('UPDATE sjc_jobs SET payload=:payload WHERE id=:id AND payload=:old',{':id':row.id,':old':row.payload,':payload':JSON.stringify(job)})).rowsAffected;
+    let after=0,scanned=0,updated=0,missed=0,exhausted=false;
+    while(scanned<limit){
+      const page=Math.min(100,limit-scanned);
+      const rows=await this.db.all("SELECT id,payload FROM sjc_jobs WHERE id>:after AND COALESCE(json_extract(payload,'$._dedupe.v'),0)!=:version ORDER BY id LIMIT :page",{':after':after,':version':DEDUPE_VERSION,':page':page});
+      for(const row of rows){
+        const job=JSON.parse(row.payload);job._dedupe=bodyFacts(job.description);
+        const written=(await this.db.run('UPDATE sjc_jobs SET payload=:payload WHERE id=:id AND payload=:old',{':id':row.id,':old':row.payload,':payload':JSON.stringify(job)})).rowsAffected;
+        updated+=written;missed+=1-written;
+      }
+      scanned+=rows.length;
+      if(rows.length<page){exhausted=true;break;}
+      after=rows.at(-1).id;
     }
-    const done=rows.length<limit&&updated===rows.length;
+    // A row rewritten concurrently already carries a fresh fingerprint, but it is
+    // re-checked on the next tick before the catalogue is declared complete.
+    const done=exhausted&&missed===0;
     if(done)await this.setMeta('dedupe_backfill',{version:DEDUPE_VERSION,finished_at:new Date().toISOString()});
     return {done,updated};
   }
