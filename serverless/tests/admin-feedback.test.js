@@ -11,7 +11,7 @@ test('report refresh acknowledges the request only to the owner in their private
   assert.equal(answers.at(-1).text,'Обновляю сохранённые данные…');
   assert.match(f.api.edited.at(-1).text,/Белград/);
   await handle(f,callback(1,action));
-  assert.equal(answers.at(-1).text,undefined);
+  assert.equal(answers.at(-1).text,'⏳ Загружаю…');
   assert.match(f.api.edited.at(-1).text,/только владельцу/);
   const count=answers.length,edits=f.api.edited.length,forged=callback(1,action);
   forged.callback_query.message.chat.id=OWNER_ID;

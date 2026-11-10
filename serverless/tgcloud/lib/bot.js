@@ -17,6 +17,7 @@ import { adRoute, adInput } from './ads.js';
 import { searchRoute, searchInput, replaySearches } from './searches.js';
 import { openDiscovery, discoveryRoute, replayDiscovery } from './discovery.js';
 import { button, BACK, safe, menu, filtersPanel, choicePanel, emptyText, jobButtons, translatedCard, viewerButtons, browserUrl, cardActions, vacancyVisual, sourceChoice } from './ui.js';
+const LOADING_NOTICE='⏳ Загружаю…';
 const DELETED_TEXT='Ваши данные удалены. Уведомления выключены. /start — начать заново.';
 const notificationAction=action=>/^notice:[a-z0-9]{12,24}$/.test(action||'')||action==='notify:stop';
 const discoveryAction=action=>/^(notice:|discover:|risk:|search:0$|plans:(?:open|new):)/.test(action||'');
@@ -228,7 +229,7 @@ export class Bot {
     this.uid = user.id; this.chat = message.chat.id; this.mid = callback ? message.message_id : null; this.isPhoto=Boolean(message.photo?.length);
     // Emergency stop must remain available while the owner's start request sends a batch.
     if(callback?.data==='ads:emergency' && this.uid===OWNER_ID && this.chat===OWNER_ID && await this.store.meta('active')) {
-      try{await this.api.answerCallbackQuery({callback_query_id:callback.id});}catch{}
+      try{await this.api.answerCallbackQuery({callback_query_id:callback.id,text:LOADING_NOTICE});}catch{}
       const key=`emergency:${update.update_id ?? callback.id}`;
       if(!await this.store.claimUpdate(key)) return;
       try {await adRoute(this,'ads:emergency');await this.store.finishUpdate(key);}
@@ -250,7 +251,9 @@ export class Bot {
       if(this.uid!==OWNER_ID && await this.store.isBanned(this.uid)){if(this.uid===this.chat)await deliverBanNotice(this.store,this.api,this.InputFile,this.uid,{contact:true});await this.store.finishUpdate(key);return;}
       if(callback){
         const refreshing=this.uid===OWNER_ID && this.chat===OWNER_ID && /^admin:(?:refresh|details:refresh|(?:stats|quality)(?::[a-z0-9]+)*:refresh)$/.test(callback.data||'');
-        try{await this.api.answerCallbackQuery({callback_query_id:callback.id,...(refreshing?{text:'Обновляю сохранённые данные…'}:{})});}catch{}
+        // Telegram shows this short notice at once, so a tap never looks ignored
+        // while the catalogue is read and the panel image is rendered.
+        try{await this.api.answerCallbackQuery({callback_query_id:callback.id,text:refreshing?'Обновляю сохранённые данные…':LOADING_NOTICE});}catch{}
       }
       if(!await this.store.meta('active')){await this.panel('⏳ Бот обновляется. Попробуйте через несколько минут.');await this.finishAcceptedInput(key,message,callback);return;}
       const replay=await this.store.inputEffectStatus(this.uid,key);
