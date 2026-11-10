@@ -1,17 +1,11 @@
 """Explicit permit requirements, existing data and private filter journeys."""
 from copy import deepcopy
-from pathlib import Path
-import sqlite3
-import tempfile
 import unittest
 
-from bot import Bot
-from filters import matches, search_diagnostics
-from presentation import choice_panel, empty_search_text, filter_summary
+from filters import matches
 from residence_permit import job_residence_permit_requirement, residence_permit_requirement
-from store import Store, default_settings
-from test_bot import FakeAPI, callback, vacancy
-from test_cloud_store import MemorySupabaseStore
+from store import default_settings
+from helpers import vacancy
 
 
 class ResidencePermitFactsTests(unittest.TestCase):
@@ -86,76 +80,4 @@ class ResidencePermitFactsTests(unittest.TestCase):
             self.assertTrue(matches(job, default_settings()))
         self.assertFalse(matches(job, dict(selected, residence_permit=['no'])))
 
-    def test_empty_search_explains_unknowns_and_can_relax_permit_filter(self):
-        jobs = [vacancy(description='Помощь с ВНЖ')]
-        selected = dict(default_settings(), residence_permit=['no'])
-        before = deepcopy(selected)
-        self.assertEqual(search_diagnostics(jobs, selected),
-                         {'available': 1, 'relaxed': [{'field': 'residence_permit', 'count': 1}]})
-        text = empty_search_text(jobs, selected)
-        self.assertIn('Требование ВНЖ', text)
-        self.assertIn('Не важно', text)
-        self.assertEqual(selected, before)
 
-
-class ResidencePermitJourneyTests(unittest.IsolatedAsyncioTestCase):
-    async def test_selection_search_notification_restart_reset_and_user_isolation(self):
-        with tempfile.TemporaryDirectory() as temp:
-            path = Path(temp) / 'jobs.db'
-            for store in (Store(path), MemorySupabaseStore()):
-                with self.subTest(store=type(store).__name__):
-                    api = FakeAPI()
-                    bot = Bot(api, store)
-                    for uid in (1, 2):
-                        store.ensure_user(uid, uid)
-                    # Simulate settings saved before the new field existed.
-                    if isinstance(store, Store):
-                        with sqlite3.connect(path) as db:
-                            db.execute("UPDATE users SET settings = json_remove(settings, '$.residence_permit')")
-                    else:
-                        for row in store.tables['sj_users']:
-                            row['settings'].pop('residence_permit')
-                    self.assertEqual(store.get_settings(1)['residence_permit'], 'any')
-                    store.save_jobs([
-                        vacancy(title='Permit required', description='Наличие ВНЖ'),
-                        vacancy(title='Permit optional', description='ВНЖ не требуется', url='https://poslovi.rs/job/2'),
-                        vacancy(title='Permit unknown', description='Помощь с ВНЖ', url='https://poslovi.rs/job/3'),
-                    ])
-                    await bot.handle(callback(1, 'filters'))
-                    panel = api.calls[-1][1]
-                    buttons = [b for row in panel['reply_markup']['inline_keyboard'] for b in row]
-                    self.assertTrue(any(b.get('callback_data') == 'residence_permit' for b in buttons))
-                    self.assertEqual(sum(b.get('callback_data') == 'search:0' for b in buttons), 1)
-                    for value in ('yes', 'yes', 'no', 'no'):
-                        await bot.handle(callback(1, f'choose:residence_permit:{value}:1'))
-                        self.assertEqual(store.get_settings(1)['residence_permit'], [value])
-                    self.assertEqual(store.get_settings(2)['residence_permit'], 'any')
-                    text, rows = choice_panel(store.get_settings(1), 'residence_permit')
-                    self.assertIn('один вариант', text)
-                    self.assertEqual([b['text'] for row in rows for b in row if b['text'].startswith('✅')], ['✅ Не требуется'])
-                    self.assertIn('Требование ВНЖ: Не требуется', filter_summary(store.get_settings(1)))
-                    if isinstance(store, Store):
-                        store = Store(path)
-                    bot = Bot(api, store)
-                    await bot.handle(callback(1, 'search:0'))
-                    result = api.calls[-1][1]['text']
-                    self.assertIn('Вакансия 1 из 1', result)
-                    self.assertIn('Permit optional', result)
-                    self.assertEqual(api.sent, [])
-                    store.update_settings(1, notifications='instant')
-                    await bot.notify()
-                    self.assertEqual(len(api.sent), 1)
-                    self.assertIn('Permit optional', api.text_for(1))
-                    await bot.notify()
-                    self.assertEqual(len(api.sent), 1)
-                    await bot.handle(callback(1, 'choose:residence_permit:any:1'))
-                    await bot.handle(callback(1, 'search:0'))
-                    self.assertIn('из 3', api.calls[-1][1]['text'])
-                    await bot.handle(callback(1, 'choose:residence_permit:yes:1'))
-                    await bot.handle(callback(1, 'search:0'))
-                    self.assertIn('Permit required', api.calls[-1][1]['text'])
-                    hidden_id = store.list_jobs()[0]['id']
-                    store.update_settings(1, hidden_jobs=[hidden_id])
-                    await bot.handle(callback(1, 'reset'))
-                    self.assertEqual(store.get_settings(1)['residence_permit'], 'any')
-                    self.assertEqual(store.get_settings(1)['hidden_jobs'], [hidden_id])

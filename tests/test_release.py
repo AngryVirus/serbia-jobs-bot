@@ -48,7 +48,7 @@ class SourceReleaseTests(unittest.TestCase):
                                      cwd=unpacked, capture_output=True, text=True, timeout=30)
             self.assertEqual(rebuilt.returncode, 0, rebuilt.stderr)
             self.assertEqual(first.read_bytes(), (temporary / 'rebuilt.zip').read_bytes())
-            imports = "import sys;sys.path.insert(0,'serverless');import backup,deploy,health_check,menu_check,operations_check;import bot"
+            imports = "import sys;sys.path.insert(0,'serverless');import backup,deploy,health_check,menu_check,operations_check"
             checked = subprocess.run([sys.executable, '-c', imports], cwd=unpacked,
                                      capture_output=True, text=True, timeout=30)
             self.assertEqual(checked.returncode, 0, checked.stderr)
@@ -65,10 +65,10 @@ if(!(await f.store.user(12345)))throw new Error('Profile was not saved');
     def test_private_files_and_unrelated_artifacts_never_enter_manifest(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            permitted = ['bot.py', '.env.example', 'serverless/new_worker.py',
+            permitted = ['sources.py', 'serverless/new_worker.py',
                          'tests/fixtures/example.html', 'tests/fixtures/sitemap.xml',
                          'serverless/tgcloud/lib/new-feature.js', 'tools/licenses/new.txt']
-            forbidden = ['.env', 'serverless/.env.local', 'serverless/private/secret.py',
+            forbidden = ['.env', '.env.example', 'serverless/.env.local', 'serverless/private/secret.py',
                          'serverless/node_modules/example/index.js', 'work/scratch.py',
                          'data/export.py', '.git/hooks/hook.py', 'serverless/report.json',
                          'serverless/credentials.json', 'serbia-jobs-bot.zip', 'dist/build.py']

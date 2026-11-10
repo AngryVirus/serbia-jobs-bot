@@ -1,21 +1,13 @@
-import asyncio
 from datetime import datetime, timezone
 import json
 from pathlib import Path
 import tempfile
-import threading
 import unittest
-from unittest.mock import patch
-from urllib.request import build_opener, ProxyHandler, Request
-import socket
-from bot import Bot, MENU, HELP_URL, job_text, job_buttons
 from filters import matches, parse_datetime, active
 from job_metadata import enrich, language_facts, remote_fact, text_salary
-from sources import SOURCES, Job, extract_jobs, collect_source
+from sources import Job
 from store import Store, default_settings
-from version import VERSION
-from web_server import serve, WebhookProcessor
-from test_bot import FakeAPI, message, callback, vacancy
+from helpers import vacancy
 
 
 class CalendarTests(unittest.TestCase):
@@ -105,148 +97,6 @@ class FactsTests(unittest.TestCase):
         foreign=enrich(Job('radim','https://radim.rs/jobs/1','Developer',location='Berlin, Germany'))
         self.assertFalse(matches(foreign.__dict__,settings))
 
-    def test_actual_contact_extraction_and_unsafe_link(self):
-        job=enrich(Job('radim','https://radim.rs/jobs/1','Support',description='Contact hr@example.org or https://t.me/ExampleHR'))
-        self.assertEqual(job.contacts,['hr@example.org','https://t.me/ExampleHR'])
-        self.assertEqual(job_buttons(vacancy(url='javascript:alert(1)')),[])
-        self.assertEqual(job_buttons(vacancy(url='https://example.org/')),[])
-
-
-class ProductTests(unittest.IsolatedAsyncioTestCase):
-    async def asyncSetUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.path=Path(self.temp.name)/'jobs.db'
-        self.store=Store(self.path);self.api=FakeAPI();self.bot=Bot(self.api,self.store)
-        await self.bot.handle(message(1,'/start'))
-
-    async def asyncTearDown(self): self.temp.cleanup()
-
-    async def test_menu_help_retired_commands_and_language_options(self):
-        flat=[b for row in MENU for b in row]
-        self.assertEqual([b['text'] for b in flat],['🔎 Найти вакансии','⚙️ Фильтры','🔕 Уведомления: выкл','🙈 Скрытые вакансии','💬 Помощь'])
-        await self.bot.handle(callback(1, flat[-1]['callback_data']))
-        help_panel = self.api.calls[-1][1]
-        self.assertIn('помощь с настройками', help_panel['text'])
-        self.assertIn('вы нашли ошибку', help_panel['text'])
-        self.assertIn('бот работает неправильно', help_panel['text'])
-        self.assertNotIn('@AngryVirus', help_panel['text'])
-        help_rows = help_panel['reply_markup']['inline_keyboard']
-        self.assertEqual(help_rows[0][0]['url'], 'https://t.me/AngryVirus')
-        self.assertEqual(help_rows[0][0]['text'], '✉️ Написать владельцу')
-        await self.bot.handle(callback(1, help_rows[-1][0]['callback_data']))
-        self.assertEqual(self.api.calls[-1][1]['reply_markup']['inline_keyboard'], MENU)
-        await self.bot.configure()
-        commands=next(p['commands'] for m,p in self.api.calls if m=='setMyCommands')
-        self.assertEqual([c['command'] for c in commands],['start','menu','cancel','delete_me'])
-        await self.bot.handle(callback(1,'language'))
-        rows=self.api.calls[-1][1]['reply_markup']['inline_keyboard']
-        options=[b for row in rows for b in row if b.get('callback_data','').startswith('choose:language:')]
-        self.assertEqual([b['text'] for b in options],['▫️ 🇷🇺 Русский','▫️ 🇷🇸 Сербский','▫️ 🇬🇧 Английский','✅ 🌍 Не важно'])
-        for text in ['/sources','/favorites']:
-            await self.bot.handle(message(1,text))
-            self.assertEqual(self.api.sent[-1]['rows'],MENU)
-
-    async def test_freshness_isolation_reset_and_cancel(self):
-        await self.bot.handle(message(2,'/start'))
-        await self.bot.handle(callback(1,'set:freshness:today'))
-        self.assertEqual(Store(self.path).get_settings(1)['freshness'],'today')
-        self.assertEqual(self.store.get_settings(2)['freshness'],'any')
-        await self.bot.handle(callback(1,'input:keywords'))
-        self.assertIn('Отменить',self.api.calls[-1][1]['reply_markup']['inline_keyboard'][0][0]['text'])
-        await self.bot.handle(callback(1,'cancel'))
-        self.assertIsNone(self.store.get_settings(1)['pending_input'])
-        await self.bot.handle(callback(1,'reset'))
-        self.assertEqual(self.store.get_settings(1)['freshness'],'any')
-
-    async def test_collection_empty_and_failure_are_different(self):
-        await self.bot.results(1,1)
-        self.assertIn('База ещё наполняется',self.api.sent[-1]['text'])
-        self.bot.scanning=True
-        await self.bot.results(1,1)
-        self.assertIn('проверяем вакансии',self.api.sent[-1]['text'])
-        self.bot.scanning=False
-        self.store.set_source_status({'poslovi':{'state':'error'}})
-        await self.bot.results(1,1)
-        self.assertIn('временно недоступны',self.api.sent[-1]['text'])
-        self.store.set_source_status({'poslovi':{'state':'ok'}})
-        await self.bot.results(1,1)
-        self.assertIn('Подходящих вакансий нет',self.api.sent[-1]['text'])
-
-    async def test_complete_parse_save_filter_search_notification_path(self):
-        node={'@type':'JobPosting','title':'Support & A','url':'https://radim.rs/jobs/support-1',
-              'description':'Russian language required. English language mandatory. Contact hr@example.org',
-              'datePosted':datetime.now(timezone.utc).isoformat(),'jobLocationType':'TELECOMMUTE',
-              'jobLocation':{'address':{'addressLocality':'Beograd','addressCountry':'RS'}},
-              'baseSalary':{'currency':'EUR','value':{'minValue':1500,'unitText':'MONTH'}}}
-        jobs=extract_jobs(SOURCES['radim'],'<script type="application/ld+json">'+json.dumps(node)+'</script>',node['url'])
-        self.assertEqual(self.store.save_jobs(jobs),1)
-        self.assertEqual(self.store.save_jobs(jobs),0)
-        self.store.update_settings(1,city='belgrade',language='russian',remote='only',freshness='today',notifications='instant')
-        await self.bot.results(1,1)
-        card=next(m for m in self.api.sent if 'Support &amp; A' in m['text'])
-        self.assertIn('href="https://radim.rs/jobs/support-1"',card['text'])
-        self.assertEqual(card['rows'][0][0]['url'],node['url'])
-        self.api.sent.clear()
-        await self.bot.notify()
-        self.assertIn('Support &amp; A',self.api.sent[0]['text'])
-        self.assertEqual(self.api.sent[0]['rows'][0][0]['url'],node['url'])
-        restarted=Bot(self.api,Store(self.path))
-        await asyncio.gather(self.bot.notify(),restarted.notify())
-        self.assertEqual(len(self.api.sent),1)
-
-    async def test_pagination_and_missing_contacts(self):
-        self.store.save_jobs([vacancy(url=f'https://www.poslovi.rs/job/{i}') for i in range(12)])
-        await self.bot.results(1,1)
-        cards=[m for m in self.api.sent if '<b>Python developer</b>' in m['text']]
-        self.assertEqual(len(cards),1)
-        self.assertTrue(all(m['rows'][0][0]['text']=='🔗 Открыть объявление' for m in cards))
-        next_button = next(b for row in cards[0]['rows'] for b in row if ':next:' in b.get('callback_data', ''))
-        sent = len(self.api.sent)
-        await self.bot.handle(callback(1, next_button['callback_data']))
-        self.assertEqual(len(self.api.sent), sent)
-        panel = self.api.calls[-1][1]
-        self.assertIn('Вакансия 2 из 12', panel['text'])
-        self.assertEqual(panel['reply_markup']['inline_keyboard'][0][0]['url'], self.store.list_jobs()[1]['url'])
-
-    async def test_durable_webhook_claim_in_two_processors(self):
-        first=WebhookProcessor(self.bot);second=WebhookProcessor(Bot(self.api,Store(self.path)))
-        update={'update_id':100,**callback(1,'toggle_salary')}
-        await asyncio.gather(first.update(update),second.update(update))
-        self.assertFalse(self.store.get_settings(1)['include_unknown_salary'])
-        await second.update(update)
-        self.assertFalse(self.store.get_settings(1)['include_unknown_salary'])
-
-    async def test_slow_user_does_not_block_other_user(self):
-        started=threading.Event();release=threading.Event()
-        original=self.bot._handle
-        async def handle(update, prepared_settings=None, acknowledged=False):
-            uid=update.get('message',{}).get('from',{}).get('id')
-            if uid==1:
-                started.set();await asyncio.to_thread(release.wait,2)
-            await original(update, prepared_settings, acknowledged)
-        self.bot._handle=handle
-        task=asyncio.create_task(self.bot.handle(message(1,'/menu')))
-        await asyncio.to_thread(started.wait,1)
-        try:
-            await asyncio.wait_for(self.bot.handle(message(2,'/start')),1)
-            self.assertIsNotNone(self.store.get_subscriber(2))
-        finally:
-            release.set();await task
-
-    async def test_startup_starts_collector_and_serves_versioned_health(self):
-        event=asyncio.Event()
-        async def scan():event.set();return True
-        self.bot.scan=scan
-        self.bot.notify=lambda: asyncio.sleep(0)
-        sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1];sock.close()
-        server=asyncio.create_task(serve(self.bot,'https://example.test','w'*32,'c'*32,port))
-        try:
-            await asyncio.wait_for(event.wait(),3)
-            def request():
-                with build_opener(ProxyHandler({})).open(f'http://127.0.0.1:{port}/health',timeout=2) as r:return json.load(r)
-            body=await asyncio.to_thread(request)
-            self.assertEqual(body,{'ok':True,'version':VERSION})
-        finally:
-            server.cancel();await asyncio.gather(server,return_exceptions=True)
 
 
 class MigrationTests(unittest.TestCase):
