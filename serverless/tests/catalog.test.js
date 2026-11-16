@@ -7,7 +7,11 @@ import { notifyOne } from '../tgcloud/lib/admin.js';
 import { job, fixture, message, callback, handle } from './fixtures.js';
 
 const text = 'Ресторан ищет повара горячего цеха. Приготовление блюд по технологическим картам, контроль качества продуктов, работа с командой кухни. Сменный график, оформление и питание за счёт работодателя.';
-const opening = (id, extra = {}) => job(id, { company: 'Lou Caffe', description: text, created_at: '2026-10-14T10:00:00Z', ...extra });
+// Dates are relative to today: a vacancy stays available for 30 days after its
+// anchor, so fixed calendar dates would make these tests fail a month later.
+const DAY = 86400000, at = days => new Date(Date.now() - days * DAY).toISOString();
+const RECENT = at(3), NEXT_DAY = at(2), LONG_AGO = at(123);
+const opening = (id, extra = {}) => job(id, { company: 'Lou Caffe', description: text, created_at: RECENT, ...extra });
 const copy = (id, extra = {}) => opening(id, { source: 'radim', url: `https://radim.rs/jobs/cook-${id}`, ...extra });
 
 test('canonical URLs remove transport/tracking differences and retain job identifiers', () => {
@@ -23,7 +27,7 @@ test('canonical URLs remove transport/tracking differences and retain job identi
 
 test('cross-source reposts merge; same role alone, different employers and template roles stay separate', () => {
   assert.equal(groupJobs([opening(1), copy(2, {location:'Београд'})]).length, 1);
-  for (const extra of [{title:'Кассир'}, {company:'Another cafe'}, {location:'Novi Sad'}, {salary_min:1800}, {salary_period:'hour'}, {description:'Нужен повар'}, {created_at:'2026-01-01T00:00:00Z'}]) {
+  for (const extra of [{title:'Кассир'}, {company:'Another cafe'}, {location:'Novi Sad'}, {salary_min:1800}, {salary_period:'hour'}, {description:'Нужен повар'}, {created_at:LONG_AGO}]) {
     assert.equal(groupJobs([opening(1), copy(2,extra)]).length, 2, JSON.stringify(extra));
   }
   // Actual failure pattern: one employer boilerplate reused for an electrician and cashier.
@@ -35,8 +39,8 @@ test('cross-source reposts merge; same role alone, different employers and templ
 });
 
 test('newer copy of the same original wins before filtering salary or expiry', () => {
-  const old=opening(1,{url:'http://www.jobs.rs/jobs/1',updated_at:'2026-10-14T10:00:00Z'});
-  const current=opening(2,{url:'https://jobs.rs/jobs/1?utm_source=tg',salary_min:700,updated_at:'2026-10-15T10:00:00Z'});
+  const old=opening(1,{url:'http://www.jobs.rs/jobs/1',updated_at:RECENT});
+  const current=opening(2,{url:'https://jobs.rs/jobs/1?utm_source=tg',salary_min:700,updated_at:NEXT_DAY});
   const groups=groupJobs([old,current]);
   assert.equal(visibleJobs(groups,{...defaults(),min_salary:1000}).length,0);
   current._cloud.expires_ms=1;
